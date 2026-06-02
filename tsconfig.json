@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/contracts" },
+    { "path": "./packages/library" },
+    { "path": "./packages/agents" },
+    { "path": "./packages/indexer" },
+    { "path": "./packages/workflows" },
+    { "path": "./packages/pdf" },
+    { "path": "./packages/ui" },
+    { "path": "./apps/server" },
+    { "path": "./apps/web" },
+    { "path": "./apps/desktop" }
+  ]
+}

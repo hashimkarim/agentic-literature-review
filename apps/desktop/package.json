@@ -1,0 +1,15 @@
+{
+  "name": "@litagent/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "npm run build && electron dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "start": "electron dist/main.js"
+  },
+  "devDependencies": {
+    "electron": "^39.2.7"
+  }
+}

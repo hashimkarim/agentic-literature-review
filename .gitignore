@@ -1,0 +1,21 @@
+node_modules/
+dist/
+dist-types/
+.turbo/
+.vite/
+coverage/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+vite.config.d.ts.map
+
+# Local LitAgent data and caches
+.litagent/
+litagent-repo/
+litagent-workspace/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# OS/editor
+.DS_Store
