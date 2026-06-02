@@ -33,20 +33,31 @@ export function AgentPanel({
   qa,
   passages,
   selectedPaper,
+  selectedProviderId,
+  selectedModel,
+  onProviderChange,
+  onModelChange,
   onRunWorkflow,
+  onCancelWorkflow,
   onAsk
 }: {
   project: Project | null;
   providers: AgentProvider[];
-  workflows: Array<{ id: string; label: string; status: string; createdAt: string }>;
+  workflows: Array<{ id: string; label: string; status: string; createdAt: string; providerId: string; model: string | null }>;
   qa: QaResponse | null;
   passages: Passage[];
   selectedPaper: PaperEntry | null;
+  selectedProviderId: string;
+  selectedModel: string | null;
+  onProviderChange: (providerId: string) => void;
+  onModelChange: (model: string | null) => void;
   onRunWorkflow: (type: WorkflowType, query?: string) => void;
+  onCancelWorkflow: (runId: string) => void;
   onAsk: (question: string) => void;
 }) {
   const [question, setQuestion] = useState("");
-  const installed = providers.filter((provider) => provider.installed);
+  const enabledProviders = providers.filter((provider) => provider.installed && provider.enabled);
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? null;
   return (
     <aside className="agent-panel">
       <div className="agent-tabs">
@@ -55,6 +66,29 @@ export function AgentPanel({
         </button>
         <button type="button">Evidence {passages.length}</button>
       </div>
+
+      <section className="panel-section">
+        <h2>Provider</h2>
+        <div className="agent-provider-controls">
+          <select value={selectedProviderId} onChange={(event) => onProviderChange(event.currentTarget.value)}>
+            <option value="local-heuristic">Local heuristic</option>
+            {providers.map((provider) => (
+              <option key={provider.id} value={provider.id} disabled={!provider.installed || !provider.enabled}>
+                {provider.label}
+                {!provider.installed ? " (missing)" : !provider.enabled ? " (disabled)" : ""}
+              </option>
+            ))}
+          </select>
+          <select value={selectedModel ?? ""} onChange={(event) => onModelChange(event.currentTarget.value || null)} disabled={!selectedProvider}>
+            <option value="">CLI default</option>
+            {selectedProvider?.models.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
 
       <section className="panel-section">
         <h2>Workflows</h2>
@@ -117,9 +151,19 @@ export function AgentPanel({
               <div key={run.id} className="queue-row">
                 <span>
                   <b>{run.label}</b>
-                  <small>{new Date(run.createdAt).toLocaleTimeString()}</small>
+                  <small>
+                    {new Date(run.createdAt).toLocaleTimeString()} · {run.providerId}
+                    {run.model ? `/${run.model}` : ""}
+                  </small>
                 </span>
-                <em className={`status-${run.status}`}>{run.status}</em>
+                <span className="queue-actions">
+                  <em className={`status-${run.status}`}>{run.status}</em>
+                  {run.status === "running" || run.status === "queued" ? (
+                    <button type="button" onClick={() => onCancelWorkflow(run.id)}>
+                      Cancel
+                    </button>
+                  ) : null}
+                </span>
               </div>
             ))
           ) : (
@@ -132,13 +176,13 @@ export function AgentPanel({
         <h2>Providers</h2>
         <div className="provider-list">
           {providers.map((provider) => (
-            <span key={provider.id} className={provider.installed ? "provider-pill installed" : "provider-pill"}>
+            <span key={provider.id} className={provider.installed && provider.enabled ? "provider-pill installed" : "provider-pill"}>
               {provider.label}
             </span>
           ))}
         </div>
         <p className="empty-copy">
-          {installed.length ? `${installed.length} CLI provider(s) detected.` : "No CLI providers detected."}
+          {enabledProviders.length ? `${enabledProviders.length} enabled CLI provider(s).` : "No enabled CLI providers. Connect one in Settings."}
         </p>
       </section>
     </aside>

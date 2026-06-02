@@ -23,12 +23,22 @@ project-centered agentic literature review app.
 - SQLite/FTS passage index package with scoped search support.
 - CLI provider catalog and discovery for Codex, Claude, Gemini CLI, OpenCode,
   Copilot CLI, and custom Cursor-like commands.
+- Agent harness MVP inspired by T3 Code/BigBud provider architecture:
+  provider definitions, adapter registry, in-memory session directory, CLI
+  session lifecycle, normalized stream events, NDJSON event logging, cancellation
+  hooks, artifact capture, and failure classification.
+- Provider settings page and API inspired by T3 Code/BigBud settings flows:
+  provider enable/connect state, command overrides, default/custom models,
+  provider/model selectors for agentic tasks, and workflow queue cancellation.
 - Workflow package with normalized workflow records, document conversion hooks,
   Q&A artifact generation, relevance/metadata/comparison workflow recipes, and
   event logging.
 - Project-centered React UI with top bar, left navigation, project sidebar,
   paper list, reader tabs, evidence/agent panel, workflow queue, status bar, and
   concept map surface.
+- Active section layout where the global left navigation persists and
+  settings/workflows/notes/exports/concept map replace the workspace instead of
+  inheriting project and agent side panels.
 - Desktop Electron wrapper for the local web app experience.
 - Theme system with light, T3-style dark default, and exact Comfy material color
   theme sourced from `/mnt/shared/Git/comfy-themes/design-system/colors_and_type.css`.
@@ -46,9 +56,12 @@ project-centered agentic literature review app.
   but persistent annotations and exact PDF rectangle mapping are still pending.
 - Q&A uses scoped retrieval and cited evidence records; agent reranking and
   provider-backed answer generation still need full CLI runtime execution.
-- Provider adapters discover CLI availability/version and expose normalized
-  event shapes; long-running PTY sessions, cancellation, artifact capture, and
-  failure classification need expansion.
+- Provider-backed workflows can launch real CLI runs in the background and write
+  normalized events to workflow logs. This is still subprocess-based rather than
+  a full PTY/SDK/ACP runtime, and provider-specific stream parsers are heuristic
+  beyond common JSON and stdout/stderr shapes.
+- Agentic workflow launches now carry an explicit provider and model choice from
+  the UI, and saved workflow records retain the selected model.
 - Concept map uses graph-oriented project/library data, but saved layouts and
   advanced filters are not finished.
 - BibTeX export exists for project scope; BibLaTeX, Zotero import/export, and
@@ -111,8 +124,11 @@ Status: partial.
 ## Next Work
 
 - Wire the existing Marker conversion script into the backend worker path.
-- Implement real provider run sessions with streaming, cancellation, artifact
-  capture, and failure classification.
+- Expand provider harnesses with provider-specific SDK/ACP stream parsers,
+  approval/user-input round trips, session resume, PTY support where needed, and
+  persisted session recovery.
+- Add richer provider model discovery where CLIs expose live model lists instead
+  of only configured/default/custom model values.
 - Persist PDF annotations and note backlinks.
 - Add exact citation jump resolution from evidence to Markdown range and PDF
   page/selection.

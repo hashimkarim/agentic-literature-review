@@ -8,6 +8,7 @@ import { ConceptMap } from "./components/ConceptMap";
 import { PaperList } from "./components/PaperList";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { ReaderPanel } from "./components/ReaderPanel";
+import { SettingsPage } from "./components/SettingsPage";
 import { Sidebar, type NavKey } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar, type ThemeMode } from "./components/TopBar";
@@ -29,6 +30,8 @@ export default function App() {
   const [qa, setQa] = useState<QaResponse | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowRun[]>([]);
   const [providers, setProviders] = useState<AgentProvider[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState("local-heuristic");
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [activeNav, setActiveNav] = useState<NavKey>("projects");
   const [readerTab, setReaderTab] = useState<"pdf" | "markdown" | "notes">("markdown");
   const [searchQuery, setSearchQuery] = useState("");
@@ -70,6 +73,27 @@ export default function App() {
   useEffect(() => {
     void loadBase();
   }, [loadBase]);
+
+  useEffect(() => {
+    const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
+    if (selectedProviderId !== "local-heuristic" && (!selectedProvider || !selectedProvider.installed || !selectedProvider.enabled)) {
+      const fallback = providers.find((provider) => provider.installed && provider.enabled);
+      setSelectedProviderId(fallback?.id ?? "local-heuristic");
+      setSelectedModel(fallback?.defaultModel ?? null);
+      return;
+    }
+    if (selectedProvider && selectedModel === null && selectedProvider.defaultModel) {
+      setSelectedModel(selectedProvider.defaultModel);
+    }
+  }, [providers, selectedModel, selectedProviderId]);
+
+  useEffect(() => {
+    if (!workflows.some((run) => run.status === "running" || run.status === "queued")) return;
+    const timer = window.setInterval(() => {
+      void api.workflows().then(setWorkflows);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [workflows]);
 
   useEffect(() => {
     void loadProject(activeNav === "global" ? null : selectedProjectId);
@@ -114,7 +138,8 @@ export default function App() {
             projectId: activeNav === "global" ? null : selectedProjectId,
             paperIds: selectedPaper ? [selectedPaper.paper.id] : [],
             query: (query ?? searchQuery) || null,
-            providerId: providers.find((provider) => provider.installed)?.id ?? "local-heuristic"
+            providerId: selectedProviderId,
+            model: selectedProviderId === "local-heuristic" ? null : selectedModel
           })
           .then(async () => {
             const [nextWorkflows, nextPapers] = await Promise.all([
@@ -126,7 +151,7 @@ export default function App() {
           });
       });
     },
-    [activeNav, providers, searchQuery, selectedPaper, selectedProjectId]
+    [activeNav, searchQuery, selectedModel, selectedPaper, selectedProjectId, selectedProviderId]
   );
 
   const askQuestion = useCallback(
@@ -137,12 +162,58 @@ export default function App() {
             question,
             projectId: activeNav === "global" ? null : selectedProjectId,
             paperId: selectedPaper?.paper.id ?? null,
-            providerId: providers.find((provider) => provider.installed)?.id ?? "local-heuristic"
+            providerId: selectedProviderId,
+            model: selectedProviderId === "local-heuristic" ? null : selectedModel
           })
           .then(setQa);
       });
     },
-    [activeNav, providers, selectedPaper, selectedProjectId]
+    [activeNav, selectedModel, selectedPaper, selectedProjectId, selectedProviderId]
+  );
+
+  const cancelWorkflow = useCallback((runId: string) => {
+    startTransition(() => {
+      void api.cancelWorkflow(runId).then(async () => {
+        setWorkflows(await api.workflows());
+      });
+    });
+  }, []);
+
+  const connectProvider = useCallback(
+    (providerId: string) => {
+      startTransition(() => {
+        void api.connectProvider(providerId).then((nextProviders) => {
+          setProviders(nextProviders);
+          const provider = nextProviders.find((candidate) => candidate.id === providerId);
+          if (provider?.enabled && provider.installed) {
+            setSelectedProviderId(providerId);
+            setSelectedModel(provider.defaultModel ?? null);
+          }
+        });
+      });
+    },
+    []
+  );
+
+  const saveProviderSettings = useCallback(
+    (
+      providerId: string,
+      patch: {
+        enabled?: boolean;
+        command?: string;
+        defaultModel?: string | null;
+        customModels?: string[];
+      }
+    ) => {
+      startTransition(() => {
+        void api.updateProviderSettings(providerId, patch).then((nextProviders) => {
+          setProviders(nextProviders);
+          const provider = nextProviders.find((candidate) => candidate.id === providerId);
+          if (providerId === selectedProviderId) setSelectedModel(provider?.defaultModel ?? null);
+        });
+      });
+    },
+    [selectedProviderId]
   );
 
   const convertSelected = useCallback(() => {
@@ -176,13 +247,181 @@ export default function App() {
     id: run.id,
     label: workflowLabels[run.type],
     status: run.status,
-    createdAt: run.createdAt
+    createdAt: run.createdAt,
+    providerId: run.providerId,
+    model: run.model
   }));
 
   const changeTheme = useCallback((nextTheme: ThemeMode) => {
     setTheme(nextTheme);
     window.localStorage.setItem("litagent-theme", nextTheme);
   }, []);
+
+  const changeProviderSelection = useCallback(
+    (providerId: string) => {
+      setSelectedProviderId(providerId);
+      const provider = providers.find((candidate) => candidate.id === providerId);
+      setSelectedModel(provider?.defaultModel ?? null);
+    },
+    [providers]
+  );
+
+  const researchWorkspace = (
+    <section className="section-content research-section">
+      <ProjectPanel
+        activeNav={activeNav}
+        project={currentProject}
+        details={projectDetails}
+        papers={papers}
+        onProjectChange={setSelectedProjectId}
+        projects={projects}
+      />
+      <main className="main-region">
+        <PaperList
+          papers={filteredPapers}
+          selectedPaperId={selectedPaper?.paper.id ?? null}
+          onSelectPaper={setSelectedPaperId}
+          onConvertSelected={convertSelected}
+        />
+        <ReaderPanel
+          paperEntry={selectedPaper}
+          markdown={markdown}
+          passages={passages}
+          qa={qa}
+          tab={readerTab}
+          onTabChange={setReaderTab}
+        />
+      </main>
+      <AgentPanel
+        project={currentProject}
+        providers={providers}
+        workflows={workflowCountByLabel}
+        qa={qa}
+        passages={passages}
+        selectedPaper={selectedPaper}
+        selectedProviderId={selectedProviderId}
+        selectedModel={selectedModel}
+        onProviderChange={changeProviderSelection}
+        onModelChange={setSelectedModel}
+        onRunWorkflow={runWorkflow}
+        onCancelWorkflow={cancelWorkflow}
+        onAsk={askQuestion}
+      />
+    </section>
+  );
+
+  const settingsSection = (
+    <section className="section-content single-section">
+      <SettingsPage
+        providers={providers}
+        selectedProviderId={selectedProviderId}
+        selectedModel={selectedModel}
+        onProviderChange={changeProviderSelection}
+        onModelChange={setSelectedModel}
+        onConnectProvider={connectProvider}
+        onSaveProvider={saveProviderSettings}
+      />
+    </section>
+  );
+
+  const workflowsSection = (
+    <section className="section-content dashboard-section">
+      <header className="section-header">
+        <div>
+          <h1>Workflows</h1>
+          <p>Agentic and local workflow runs for the current workspace.</p>
+        </div>
+      </header>
+      <div className="dashboard-list">
+        {workflows.length ? (
+          workflows.map((run) => (
+            <article key={run.id} className="dashboard-row">
+              <span>
+                <b>{workflowLabels[run.type]}</b>
+                <small>
+                  {run.providerId}
+                  {run.model ? ` / ${run.model}` : ""} · {new Date(run.createdAt).toLocaleString()}
+                </small>
+              </span>
+              <span className="queue-actions">
+                <em className={`status-${run.status}`}>{run.status}</em>
+                {run.status === "running" || run.status === "queued" ? (
+                  <button type="button" onClick={() => cancelWorkflow(run.id)}>
+                    Cancel
+                  </button>
+                ) : null}
+              </span>
+            </article>
+          ))
+        ) : (
+          <p className="empty-copy">No workflow runs yet.</p>
+        )}
+      </div>
+    </section>
+  );
+
+  const notesSection = (
+    <section className="section-content dashboard-section">
+      <header className="section-header">
+        <div>
+          <h1>Notes</h1>
+          <p>Project notes and generated outputs stay scoped to the selected project.</p>
+        </div>
+      </header>
+      <div className="dashboard-grid">
+        <article className="dashboard-card">
+          <b>Project</b>
+          <span>{currentProject?.name ?? "No project selected"}</span>
+        </article>
+        <article className="dashboard-card">
+          <b>Linked Notes</b>
+          <span>{projectDetails?.links.reduce((sum, link) => sum + link.notes.length, 0) ?? 0}</span>
+        </article>
+      </div>
+    </section>
+  );
+
+  const exportsSection = (
+    <section className="section-content dashboard-section">
+      <header className="section-header">
+        <div>
+          <h1>Exports</h1>
+          <p>BibTeX and bibliography outputs for the selected project.</p>
+        </div>
+      </header>
+      {currentProject ? (
+        <a className="export-link" href={api.exportBibUrl(currentProject.id)}>
+          Download {currentProject.name} BibTeX
+        </a>
+      ) : (
+        <p className="empty-copy">Select a project to export a bibliography.</p>
+      )}
+    </section>
+  );
+
+  const conceptSection = (
+    <section className="section-content single-section">
+      <ConceptMap
+        project={currentProject}
+        papers={papers}
+        selectedPaperId={selectedPaper?.paper.id ?? null}
+        onSelectPaper={setSelectedPaperId}
+      />
+    </section>
+  );
+
+  const activeSection =
+    activeNav === "settings"
+      ? settingsSection
+      : activeNav === "concept"
+        ? conceptSection
+        : activeNav === "workflows"
+          ? workflowsSection
+          : activeNav === "notes"
+            ? notesSection
+            : activeNav === "exports"
+              ? exportsSection
+              : researchWorkspace;
 
   return (
     <div className="app-shell" data-theme={theme}>
@@ -205,6 +444,7 @@ export default function App() {
         onSearchChange={setSearchQuery}
         onImport={() => fileInputRef.current?.click()}
         onNewNote={() => setReaderTab("notes")}
+        onSettings={() => setActiveNav("settings")}
         busy={isPending}
         theme={theme}
         onThemeChange={changeTheme}
@@ -216,51 +456,7 @@ export default function App() {
           projectsCount={projects.length}
           notesCount={projectDetails?.links.reduce((sum, link) => sum + link.notes.length, 0) ?? 0}
         />
-        <ProjectPanel
-          activeNav={activeNav}
-          project={currentProject}
-          details={projectDetails}
-          papers={papers}
-          onProjectChange={setSelectedProjectId}
-          projects={projects}
-        />
-        <main className="main-region">
-          {activeNav === "concept" ? (
-            <ConceptMap
-              project={currentProject}
-              papers={papers}
-              selectedPaperId={selectedPaper?.paper.id ?? null}
-              onSelectPaper={setSelectedPaperId}
-            />
-          ) : (
-            <>
-              <PaperList
-                papers={filteredPapers}
-                selectedPaperId={selectedPaper?.paper.id ?? null}
-                onSelectPaper={setSelectedPaperId}
-                onConvertSelected={convertSelected}
-              />
-              <ReaderPanel
-                paperEntry={selectedPaper}
-                markdown={markdown}
-                passages={passages}
-                qa={qa}
-                tab={readerTab}
-                onTabChange={setReaderTab}
-              />
-            </>
-          )}
-        </main>
-        <AgentPanel
-          project={currentProject}
-          providers={providers}
-          workflows={workflowCountByLabel}
-          qa={qa}
-          passages={passages}
-          selectedPaper={selectedPaper}
-          onRunWorkflow={runWorkflow}
-          onAsk={askQuestion}
-        />
+        {activeSection}
       </div>
       <StatusBar status={status} project={currentProject} selectedPaper={selectedPaper} />
     </div>

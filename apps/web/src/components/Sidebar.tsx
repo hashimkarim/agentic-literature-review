@@ -1,6 +1,6 @@
-import { BookOpen, Boxes, GitBranch, Library, Map, NotebookTabs, Upload } from "lucide-react";
+import { BookOpen, Boxes, GitBranch, Library, Map, NotebookTabs, Settings, Upload } from "lucide-react";
 
-export type NavKey = "projects" | "global" | "workflows" | "concept" | "notes" | "exports";
+export type NavKey = "projects" | "global" | "workflows" | "concept" | "notes" | "exports" | "settings";
 
 const navItems: Array<{ key: NavKey; label: string; icon: typeof Library }> = [
   { key: "projects", label: "Projects", icon: Boxes },
@@ -8,7 +8,8 @@ const navItems: Array<{ key: NavKey; label: string; icon: typeof Library }> = [
   { key: "workflows", label: "Workflows", icon: GitBranch },
   { key: "concept", label: "Concept Map", icon: Map },
   { key: "notes", label: "Notes", icon: NotebookTabs },
-  { key: "exports", label: "Exports", icon: Upload }
+  { key: "exports", label: "Exports", icon: Upload },
+  { key: "settings", label: "Settings", icon: Settings }
 ];
 
 export function Sidebar({

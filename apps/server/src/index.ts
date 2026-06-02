@@ -9,12 +9,13 @@ import multer from "multer";
 import { WebSocketServer } from "ws";
 
 import {
+  AgentProviderSettingsPatchSchema,
   ImportPaperRequestSchema,
   LinkPaperRequestSchema,
   QaRequestSchema,
   SearchRequestSchema
 } from "@litagent/contracts";
-import { AgentProviderCatalog } from "@litagent/agents";
+import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
 import { SearchIndex } from "@litagent/indexer";
 import { DEFAULT_REPO_ROOT, LitAgentRepository } from "@litagent/library";
 import { WorkflowEngine, WorkflowStartRequestSchema, convertPaperWithMarker } from "@litagent/workflows";
@@ -30,8 +31,9 @@ repo.seedDemoData();
 const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
 index.rebuild(repo);
 
-const providers = new AgentProviderCatalog();
-const workflows = new WorkflowEngine(repo, index, providers);
+const providerSettings = new AgentProviderSettingsStore(repo.resolve(".litagent/provider-settings.json"));
+const providers = new AgentProviderCatalog(undefined, providerSettings.read());
+const workflows = new WorkflowEngine(repo, index, providers, undefined, providerSettings);
 const upload = multer({ dest: repo.resolve(".litagent/cache/uploads") });
 
 const app = express();
@@ -66,6 +68,11 @@ function indexPaper(paperId: string): void {
   index.indexPaper(paper, repo.readPassages(paperId));
 }
 
+function refreshProviders() {
+  providers.setSettings(providerSettings.read());
+  return providers.discover();
+}
+
 app.get(
   "/api/status",
   asyncHandler((_req, res) => {
@@ -76,7 +83,7 @@ app.get(
       projects: projects.length,
       papers: papers.length,
       git: repo.gitStatus(),
-      providers: providers.discover()
+      providers: refreshProviders()
     });
   })
 );
@@ -240,6 +247,13 @@ app.get(
   })
 );
 
+app.post(
+  "/api/workflows/:runId/cancel",
+  asyncHandler((req, res) => {
+    res.json(workflows.cancelRun(routeParam(req, "runId")));
+  })
+);
+
 app.get(
   "/api/exports/:projectId/bib",
   asyncHandler((req, res) => {
@@ -251,7 +265,44 @@ app.get(
 app.get(
   "/api/provider-status",
   asyncHandler((_req, res) => {
-    res.json(providers.discover());
+    res.json(refreshProviders());
+  })
+);
+
+app.get(
+  "/api/settings/providers",
+  asyncHandler((_req, res) => {
+    res.json(refreshProviders());
+  })
+);
+
+app.patch(
+  "/api/settings/providers/:providerId",
+  asyncHandler((req, res) => {
+    const providerId = routeParam(req, "providerId");
+    providerSettings.patch(providerId, AgentProviderSettingsPatchSchema.parse(req.body));
+    res.json(refreshProviders());
+  })
+);
+
+app.post(
+  "/api/settings/providers/:providerId/connect",
+  asyncHandler((req, res) => {
+    const providerId = routeParam(req, "providerId");
+    const provider = refreshProviders().find((candidate) => candidate.id === providerId);
+    if (!provider) {
+      res.status(404).json({ error: `Unknown provider: ${providerId}` });
+      return;
+    }
+    if (!provider.installed) {
+      res.status(400).json({ error: `${provider.label} command is not installed: ${provider.command}` });
+      return;
+    }
+    providerSettings.patch(providerId, {
+      enabled: true,
+      connected: provider.authStatus !== "unavailable"
+    });
+    res.json(refreshProviders());
   })
 );
 

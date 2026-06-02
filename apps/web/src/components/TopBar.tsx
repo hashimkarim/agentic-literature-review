@@ -12,6 +12,7 @@ export function TopBar({
   onSearchChange,
   onImport,
   onNewNote,
+  onSettings,
   theme,
   onThemeChange
 }: {
@@ -24,6 +25,7 @@ export function TopBar({
   onSearchChange: (query: string) => void;
   onImport: () => void;
   onNewNote: () => void;
+  onSettings: () => void;
   onThemeChange: (theme: ThemeMode) => void;
 }) {
   return (
@@ -76,7 +78,7 @@ export function TopBar({
             <Palette size={15} />
           </button>
         </div>
-        <button type="button" className="icon-button" title="Settings">
+        <button type="button" className="icon-button" title="Settings" onClick={onSettings}>
           <Settings size={17} />
         </button>
       </div>

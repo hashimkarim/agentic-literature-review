@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
 
-import { AgentProviderCatalog } from "@litagent/agents";
+import { AgentHarness, AgentProviderCatalog, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
 import {
   EvidenceRefSchema,
   NormalizedRunEventSchema,
@@ -30,7 +30,8 @@ export const WorkflowStartRequestSchema = z.object({
   paperIds: z.array(z.string()).default([]),
   collectionIds: z.array(z.string()).default([]),
   query: z.string().nullable().default(null),
-  providerId: z.string().default("local-heuristic")
+  providerId: z.string().default("local-heuristic"),
+  model: z.string().nullable().default(null)
 });
 export type WorkflowStartRequest = z.infer<typeof WorkflowStartRequestSchema>;
 
@@ -242,7 +243,9 @@ export class WorkflowEngine {
   constructor(
     private readonly repo: LitAgentRepository,
     private readonly index: SearchIndex,
-    private readonly providers = new AgentProviderCatalog()
+    private readonly providers = new AgentProviderCatalog(),
+    private readonly harness = new AgentHarness({ catalog: providers }),
+    private readonly providerSettings: AgentProviderSettingsStore | null = null
   ) {}
 
   answerQuestion(input: QaRequestInput): QaResponse {
@@ -301,6 +304,7 @@ export class WorkflowEngine {
         query: parsed.query
       },
       providerId: parsed.providerId,
+      model: parsed.model,
       status: "running",
       eventsPath,
       createdAt: timestamp,
@@ -317,6 +321,11 @@ export class WorkflowEngine {
         payload: parsed
       })
     );
+
+    if (this.isProviderBackedRun(parsed.providerId)) {
+      this.startProviderBackedWorkflow(parsed, run, absoluteEventsPath);
+      return run;
+    }
 
     try {
       const payload = this.executeWorkflow(parsed, runId, absoluteEventsPath);
@@ -357,6 +366,25 @@ export class WorkflowEngine {
     return run;
   }
 
+  cancelRun(runId: string): WorkflowRun {
+    const { run } = this.readRun(runId);
+    if (run.status !== "running" && run.status !== "queued") return run;
+    this.harness.cancelRun(runId);
+    const cancelled = WorkflowRunSchema.parse({ ...run, status: "cancelled", updatedAt: nowIso() });
+    appendEvent(
+      this.repo.resolve(run.eventsPath),
+      event({
+        runId,
+        providerId: run.providerId,
+        type: "run.failed",
+        message: "Workflow cancellation requested",
+        payload: { failureClass: "cancelled" }
+      })
+    );
+    this.writeRun(cancelled);
+    return cancelled;
+  }
+
   readRun(runId: string): { run: WorkflowRun; events: NormalizedRunEvent[] } {
     const filePath = this.repo.resolve(`workflows/${runId}.run.json`);
     if (!fs.existsSync(filePath)) throw new Error(`Workflow run not found: ${runId}`);
@@ -381,6 +409,152 @@ export class WorkflowEngine {
   private writeRun(run: WorkflowRun): void {
     fs.mkdirSync(this.repo.resolve("workflows"), { recursive: true });
     fs.writeFileSync(this.repo.resolve(`workflows/${run.id}.run.json`), `${JSON.stringify(run, null, 2)}\n`, "utf8");
+  }
+
+  private isProviderBackedRun(providerId: string): boolean {
+    if (this.providerSettings) this.providers.setSettings(this.providerSettings.read());
+    return providerId !== "local-heuristic" && Boolean(this.providers.definition(providerId));
+  }
+
+  private startProviderBackedWorkflow(
+    request: WorkflowStartRequest,
+    run: WorkflowRun,
+    absoluteEventsPath: string
+  ): void {
+    const prompt = this.buildAgentPrompt(request, run.id);
+    if (this.providerSettings) this.providers.setSettings(this.providerSettings.read());
+    const providerOutputPath = this.repo.resolve(`.litagent/cache/provider-runs/${run.id}/last-message.md`);
+    fs.mkdirSync(path.dirname(providerOutputPath), { recursive: true });
+    let session;
+    try {
+      session = this.harness.startRun({
+        runId: run.id,
+        providerId: request.providerId,
+        cwd: this.repo.root,
+        prompt,
+        model: request.model,
+        eventsPath: absoluteEventsPath,
+        outputPath: providerOutputPath,
+        artifactPaths: [providerOutputPath]
+      });
+    } catch (error) {
+      appendEvent(
+        absoluteEventsPath,
+        event({
+          runId: run.id,
+          providerId: request.providerId,
+          type: "run.failed",
+          message: error instanceof Error ? error.message : String(error),
+          payload: { failureClass: "unsupported_provider" }
+        })
+      );
+      this.writeRun(WorkflowRunSchema.parse({ ...run, status: "failed", updatedAt: nowIso() }));
+      return;
+    }
+
+    session.finished
+      .then((result) => this.finishProviderBackedWorkflow(request, run, absoluteEventsPath, result))
+      .catch((error: unknown) => {
+        appendEvent(
+          absoluteEventsPath,
+          event({
+            runId: run.id,
+            providerId: request.providerId,
+            type: "run.failed",
+            message: error instanceof Error ? error.message : String(error),
+            payload: { failureClass: "harness_error" }
+          })
+        );
+        this.writeRun(WorkflowRunSchema.parse({ ...run, status: "failed", updatedAt: nowIso() }));
+      });
+  }
+
+  private finishProviderBackedWorkflow(
+    request: WorkflowStartRequest,
+    run: WorkflowRun,
+    absoluteEventsPath: string,
+    result: ProviderRunResult
+  ): void {
+    let status: WorkflowRun["status"] = result.status === "completed" ? "completed" : "failed";
+    if (result.status === "cancelled") status = "cancelled";
+    if (result.status === "completed") {
+      const finalText =
+        result.artifacts
+          .map((artifactPath) => (fs.existsSync(artifactPath) ? fs.readFileSync(artifactPath, "utf8") : ""))
+          .find((content) => content.trim().length > 0) ?? result.transcript;
+      const outputPath = this.writeProjectOutput(
+        request.projectId,
+        `${slugify(request.type)}-${slugify(run.id)}.md`,
+        [
+          `# ${request.type}`,
+          "",
+          `Provider: ${request.providerId}`,
+          `Model: ${request.model ?? "CLI default"}`,
+          `Run: ${run.id}`,
+          "",
+          finalText.trim() || "Provider completed without assistant text output."
+        ].join("\n")
+      );
+      appendEvent(
+        absoluteEventsPath,
+        event({
+          runId: run.id,
+          providerId: request.providerId,
+          type: "artifact.written",
+          message: "Provider transcript artifact written",
+          payload: { outputPath, sessionId: result.sessionId }
+        })
+      );
+    }
+    this.writeRun(WorkflowRunSchema.parse({ ...run, status, updatedAt: nowIso() }));
+  }
+
+  private buildAgentPrompt(request: WorkflowStartRequest, runId: string): string {
+    const papers = collectPapers(this.repo, request);
+    const project = request.projectId ? this.repo.readProject(request.projectId) : null;
+    const researchQuestions = project?.researchQuestions.map((question) => question.text) ?? [];
+    const paperContext = papers.map((paper) => this.formatPaperForPrompt(paper)).join("\n\n");
+    return [
+      "You are LitAgent, a local-first agentic literature review assistant.",
+      "Work only with the supplied project/library context unless the workflow explicitly asks you to find related papers.",
+      "Generated metadata, tags, and claims must be proposals unless the prompt asks for a saved artifact.",
+      "Every substantive claim should include evidence references using paper ids and passage ids when available.",
+      "When evidence is missing, say not found in selected sources.",
+      "",
+      `Workflow run id: ${runId}`,
+      `Workflow type: ${request.type}`,
+      `Provider: ${request.providerId}`,
+      `Model: ${request.model ?? "CLI default"}`,
+      `Project: ${project?.name ?? "global library"}`,
+      `Question/query: ${request.query ?? researchQuestions[0] ?? "none supplied"}`,
+      "",
+      "Research questions:",
+      ...(researchQuestions.length ? researchQuestions.map((question) => `- ${question}`) : ["- none supplied"]),
+      "",
+      "Selected paper context:",
+      paperContext || "No papers are selected.",
+      "",
+      "Write a concise Markdown result. Include a short Evidence section with paper ids, pages, and passage ids where possible."
+    ].join("\n");
+  }
+
+  private formatPaperForPrompt(paper: Paper): string {
+    const passages = this.repo.readPassages(paper.id).slice(0, 5);
+    return [
+      `## ${paper.title}`,
+      `paperId: ${paper.id}`,
+      `authors: ${paper.authors.join(", ") || "unknown"}`,
+      `year: ${paper.year ?? "unknown"}`,
+      `doi: ${paper.doi ?? "none"}`,
+      `arxivId: ${paper.arxivId ?? "none"}`,
+      `tags: ${paper.tags.join(", ") || "none"}`,
+      "passages:",
+      ...(
+        passages.length
+          ? passages.map((passage) => `- ${passage.id} p.${passage.page ?? "?"} ${passage.section}: ${passage.quote}`)
+          : ["- no indexed passages"]
+      )
+    ].join("\n");
   }
 
   private executeWorkflow(

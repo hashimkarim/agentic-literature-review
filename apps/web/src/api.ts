@@ -66,7 +66,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }),
-  qa: (body: { question: string; projectId: string | null; paperId?: string | null; providerId?: string }) =>
+  qa: (body: { question: string; projectId: string | null; paperId?: string | null; providerId?: string; model?: string | null }) =>
     request<QaResponse>("/api/qa", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -80,11 +80,17 @@ export const api = {
     collectionIds?: string[];
     query?: string | null;
     providerId?: string;
+    model?: string | null;
   }) =>
     request<WorkflowRun>("/api/workflows", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
+    }),
+  workflow: (runId: string) => request<{ run: WorkflowRun; events: unknown[] }>(`/api/workflows/${runId}`),
+  cancelWorkflow: (runId: string) =>
+    request<WorkflowRun>(`/api/workflows/${runId}/cancel`, {
+      method: "POST"
     }),
   convert: (paperId: string) =>
     request<{ status: string; message: string; passageCount: number }>(`/api/papers/${paperId}/convert`, {
@@ -104,5 +110,25 @@ export const api = {
     return request<PaperEntry>("/api/papers/import", { method: "POST", body });
   },
   exportBibUrl: (projectId: string) => `${API_BASE}/api/exports/${projectId}/bib`,
-  providerStatus: () => request<AgentProvider[]>("/api/provider-status")
+  providerStatus: () => request<AgentProvider[]>("/api/provider-status"),
+  providerSettings: () => request<AgentProvider[]>("/api/settings/providers"),
+  updateProviderSettings: (
+    providerId: string,
+    body: {
+      enabled?: boolean;
+      connected?: boolean;
+      command?: string;
+      defaultModel?: string | null;
+      customModels?: string[];
+    }
+  ) =>
+    request<AgentProvider[]>(`/api/settings/providers/${providerId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }),
+  connectProvider: (providerId: string) =>
+    request<AgentProvider[]>(`/api/settings/providers/${providerId}/connect`, {
+      method: "POST"
+    })
 };

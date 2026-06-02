@@ -167,6 +167,7 @@ export class LitAgentRepository {
     const ignore = [
       ".litagent/index.sqlite",
       ".litagent/*.sqlite",
+      ".litagent/provider-settings.json",
       ".litagent/cache/",
       ".litagent/thumbnails/",
       "*.tmp"

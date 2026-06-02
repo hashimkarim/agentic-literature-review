@@ -146,6 +146,7 @@ export const WorkflowRunSchema = z.object({
     query: z.string().nullable().default(null)
   }),
   providerId: z.string().default("local-heuristic"),
+  model: z.string().nullable().default(null),
   status: WorkflowStatusSchema,
   eventsPath: z.string(),
   createdAt: isoDateSchema,
@@ -167,11 +168,39 @@ export const AgentProviderSchema = z.object({
   label: z.string(),
   command: z.string(),
   installed: z.boolean(),
+  enabled: z.boolean().default(false),
+  connected: z.boolean().default(false),
   authStatus: z.enum(["unknown", "authenticated", "unauthenticated", "unavailable"]),
   version: z.string().nullable().default(null),
-  capabilities: z.array(z.string()).default([])
+  capabilities: z.array(z.string()).default([]),
+  defaultModel: z.string().nullable().default(null),
+  models: z.array(z.string()).default([]),
+  customModels: z.array(z.string()).default([]),
+  lastCheckedAt: isoDateSchema.nullable().default(null),
+  connectCommand: z.string().nullable().default(null)
 });
 export type AgentProvider = z.infer<typeof AgentProviderSchema>;
+
+export const AgentProviderSettingsSchema = z.object({
+  providerId: z.string(),
+  enabled: z.boolean().default(false),
+  connected: z.boolean().default(false),
+  command: z.string().default(""),
+  defaultModel: z.string().nullable().default(null),
+  customModels: z.array(z.string()).default([]),
+  lastCheckedAt: isoDateSchema.nullable().default(null),
+  updatedAt: isoDateSchema
+});
+export type AgentProviderSettings = z.infer<typeof AgentProviderSettingsSchema>;
+
+export const AgentProviderSettingsPatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  connected: z.boolean().optional(),
+  command: z.string().optional(),
+  defaultModel: z.string().nullable().optional(),
+  customModels: z.array(z.string()).optional()
+});
+export type AgentProviderSettingsPatch = z.infer<typeof AgentProviderSettingsPatchSchema>;
 
 export const RunEventTypeSchema = z.enum([
   "run.started",
@@ -218,7 +247,8 @@ export const QaRequestSchema = z.object({
   projectId: z.string().nullable().default(null),
   paperId: z.string().nullable().default(null),
   collectionId: z.string().nullable().default(null),
-  providerId: z.string().default("local-heuristic")
+  providerId: z.string().default("local-heuristic"),
+  model: z.string().nullable().default(null)
 });
 export type QaRequest = z.infer<typeof QaRequestSchema>;
 export type QaRequestInput = z.input<typeof QaRequestSchema>;
