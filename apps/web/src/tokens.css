@@ -1,0 +1,131 @@
+/* ============================================================
+   COMFY THEME — Colors & Type Foundations
+   A dark navy theme family with soft periwinkle accents,
+   muted grey text, low-contrast borders, small-radius UI.
+   Source spec: github.com/Hashim-K/comfy-themes
+   ============================================================ */
+
+/* ---- Fonts ----
+   The Comfy repo ships no font files (it is a palette + styling
+   spec only). These are substitutions chosen to match a warm,
+   developer-tooling identity:
+     - JetBrains Mono  -> code, terminal, syntax, numeric/data
+     - IBM Plex Sans   -> all UI chrome and body copy
+   Swap freely if the team standardises on different families. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ============ BACKGROUNDS ============ */
+  --bg-primary:        #23283d; /* main app, editor, chat, modal, content */
+  --bg-secondary:      #1e2233; /* sidebars, status bars, secondary panels */
+  --bg-secondary-alt:  #191f2e; /* inputs, alt panels, scrollbar tracks */
+  --bg-tertiary:       #101320; /* deep panels, floating UI, cards, players */
+
+  /* Elevated surfaces (from Spicetify scheme) */
+  --surface-elevated:        #32364a; /* elevated surface */
+  --surface-highlight:       #45495b; /* row / list hover */
+  --surface-highlight-alt:   #383d50; /* elevated hover */
+  --surface-input:           #3a4056; /* interactive field surface (VS Code) */
+  --surface-selection:       #343c56; /* active list selection (VS Code) */
+
+  /* ============ ACCENTS ============ */
+  --accent-profile: #096dc0; /* org profile, user buttons */
+  --accent-primary: #7289da; /* main interactive / brand accent */
+  --accent-soft:    #6e84d1; /* breadcrumbs, syntax, secondary states */
+  --accent-deep:    #4f5d92; /* tabs, links, badges, scrollbars, inactive */
+  --accent-bright:  #859bee; /* activity badges, brighter syntax */
+
+  /* ============ TEXT ============ */
+  --text-high:      #ffffff; /* highest-contrast text */
+  --text-primary:   #dadada; /* editor / UI foreground */
+  --text-secondary: #b9bbbe; /* subtext, secondary labels */
+  --text-muted:     #8e9297; /* muted body text */
+
+  /* ============ SEMANTIC STATES ============ */
+  --state-success:   #43b581; /* online, success, positive */
+  --state-spotify:   #1ed760; /* spotify / progress green */
+  --state-warning:   #eaca8b; /* warnings, cursor, bracket match */
+  --state-modified:  #ce8670; /* modified / error-adjacent soft orange */
+  --state-deleted:   #bd616a; /* deletions */
+  --state-error:     #d25050; /* errors, destructive */
+  --state-idle:      #faa61a; /* idle / attention */
+  --state-offline:   #747f8d; /* offline / subdued */
+  --state-streaming: #593695; /* streaming */
+  --state-mention:   #c66262; /* mention bar (Discord) */
+  --state-dnd:       #f04747; /* do-not-disturb / mention red (Discord) */
+
+  /* ============ SYNTAX (editor / terminal) ============ */
+  --syntax-keyword:  #7289da; /* keywords, methods, links */
+  --syntax-type:     #6e84d1; /* types, cyan, secondary */
+  --syntax-string:   #c9ad77; /* strings, warm gold */
+  --syntax-number:   #eaca8b; /* numbers, constants */
+  --syntax-func:     #859bee; /* functions, bright blue */
+  --syntax-class:    #a3be8c; /* git untracked, terminal green */
+  --syntax-tag:      #b48ead; /* terminal magenta */
+  --syntax-special:  #da97cd; /* special CSS selectors, bright magenta */
+  --syntax-comment:  #747f8d; /* comments (muted) */
+  --syntax-error:    #ff293b; /* strong syntax error */
+
+  /* ============ BORDERS & OVERLAYS ============ */
+  --border-light:   #e4e4e410; /* very subtle light border */
+  --border-primary: #23283d60; /* primary-surface border */
+  --border-deep:    #10132060; /* deep-surface border */
+  --border-line:    #515978;   /* indent guides, rulers (VS Code) */
+  --overlay-hover:    #00000010;
+  --overlay-active:   #0000001a;
+  --overlay-selected: #0000001f;
+
+  /* ============ RADII ============ */
+  --radius-xs: 3px;  /* status indicators */
+  --radius-sm: 5px;  /* avatars, role circles */
+  --radius-md: 8px;  /* servers, cards, buttons, cover art */
+
+  /* ============ ELEVATION ============
+     Comfy separates surfaces with small value shifts in the
+     navy backgrounds rather than heavy shadows. Shadows are
+     soft, dark, and reserved for genuinely floating UI. */
+  --shadow-sm:  0 1px 2px #00000033;
+  --shadow-md:  0 4px 12px #00000040;
+  --shadow-lg:  0 12px 32px #0000004d;
+
+  /* ============ TYPE FAMILIES ============ */
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ============ TYPE SCALE (px / line-height / weight) ============ */
+  --text-display:  600 28px/1.25 var(--font-sans);
+  --text-h1:       600 22px/1.3  var(--font-sans);
+  --text-h2:       600 18px/1.35 var(--font-sans);
+  --text-h3:       600 15px/1.4  var(--font-sans);
+  --text-body:     400 14px/1.55 var(--font-sans);
+  --text-body-sm:  400 13px/1.5  var(--font-sans);
+  --text-label:    500 12px/1.4  var(--font-sans);
+  --text-caption:  400 11px/1.4  var(--font-sans);
+  --text-code:     400 13px/1.6  var(--font-mono);
+  --text-code-sm:  400 12px/1.55 var(--font-mono);
+}
+
+/* ============================================================
+   SEMANTIC ELEMENT DEFAULTS
+   Drop-in baseline so raw HTML inherits the Comfy look.
+   ============================================================ */
+.comfy {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: var(--text-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.comfy h1 { font: var(--text-h1);  color: var(--text-high); margin: 0; }
+.comfy h2 { font: var(--text-h2);  color: var(--text-high); margin: 0; }
+.comfy h3 { font: var(--text-h3);  color: var(--text-primary); margin: 0; }
+.comfy p  { font: var(--text-body); color: var(--text-secondary); margin: 0; }
+.comfy small { font: var(--text-caption); color: var(--text-muted); }
+.comfy a { color: var(--accent-soft); text-decoration: none; }
+.comfy a:hover { color: var(--accent-bright); }
+.comfy code, .comfy pre {
+  font: var(--text-code);
+  color: var(--text-primary);
+}
+.comfy ::selection { background: #7289da55; }
