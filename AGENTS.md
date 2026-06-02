@@ -2,7 +2,7 @@
 
 ## Task Completion Requirements
 
-- Run `npm run typecheck` and `npm test` before considering implementation work complete.
+- Run `bun run typecheck` and `bun run test` before considering implementation work complete.
 - For rendered UI changes, run the web app and verify the first screen plus one interaction.
 - Prefer correctness and recoverable failure modes over optimistic shortcuts.
 

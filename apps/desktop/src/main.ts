@@ -9,7 +9,7 @@ let serverProcess: ChildProcess | null = null;
 
 function startBackend() {
   if (process.env.LITAGENT_SERVER_EXTERNAL === "1") return;
-  serverProcess = spawn("npm", ["run", "start", "-w", "apps/server"], {
+  serverProcess = spawn("bun", ["run", "--filter", "@litagent/server", "start"], {
     cwd: repoRoot,
     stdio: "inherit",
     env: process.env

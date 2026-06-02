@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
     "@litagent/contracts": "*"

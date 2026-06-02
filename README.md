@@ -12,8 +12,8 @@ OpenCode.
 ## Development
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 The web app runs on `http://localhost:5173` and the local backend runs on
@@ -28,11 +28,11 @@ Project roadmap and implementation progress are tracked in
 ## Useful Commands
 
 ```bash
-npm run typecheck
-npm test
-npm run build -w apps/web
-npm run dev:server
-npm run dev:web
+bun run typecheck
+bun run test
+bun run --filter @litagent/web build
+bun run dev:server
+bun run dev:web
 ```
 
 ## Repository Model

@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
     "@anaralabs/lector": "^3.12.2",
