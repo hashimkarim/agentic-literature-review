@@ -1,7 +1,9 @@
-import type { ComponentType, CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import type { ComponentType, CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import * as Lucide from "lucide-react";
-import type { AgentProvider, Passage, Project, QaResponse, WorkflowRun, WorkflowType } from "@litagent/contracts";
+import type { AgentProvider, CitationTarget, EvidenceRef, Passage, Project, QaResponse, WorkflowRun, WorkflowType } from "@litagent/contracts";
+import { PdfReader, PdfUnavailable } from "@litagent/pdf";
+import type { PdfAnnotation } from "@litagent/pdf";
 import { workflowLabels } from "@litagent/ui";
 
 import { API_BASE, api, type AppStatus, type PaperEntry, type ProjectDetails } from "./api";
@@ -399,7 +401,13 @@ function App() {
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [passages, setPassages] = useState<Passage[]>([]);
   const [qa, setQa] = useState<QaResponse | null>(null);
+  const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
+  const [citationActivation, setCitationActivation] = useState(0);
+  const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([]);
+  const [activePdfAnnotation, setActivePdfAnnotation] = useState<{ id: string; version: number } | null>(null);
   const [isPending, startTransition] = useTransition();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const importProjectIdRef = useRef<string | null>(null);
 
   const setTheme = useCallback((nextTheme: string) => {
     setThemeState(nextTheme);
@@ -416,21 +424,58 @@ function App() {
   }, [screen]);
 
   const loadBase = useCallback(async () => {
-    const [nextStatus, nextProjects, nextProviders, nextWorkflows, nextEntries] = await Promise.all([
-      api.status(),
-      api.projects(),
-      api.providerStatus(),
-      api.workflows(),
-      api.papers(null)
-    ]);
-    setStatus(nextStatus);
+    const [nextProjects, nextEntries] = await Promise.all([api.projects(), api.papers(null)]);
     setProjects(nextProjects);
-    setProviders(nextProviders);
-    setWorkflows(nextWorkflows);
     setLibraryEntries(nextEntries);
     setActiveProjectId((current) => current ?? nextProjects[0]?.id ?? null);
     setLibraryPaperId((current) => current ?? nextEntries[0]?.paper.id ?? null);
   }, []);
+
+  const loadSecondaryStatus = useCallback(() => {
+    void api.status().then(setStatus).catch(() => undefined);
+    void api.workflows().then(setWorkflows).catch(() => undefined);
+  }, []);
+
+  const loadProviders = useCallback(() => {
+    void api.providerStatus().then(setProviders).catch(() => undefined);
+  }, []);
+
+  const reloadPapers = useCallback(
+    async (projectId: string | null) => {
+      const [nextLibrary, nextProject] = await Promise.all([
+        api.papers(null),
+        projectId ? api.papers(projectId) : activeProjectId ? api.papers(activeProjectId) : Promise.resolve(projectEntries)
+      ]);
+      setLibraryEntries(nextLibrary);
+      setProjectEntries(nextProject);
+      if (nextLibrary.length) setLibraryPaperId((current) => current ?? nextLibrary[0]?.paper.id ?? null);
+      if (nextProject.length) setProjectPaperId((current) => current && nextProject.some((entry) => entry.paper.id === current) ? current : nextProject[0]?.paper.id ?? null);
+    },
+    [activeProjectId, projectEntries]
+  );
+
+  const openImportPicker = useCallback((projectId: string | null) => {
+    importProjectIdRef.current = projectId;
+    fileInputRef.current?.click();
+  }, []);
+
+  const importSelectedFiles = useCallback(
+    (files: FileList | null) => {
+      const selected = Array.from(files ?? []).filter((file) => file.name.toLowerCase().endsWith(".pdf"));
+      if (selected.length === 0) return;
+      const projectId = importProjectIdRef.current;
+      startTransition(() => {
+        void (async () => {
+          for (const file of selected) {
+            await api.importPaper({ file, projectId });
+          }
+          await reloadPapers(projectId);
+          if (projectId) setProjectDetails(await api.project(projectId));
+        })();
+      });
+    },
+    [reloadPapers]
+  );
 
   const loadProject = useCallback(async (projectId: string | null) => {
     if (!projectId) {
@@ -446,7 +491,15 @@ function App() {
 
   useEffect(() => {
     void loadBase();
-  }, [loadBase]);
+    loadSecondaryStatus();
+    const timer = window.setTimeout(loadProviders, 500);
+    return () => window.clearTimeout(timer);
+  }, [loadBase, loadProviders, loadSecondaryStatus]);
+
+  useEffect(() => {
+    if (screen !== "settings") return;
+    loadProviders();
+  }, [loadProviders, screen]);
 
   useEffect(() => {
     void loadProject(activeProjectId);
@@ -484,13 +537,35 @@ function App() {
     if (!selectedPaper) {
       setMarkdown(null);
       setPassages([]);
+      setCitationTarget(null);
+      setCitationActivation(0);
+      setPdfAnnotations([]);
+      setActivePdfAnnotation(null);
       return;
     }
+    setCitationTarget(null);
+    setCitationActivation(0);
+    setPdfAnnotations([]);
+    setActivePdfAnnotation(null);
     void Promise.all([api.markdown(selectedPaper.id), api.passages(selectedPaper.id)]).then(([nextMarkdown, nextPassages]) => {
       setMarkdown(nextMarkdown);
       setPassages(nextPassages);
     });
   }, [selectedPaper]);
+
+  const jumpToPdfAnnotation = useCallback((id: string) => {
+    setActivePdfAnnotation((current) => ({ id, version: (current?.version ?? 0) + 1 }));
+  }, []);
+
+  const deletePdfAnnotation = useCallback((id: string) => {
+    setPdfAnnotations((current) => current.filter((annotation) => annotation.id !== id));
+    setActivePdfAnnotation((current) => (current?.id === id ? null : current));
+  }, []);
+
+  const clearPdfAnnotations = useCallback(() => {
+    setPdfAnnotations([]);
+    setActivePdfAnnotation(null);
+  }, []);
 
   const changeProviderSelection = useCallback(
     (providerId: string) => {
@@ -575,6 +650,17 @@ function App() {
     });
   }, []);
 
+  const openCitation = useCallback((ref: EvidenceRef, scopeProjectId: string | null) => {
+    startTransition(() => {
+      void api.citationTarget(ref.paperId, ref.passageId, scopeProjectId).then((target) => {
+        setCitationTarget(target);
+        setCitationActivation((current) => current + 1);
+        if (screen === "library") setLibraryPaperId(target.paperId);
+        else setProjectPaperId(target.paperId);
+      });
+    });
+  }, [screen]);
+
   const nav: Array<[Screen, string, string, string?]> = [
     ["library", "library-big", "Library"],
     ["projects", "folder-kanban", "Projects"],
@@ -594,6 +680,17 @@ function App() {
   return (
     <div className="la-app">
       <div className="la-titlebar">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          multiple
+          hidden
+          onChange={(event) => {
+            importSelectedFiles(event.currentTarget.files);
+            event.currentTarget.value = "";
+          }}
+        />
         <div className="la-traffic">
           <span style={{ background: "#ff5f57" }} />
           <span style={{ background: "#febc2e" }} />
@@ -658,6 +755,15 @@ function App() {
             onSelectPaper={setLibraryPaperId}
             selectedPaper={selectedPaper}
             markdown={markdown}
+            citationTarget={citationTarget}
+            citationActivation={citationActivation}
+            pdfAnnotations={pdfAnnotations}
+            setPdfAnnotations={setPdfAnnotations}
+            activePdfAnnotationId={activePdfAnnotation?.id ?? null}
+            activePdfAnnotationKey={activePdfAnnotation?.version ?? 0}
+            onJumpPdfAnnotation={jumpToPdfAnnotation}
+            onDeletePdfAnnotation={deletePdfAnnotation}
+            onClearPdfAnnotations={clearPdfAnnotations}
             passages={passages}
             qa={qa}
             providers={providers}
@@ -670,6 +776,8 @@ function App() {
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, null, paperId)}
             onConvert={convertPaper}
+            onImportPapers={openImportPicker}
+            onOpenCitation={openCitation}
           />
         ) : null}
         {screen === "projects" ? (
@@ -683,6 +791,15 @@ function App() {
             onSelectPaper={setProjectPaperId}
             selectedPaper={selectedPaper}
             markdown={markdown}
+            citationTarget={citationTarget}
+            citationActivation={citationActivation}
+            pdfAnnotations={pdfAnnotations}
+            setPdfAnnotations={setPdfAnnotations}
+            activePdfAnnotationId={activePdfAnnotation?.id ?? null}
+            activePdfAnnotationKey={activePdfAnnotation?.version ?? 0}
+            onJumpPdfAnnotation={jumpToPdfAnnotation}
+            onDeletePdfAnnotation={deletePdfAnnotation}
+            onClearPdfAnnotations={clearPdfAnnotations}
             passages={passages}
             qa={qa}
             providers={providers}
@@ -695,6 +812,8 @@ function App() {
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, activeProjectId, paperId)}
             onConvert={convertPaper}
+            onImportPapers={openImportPicker}
+            onOpenCitation={openCitation}
           />
         ) : null}
         {screen === "search" ? (
@@ -773,7 +892,7 @@ function LibraryScreen(props: WorkspaceProps & { projects: Project[] }) {
     <WorkspaceShell
       tool={tool}
       setTool={setTool}
-      primaryAction={<Btn variant="primary" sm icon="upload">Import</Btn>}
+      primaryAction={<Btn variant="primary" sm icon="upload" onClick={() => props.onImportPapers(null)}>Import</Btn>}
     >
       {tool === "papers" ? (
         <div className="la-content">
@@ -784,6 +903,7 @@ function LibraryScreen(props: WorkspaceProps & { projects: Project[] }) {
             tagOptions={tagOptions}
             tagFilter={tagFilter}
             toggleTag={(tag) => setTagFilter((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]))}
+            onImportPapers={() => props.onImportPapers(null)}
           />
           <PaperListPane
             papers={filtered}
@@ -794,7 +914,16 @@ function LibraryScreen(props: WorkspaceProps & { projects: Project[] }) {
             filterNote={[...typeFilter, ...tagFilter].length ? `Filtered · ${[...typeFilter, ...tagFilter].join(", ")}` : null}
           />
           <div className="la-col" style={{ flex: 1, minWidth: 320 }}>
-            <Reader paper={props.selectedPaper} markdown={props.markdown} />
+            <Reader
+              paper={props.selectedPaper}
+              markdown={props.markdown}
+              citationTarget={props.citationTarget}
+              citationActivation={props.citationActivation}
+              pdfAnnotations={props.pdfAnnotations}
+              setPdfAnnotations={props.setPdfAnnotations}
+              activePdfAnnotationId={props.activePdfAnnotationId}
+              activePdfAnnotationKey={props.activePdfAnnotationKey}
+            />
           </div>
           <AgentPanel {...props} contextLabel="Global Library" scopeProjectId={null} />
         </div>
@@ -811,6 +940,15 @@ interface WorkspaceProps {
   onSelectPaper: (paperId: string) => void;
   selectedPaper: UiPaper | null;
   markdown: string | null;
+  citationTarget: CitationTarget | null;
+  citationActivation: number;
+  pdfAnnotations: PdfAnnotation[];
+  setPdfAnnotations: Dispatch<SetStateAction<PdfAnnotation[]>>;
+  activePdfAnnotationId: string | null;
+  activePdfAnnotationKey: number;
+  onJumpPdfAnnotation: (id: string) => void;
+  onDeletePdfAnnotation: (id: string) => void;
+  onClearPdfAnnotations: () => void;
   passages: Passage[];
   qa: QaResponse | null;
   providers: AgentProvider[];
@@ -823,6 +961,8 @@ interface WorkspaceProps {
   onCancelWorkflow: (runId: string) => void;
   onAsk: (question: string, paperId: string | null) => void;
   onConvert: (paperId: string) => void;
+  onImportPapers: (projectId: string | null) => void;
+  onOpenCitation: (ref: EvidenceRef, projectId: string | null) => void;
 }
 
 function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: UiProject; activeProjectId: string | null; onProjectChange: (projectId: string) => void }) {
@@ -837,7 +977,7 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
     <WorkspaceShell
       tool={tool}
       setTool={setTool}
-      primaryAction={<Btn variant="primary" sm icon="plus">Add papers</Btn>}
+      primaryAction={<Btn variant="primary" sm icon="plus" onClick={() => props.onImportPapers(props.activeProjectId)} disabled={!props.activeProjectId}>Add papers</Btn>}
       secondaryAction={<Btn variant="ghost" sm icon="users">Share</Btn>}
     >
       {tool === "papers" ? (
@@ -860,7 +1000,16 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
             filterNote={activeRq ? `Filtered to ${activeRq}` : tagFilter.length ? `Tags: ${tagFilter.join(", ")}` : null}
           />
           <div className="la-col" style={{ flex: 1, minWidth: 320 }}>
-            <Reader paper={props.selectedPaper} markdown={props.markdown} />
+            <Reader
+              paper={props.selectedPaper}
+              markdown={props.markdown}
+              citationTarget={props.citationTarget}
+              citationActivation={props.citationActivation}
+              pdfAnnotations={props.pdfAnnotations}
+              setPdfAnnotations={props.setPdfAnnotations}
+              activePdfAnnotationId={props.activePdfAnnotationId}
+              activePdfAnnotationKey={props.activePdfAnnotationKey}
+            />
           </div>
           <AgentPanel {...props} contextLabel={props.project.name} scopeProjectId={props.activeProjectId} />
         </div>
@@ -915,7 +1064,8 @@ function LibraryFilters({
   setTypeFilter,
   tagOptions,
   tagFilter,
-  toggleTag
+  toggleTag,
+  onImportPapers
 }: {
   papers: UiPaper[];
   typeFilter: string[];
@@ -923,6 +1073,7 @@ function LibraryFilters({
   tagOptions: string[];
   tagFilter: string[];
   toggleTag: (tag: string) => void;
+  onImportPapers: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const types = [...new Set(papers.map((paper) => paper.type))];
@@ -940,7 +1091,7 @@ function LibraryFilters({
       </div>
       <div className="scroll" style={{ flex: 1 }}>
         <div style={{ padding: "10px 12px" }}>
-          <Btn variant="primary" icon="upload" style={{ width: "100%" }}>
+          <Btn variant="primary" icon="upload" style={{ width: "100%" }} onClick={onImportPapers}>
             Import papers
           </Btn>
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
@@ -1177,10 +1328,38 @@ function PaperListPane({ papers, selId, onSelect, title, showScreen = true, filt
   );
 }
 
-function Reader({ paper, markdown }: { paper: UiPaper | null; markdown: string | null }) {
+function Reader({
+  paper,
+  markdown,
+  citationTarget,
+  citationActivation,
+  pdfAnnotations,
+  setPdfAnnotations,
+  activePdfAnnotationId,
+  activePdfAnnotationKey
+}: {
+  paper: UiPaper | null;
+  markdown: string | null;
+  citationTarget: CitationTarget | null;
+  citationActivation: number;
+  pdfAnnotations: PdfAnnotation[];
+  setPdfAnnotations: Dispatch<SetStateAction<PdfAnnotation[]>>;
+  activePdfAnnotationId: string | null;
+  activePdfAnnotationKey: number;
+}) {
   const [tab, setTab] = useState<ReaderTab>("pdf");
   const [side, setSide] = useState(false);
   useEffect(() => setSide(false), [paper?.id]);
+  useEffect(() => {
+    if (!citationTarget || citationTarget.paperId !== paper?.id) return;
+    setTab(citationTarget.pdf.available ? "pdf" : "markdown");
+    setSide(false);
+  }, [citationTarget, paper?.id]);
+  useEffect(() => {
+    if (!activePdfAnnotationId) return;
+    setTab("pdf");
+    setSide(false);
+  }, [activePdfAnnotationId, activePdfAnnotationKey]);
   if (!paper) return <Empty icon="file-search" title="No paper selected" desc="Import or select a paper to open the reader." />;
   return (
     <div className="la-reader">
@@ -1206,12 +1385,33 @@ function Reader({ paper, markdown }: { paper: UiPaper | null; markdown: string |
       </div>
       {side ? (
         <div className="la-readerbody" style={{ display: "flex", overflow: "hidden" }}>
-          <div className="scroll" style={{ flex: 1, borderRight: "1px solid var(--border-deep)" }}><PdfView paper={paper} /></div>
+          <div className="scroll" style={{ flex: 1, borderRight: "1px solid var(--border-deep)" }}>
+            <PdfView
+              paper={paper}
+              citationTarget={citationTarget}
+              citationActivation={citationActivation}
+              pdfAnnotations={pdfAnnotations}
+              setPdfAnnotations={setPdfAnnotations}
+              activePdfAnnotationId={activePdfAnnotationId}
+              activePdfAnnotationKey={activePdfAnnotationKey}
+            />
+          </div>
           <div className="scroll" style={{ flex: 1 }}><MarkdownView paper={paper} markdown={markdown} /></div>
         </div>
       ) : (
         <div className="la-readerbody">
-          {tab === "pdf" ? <PdfView paper={paper} /> : null}
+          {citationTarget && citationTarget.paperId === paper.id ? <CitationTargetBanner target={citationTarget} /> : null}
+          {tab === "pdf" ? (
+            <PdfView
+              paper={paper}
+              citationTarget={citationTarget}
+              citationActivation={citationActivation}
+              pdfAnnotations={pdfAnnotations}
+              setPdfAnnotations={setPdfAnnotations}
+              activePdfAnnotationId={activePdfAnnotationId}
+              activePdfAnnotationKey={activePdfAnnotationKey}
+            />
+          ) : null}
           {tab === "markdown" ? <MarkdownView paper={paper} markdown={markdown} /> : null}
           {tab === "notes" ? <NotesView paper={paper} /> : null}
         </div>
@@ -1220,18 +1420,83 @@ function Reader({ paper, markdown }: { paper: UiPaper | null; markdown: string |
   );
 }
 
-function PdfView({ paper }: { paper: UiPaper }) {
+function CitationTargetBanner({ target }: { target: CitationTarget }) {
+  return (
+    <div className="la-citationtarget">
+      <div className="ct-head">
+        <Icon name="quote" size={14} />
+        <span>Resolved citation</span>
+        <Badge variant="accent">p.{target.page ?? "?"}</Badge>
+      </div>
+      <div className="ct-meta">
+        <span>PDF {target.pdf.available ? `page ${target.pdf.page ?? "?"}` : "not attached"}</span>
+        <span>Markdown {target.markdown.available ? `L${target.markdown.startLine ?? "?"}-L${target.markdown.endLine ?? "?"}` : "not generated"}</span>
+        <span>Rects: {target.pdf.rectSource}</span>
+      </div>
+      <div className="ct-quote">"{target.quote}"</div>
+    </div>
+  );
+}
+
+function PdfView({
+  paper,
+  citationTarget,
+  citationActivation,
+  pdfAnnotations,
+  setPdfAnnotations,
+  activePdfAnnotationId,
+  activePdfAnnotationKey
+}: {
+  paper: UiPaper;
+  citationTarget?: CitationTarget | null;
+  citationActivation: number;
+  pdfAnnotations: PdfAnnotation[];
+  setPdfAnnotations: Dispatch<SetStateAction<PdfAnnotation[]>>;
+  activePdfAnnotationId: string | null;
+  activePdfAnnotationKey: number;
+}) {
   const pdfPath = paper.entry.paper.filePaths.pdf;
+  const citationHighlight =
+    citationTarget && citationTarget.paperId === paper.id && citationTarget.pdf.available
+      ? [
+          {
+            id: citationTarget.passageId,
+            activationKey: citationActivation,
+            page: citationTarget.pdf.page ?? citationTarget.page ?? 1,
+            quote: citationTarget.quote,
+            color: "yellow" as const,
+            active: true,
+            rects: citationTarget.pdf.rects.map((rect) => ({
+              page: rect.page,
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height
+            }))
+          }
+        ]
+      : [];
   if (pdfPath) {
     return (
       <div className="la-pdfwrap">
-        <object data={`${API_BASE}/api/papers/${paper.id}/pdf`} type="application/pdf" className="la-pdfobject">
-          <PdfPage paper={paper} />
-        </object>
+        <PdfReader
+          source={`${API_BASE}/api/papers/${paper.id}/pdf`}
+          highlights={citationHighlight}
+          annotations={pdfAnnotations}
+          onAnnotationsChange={setPdfAnnotations}
+          activeAnnotationId={activePdfAnnotationId}
+          activeAnnotationKey={activePdfAnnotationKey}
+          fallback={<div className="pdf-loading">Loading {paper.title}...</div>}
+        />
       </div>
     );
   }
-  return <PdfPage paper={paper} />;
+  return (
+    <div className="la-pdfwrap">
+      <PdfUnavailable title={paper.title} />
+      <PdfPage paper={paper} />
+    </div>
+  );
 }
 
 function PdfPage({ paper }: { paper: UiPaper }) {
@@ -1365,26 +1630,33 @@ function AgentPanel({
   workflows,
   passages,
   qa,
+  pdfAnnotations,
+  activePdfAnnotationId,
+  onJumpPdfAnnotation,
+  onDeletePdfAnnotation,
+  onClearPdfAnnotations,
   onRunWorkflow,
   onCancelWorkflow,
-  onAsk
+  onAsk,
+  onOpenCitation
 }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
-  const [tab, setTab] = useState<"details" | "ask" | "evidence" | "queue">("details");
+  const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
   const [input, setInput] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const running = workflows.filter((run) => run.status === "running").length;
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
-  const evidence = qa?.evidence.length ? qa.evidence : passages.slice(0, 5).map((passage) => ({ passageId: passage.id, paperId: passage.paperId, page: passage.page, quote: passage.quote, confidence: 0.75 }));
+  const evidence: EvidenceRef[] = qa?.evidence.length ? qa.evidence : passages.slice(0, 5).map((passage) => ({ passageId: passage.id, paperId: passage.paperId, page: passage.page, quote: passage.quote, confidence: 0.75 }));
   return (
     <div className="la-agent la-colborder-l">
       <div className="la-agenttabs">
         <button type="button" className={`la-atab${tab === "details" ? " on" : ""}`} onClick={() => setTab("details")}>Details</button>
         <button type="button" className={`la-atab${tab === "ask" ? " on" : ""}`} onClick={() => setTab("ask")}>Ask</button>
         <button type="button" className={`la-atab${tab === "evidence" ? " on" : ""}`} onClick={() => setTab("evidence")}>Evidence<span className="n">{evidence.length}</span></button>
+        <button type="button" className={`la-atab${tab === "annotations" ? " on" : ""}`} onClick={() => setTab("annotations")}>Annotations<span className="n">{pdfAnnotations.length}</span></button>
         <button type="button" className={`la-atab${tab === "queue" ? " on" : ""}`} onClick={() => setTab("queue")}>Queue{running > 0 ? <span className="n" style={{ color: "var(--accent-bright)" }}>{running}</span> : null}</button>
         <button type="button" className="la-iconbtn" title="Minimize panel" style={{ flexShrink: 0, alignSelf: "center", marginRight: 4 }} onClick={() => setCollapsed(true)}><Icon name="panel-right-close" size={15} /></button>
       </div>
-      {tab !== "details" ? (
+      {tab === "ask" || tab === "evidence" ? (
         <div className="la-modelbar">
           <ModelPicker providers={providers} providerId={selectedProviderId} model={selectedModel} onProviderChange={onProviderChange} onModelChange={onModelChange} />
           <button type="button" className="la-iconbtn" title="Agent settings"><Icon name="sliders-horizontal" size={15} /></button>
@@ -1419,7 +1691,7 @@ function AgentPanel({
                 <div className="la-amsg">
                   {qa.answer}
                   {qa.evidence.map((item, index) => (
-                    <span key={item.passageId} className="cite" onClick={() => setTab("evidence")}>{index + 1}</span>
+                    <span key={item.passageId} className="cite" onClick={() => { setTab("evidence"); onOpenCitation(item, scopeProjectId); }}>{index + 1}</span>
                   ))}
                 </div>
               ) : (
@@ -1458,7 +1730,7 @@ function AgentPanel({
             <Btn variant="ghost" sm icon="download">Export</Btn>
           </div>
           {evidence.length ? evidence.map((item, index) => (
-            <div key={item.passageId} className="la-evcard">
+            <div key={item.passageId} className="la-evcard" onClick={() => onOpenCitation(item, scopeProjectId)} title="Open citation target">
               <div className="quote">"{item.quote}"</div>
               <div className="src">
                 <span className="cite">{index + 1}</span>
@@ -1471,6 +1743,15 @@ function AgentPanel({
           )) : <Empty icon="quote" title="No evidence yet" desc="Convert and index papers, then ask a cited question." />}
         </div>
       ) : null}
+      {tab === "annotations" ? (
+        <AnnotationSidePanel
+          annotations={pdfAnnotations}
+          activeAnnotationId={activePdfAnnotationId}
+          onJump={onJumpPdfAnnotation}
+          onDelete={onDeletePdfAnnotation}
+          onClear={onClearPdfAnnotations}
+        />
+      ) : null}
       {tab === "queue" ? (
         <div className="la-agentbody fade-in">
           <WorkflowQueue workflows={workflows} onCancelWorkflow={onCancelWorkflow} />
@@ -1478,6 +1759,78 @@ function AgentPanel({
       ) : null}
     </div>
   );
+}
+
+function AnnotationSidePanel({
+  annotations,
+  activeAnnotationId,
+  onJump,
+  onDelete,
+  onClear
+}: {
+  annotations: PdfAnnotation[];
+  activeAnnotationId: string | null;
+  onJump: (id: string) => void;
+  onDelete: (id: string) => void;
+  onClear: () => void;
+}) {
+  const grouped = useMemo(() => {
+    const byPage = new Map<number, PdfAnnotation[]>();
+    for (const annotation of annotations) {
+      const page = annotation.position.boundingRect.pageNumber || annotation.litPage || 1;
+      const pageAnnotations = byPage.get(page) ?? [];
+      pageAnnotations.push(annotation);
+      byPage.set(page, pageAnnotations);
+    }
+    return [...byPage.entries()].sort(([left], [right]) => left - right);
+  }, [annotations]);
+
+  return (
+    <div className="la-agentbody fade-in la-annbody">
+      <div className="la-annbar">
+        <span>Local annotations · {annotations.length}</span>
+        <Btn variant="ghost" sm icon="trash-2" onClick={onClear} disabled={!annotations.length}>Clear</Btn>
+      </div>
+      {annotations.length ? (
+        <div className="la-annlist">
+          {grouped.map(([page, pageAnnotations]) => (
+            <section key={page} className="la-annpage">
+              <div className="la-annpagehead">
+                <span>Page {page}</span>
+                <span>{pageAnnotations.length}</span>
+              </div>
+              {pageAnnotations.map((annotation) => (
+                <article key={annotation.id} className={`la-anncard${annotation.id === activeAnnotationId ? " on" : ""}`}>
+                  <button type="button" className="la-annopen" onClick={() => onJump(annotation.id)} title="Jump to annotation">
+                    <span className="kind">{pdfAnnotationLabel(annotation)}</span>
+                    <span className="text">{truncatePdfAnnotation(annotation.litQuote || annotation.content?.text || pdfAnnotationLabel(annotation))}</span>
+                  </button>
+                  <button type="button" className="la-anndel" title="Delete annotation" onClick={() => onDelete(annotation.id)}>
+                    <Icon name="trash-2" size={13} />
+                  </button>
+                </article>
+              ))}
+            </section>
+          ))}
+        </div>
+      ) : (
+        <Empty icon="highlighter" title="No annotations" desc="Use the PDF toolbar to highlight text, draw an area, or place a note." />
+      )}
+    </div>
+  );
+}
+
+function pdfAnnotationLabel(annotation: PdfAnnotation): string {
+  if (annotation.type === "freetext") return "Note";
+  if (annotation.type === "area") return "Area";
+  if (annotation.type === "drawing") return "Drawing";
+  if (annotation.type === "shape") return annotation.content?.shape?.shapeType ?? "Shape";
+  return "Text";
+}
+
+function truncatePdfAnnotation(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 
 function WorkflowQueue({ workflows, onCancelWorkflow }: { workflows: WorkflowRun[]; onCancelWorkflow: (runId: string) => void }) {

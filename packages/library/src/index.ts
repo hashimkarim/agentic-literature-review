@@ -7,6 +7,8 @@ import { z } from "zod";
 
 import {
   AnnotationSchema,
+  CitationTargetRequestSchema,
+  CitationTargetSchema,
   CollectionSchema,
   CreateAnnotationRequestSchema,
   CreateNoteRequestSchema,
@@ -22,6 +24,8 @@ import {
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema,
   type Annotation,
+  type CitationTarget,
+  type CitationTargetRequestInput,
   type Collection,
   type CreateAnnotationRequestInput,
   type CreateNoteRequestInput,
@@ -137,6 +141,13 @@ function removeValue(values: string[], value: string): string[] {
 
 function quoteBibTeX(value: string | number | null | undefined): string {
   return String(value ?? "").replace(/[{}]/g, "");
+}
+
+function quotesOverlap(first: string, second: string): boolean {
+  const a = first.toLowerCase().replace(/\s+/g, " ").trim();
+  const b = second.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!a || !b) return true;
+  return a.includes(b) || b.includes(a);
 }
 
 const noteFrontmatterPattern = /^---\n(?<json>[\s\S]*?)\n---\n?/;
@@ -737,6 +748,53 @@ export class LitAgentRepository {
       .split("\n")
       .filter(Boolean)
       .map((line) => PassageSchema.parse(JSON.parse(line)));
+  }
+
+  resolveCitationTarget(input: CitationTargetRequestInput): CitationTarget {
+    const parsed = CitationTargetRequestSchema.parse(input);
+    const paper = this.readPaper(parsed.paperId);
+    if (!paper) throw new Error(`Paper not found: ${parsed.paperId}`);
+    const passage = this.readPassages(parsed.paperId).find((candidate) => candidate.id === parsed.passageId);
+    if (!passage) throw new Error(`Passage not found: ${parsed.paperId}/${parsed.passageId}`);
+
+    const annotations = parsed.projectId
+      ? this.listAnnotations(parsed.projectId, parsed.paperId).filter(
+          (annotation) =>
+            annotation.page === passage.page &&
+            (quotesOverlap(annotation.quote, passage.quote) ||
+              annotation.rects.some((rect) => rect.page === passage.page))
+        )
+      : [];
+    const annotationRects = annotations.flatMap((annotation) => annotation.rects);
+    const rects = passage.rects.length > 0 ? passage.rects : annotationRects;
+    const rectSource = passage.rects.length > 0 ? "passage" : annotationRects.length > 0 ? "annotation" : "none";
+
+    return CitationTargetSchema.parse({
+      paperId: parsed.paperId,
+      passageId: parsed.passageId,
+      projectId: parsed.projectId,
+      paperTitle: paper.title,
+      quote: passage.quote,
+      page: passage.page,
+      section: passage.section,
+      pdf: {
+        available: Boolean(paper.filePaths.pdf),
+        path: paper.filePaths.pdf,
+        url: null,
+        page: passage.page,
+        rects,
+        rectSource
+      },
+      markdown: {
+        available: Boolean(paper.filePaths.markdown),
+        path: paper.filePaths.markdown,
+        url: null,
+        section: passage.section,
+        startLine: passage.markdownStart === null ? null : passage.markdownStart + 1,
+        endLine: passage.markdownEnd === null ? null : passage.markdownEnd
+      },
+      annotations
+    });
   }
 
   writePassages(paperId: string, passages: Passage[]): void {

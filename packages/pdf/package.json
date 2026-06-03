@@ -15,8 +15,8 @@
     "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@anaralabs/lector": "^3.12.2",
-    "pdfjs-dist": "^5.4.394",
+    "pdfjs-dist": "^4.4.168",
+    "react-pdf-highlighter-plus": "1.1.4",
     "react": "^19.2.1"
   }
 }

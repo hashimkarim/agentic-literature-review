@@ -87,7 +87,7 @@ app.get(
       projects: projects.length,
       papers: papers.length,
       git: repo.gitStatus(),
-      providers: refreshProviders()
+      providers: []
     });
   })
 );
@@ -262,7 +262,32 @@ app.get(
       res.status(404).json({ error: "PDF not found" });
       return;
     }
-    res.sendFile(pdfPath);
+    const stat = fs.statSync(pdfPath);
+    const range = req.headers.range;
+    if (typeof range === "string") {
+      const match = range.match(/^bytes=(\d*)-(\d*)$/);
+      if (!match) {
+        res.status(416).setHeader("Content-Range", `bytes */${stat.size}`).end();
+        return;
+      }
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Number(match[2]) : stat.size - 1;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || end >= stat.size) {
+        res.status(416).setHeader("Content-Range", `bytes */${stat.size}`).end();
+        return;
+      }
+      res.status(206);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Accept-Ranges", "bytes");
+      res.setHeader("Content-Length", String(end - start + 1));
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${stat.size}`);
+      fs.createReadStream(pdfPath, { start, end }).pipe(res);
+      return;
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Content-Length", String(stat.size));
+    fs.createReadStream(pdfPath).pipe(res);
   })
 );
 
@@ -282,6 +307,33 @@ app.get(
   "/api/papers/:id/passages",
   asyncHandler((req, res) => {
     res.json(repo.readPassages(routeParam(req, "id")));
+  })
+);
+
+app.get(
+  "/api/papers/:id/passages/:passageId/target",
+  asyncHandler((req, res) => {
+    const paperId = routeParam(req, "id");
+    const passageId = routeParam(req, "passageId");
+    const projectId = typeof req.query.projectId === "string" && req.query.projectId ? req.query.projectId : null;
+    const target = repo.resolveCitationTarget({ paperId, passageId, projectId });
+    res.json({
+      ...target,
+      pdf: {
+        ...target.pdf,
+        url: target.pdf.available
+          ? `/api/papers/${encodeURIComponent(paperId)}/pdf${target.pdf.page ? `#page=${target.pdf.page}` : ""}`
+          : null
+      },
+      markdown: {
+        ...target.markdown,
+        url: target.markdown.available
+          ? `/api/papers/${encodeURIComponent(paperId)}/markdown${
+              target.markdown.startLine ? `#L${target.markdown.startLine}${target.markdown.endLine ? `-L${target.markdown.endLine}` : ""}` : ""
+            }`
+          : null
+      }
+    });
   })
 );
 

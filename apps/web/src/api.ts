@@ -6,6 +6,7 @@ import type {
   Passage,
   Project,
   QaResponse,
+  CitationTarget,
   SearchResult,
   WorkflowRun,
   WorkflowType
@@ -60,6 +61,12 @@ export const api = {
     return response.text();
   },
   passages: (paperId: string) => request<Passage[]>(`/api/papers/${paperId}/passages`),
+  citationTarget: (paperId: string, passageId: string, projectId: string | null) =>
+    request<CitationTarget>(
+      `/api/papers/${encodeURIComponent(paperId)}/passages/${encodeURIComponent(passageId)}/target${
+        projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""
+      }`
+    ),
   search: (body: { query: string; projectId: string | null; paperId?: string | null; limit?: number }) =>
     request<SearchResult[]>("/api/search", {
       method: "POST",

@@ -184,6 +184,45 @@ export const EvidenceRefSchema = z.object({
 });
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
 
+export const CitationRectSourceSchema = z.enum(["passage", "annotation", "none"]);
+export type CitationRectSource = z.infer<typeof CitationRectSourceSchema>;
+
+export const CitationTargetSchema = z.object({
+  paperId: z.string(),
+  passageId: z.string(),
+  projectId: z.string().nullable().default(null),
+  paperTitle: z.string(),
+  quote: z.string(),
+  page: z.number().int().positive().nullable().default(null),
+  section: z.string().default(""),
+  pdf: z.object({
+    available: z.boolean(),
+    path: z.string().nullable().default(null),
+    url: z.string().nullable().default(null),
+    page: z.number().int().positive().nullable().default(null),
+    rects: z.array(PdfRectSchema).default([]),
+    rectSource: CitationRectSourceSchema.default("none")
+  }),
+  markdown: z.object({
+    available: z.boolean(),
+    path: z.string().nullable().default(null),
+    url: z.string().nullable().default(null),
+    section: z.string().default(""),
+    startLine: z.number().int().positive().nullable().default(null),
+    endLine: z.number().int().positive().nullable().default(null)
+  }),
+  annotations: z.array(AnnotationSchema).default([])
+});
+export type CitationTarget = z.infer<typeof CitationTargetSchema>;
+
+export const CitationTargetRequestSchema = z.object({
+  paperId: z.string(),
+  passageId: z.string(),
+  projectId: z.string().nullable().default(null)
+});
+export type CitationTargetRequest = z.infer<typeof CitationTargetRequestSchema>;
+export type CitationTargetRequestInput = z.input<typeof CitationTargetRequestSchema>;
+
 export const AgentProviderSchema = z.object({
   id: z.string(),
   label: z.string(),
