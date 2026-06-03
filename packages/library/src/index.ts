@@ -6,28 +6,43 @@ import { spawnSync } from "node:child_process";
 import { z } from "zod";
 
 import {
+  AnnotationSchema,
   CollectionSchema,
+  CreateAnnotationRequestSchema,
+  CreateNoteRequestSchema,
   ImportPaperRequestSchema,
   LinkPaperRequestSchema,
+  NoteSchema,
+  NoteWithContentSchema,
   PaperProjectLinkSchema,
   PaperSchema,
   PassageSchema,
   ProjectSchema,
   ResearchQuestionSchema,
+  UpdateAnnotationRequestSchema,
+  UpdateNoteRequestSchema,
+  type Annotation,
   type Collection,
+  type CreateAnnotationRequestInput,
+  type CreateNoteRequestInput,
   type ImportPaperRequestInput,
   type LinkPaperRequestInput,
+  type Note,
+  type NoteWithContent,
   type Paper,
   type PaperProjectLink,
   type Passage,
   type Project,
-  type RelevanceState
+  type RelevanceState,
+  type UpdateAnnotationRequestInput,
+  type UpdateNoteRequestInput
 } from "@litagent/contracts";
 
 export const DEFAULT_REPO_ROOT = path.join(os.homedir(), ".litagent", "research-repo");
 
 const linksArraySchema = z.array(PaperProjectLinkSchema);
 const collectionsArraySchema = z.array(CollectionSchema);
+const annotationsArraySchema = z.array(AnnotationSchema);
 
 export interface ProjectWithDetails {
   project: Project;
@@ -116,8 +131,34 @@ function mergeUnique(...values: string[][]): string[] {
   return [...new Set(values.flat().map((value) => value.trim()).filter(Boolean))];
 }
 
+function removeValue(values: string[], value: string): string[] {
+  return values.filter((candidate) => candidate !== value);
+}
+
 function quoteBibTeX(value: string | number | null | undefined): string {
   return String(value ?? "").replace(/[{}]/g, "");
+}
+
+const noteFrontmatterPattern = /^---\n(?<json>[\s\S]*?)\n---\n?/;
+
+function readNoteMarkdown(filePath: string): NoteWithContent {
+  const raw = fs.readFileSync(filePath, "utf8");
+  const match = raw.match(noteFrontmatterPattern);
+  if (!match?.groups?.json) {
+    throw new Error(`Note is missing LitAgent JSON frontmatter: ${filePath}`);
+  }
+  const note = NoteSchema.parse(JSON.parse(match.groups.json));
+  return NoteWithContentSchema.parse({
+    ...note,
+    content: raw.slice(match[0].length)
+  });
+}
+
+function writeNoteMarkdown(root: string, note: Note, content: string): void {
+  const filePath = path.join(root, note.path);
+  ensureDir(path.dirname(filePath));
+  const frontmatter = JSON.stringify(note, null, 2);
+  fs.writeFileSync(filePath, `---\n${frontmatter}\n---\n${content}`, "utf8");
 }
 
 export class LitAgentRepository {
@@ -467,6 +508,192 @@ export class LitAgentRepository {
     writeJson(this.resolve(`projects/${projectId}/paper-links.json`), links);
   }
 
+  listNotes(projectId: string): Note[] {
+    if (!this.readProject(projectId)) throw new Error(`Project not found: ${projectId}`);
+    const dir = this.resolve(`projects/${projectId}/notes`);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((file) => file.endsWith(".md"))
+      .map((file) => readNoteMarkdown(path.join(dir, file)))
+      .map(({ content: _content, ...note }) => note)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  readNote(projectId: string, noteId: string): NoteWithContent | null {
+    const filePath = this.resolve(`projects/${projectId}/notes/${noteId}.md`);
+    if (!fs.existsSync(filePath)) return null;
+    const note = readNoteMarkdown(filePath);
+    if (note.projectId !== projectId || note.id !== noteId) {
+      throw new Error(`Note metadata does not match path: ${projectId}/${noteId}`);
+    }
+    return note;
+  }
+
+  createNote(projectId: string, input: CreateNoteRequestInput): NoteWithContent {
+    if (!this.readProject(projectId)) throw new Error(`Project not found: ${projectId}`);
+    const parsed = CreateNoteRequestSchema.parse(input);
+    if (parsed.paperId && !this.readPaper(parsed.paperId)) throw new Error(`Paper not found: ${parsed.paperId}`);
+    const timestamp = nowIso();
+    const note = NoteSchema.parse({
+      id: createId("note"),
+      projectId,
+      title: parsed.title,
+      path: "",
+      paperId: parsed.paperId,
+      passageIds: parsed.passageIds,
+      annotationIds: parsed.annotationIds,
+      workflowRunIds: parsed.workflowRunIds,
+      researchQuestionIds: parsed.researchQuestionIds,
+      tags: parsed.tags,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    const noteWithPath = NoteSchema.parse({
+      ...note,
+      path: `projects/${projectId}/notes/${note.id}.md`
+    });
+    const content = parsed.content || `# ${parsed.title}\n`;
+    writeNoteMarkdown(this.root, noteWithPath, content.endsWith("\n") ? content : `${content}\n`);
+    this.syncNoteReferences(noteWithPath);
+    return NoteWithContentSchema.parse({ ...noteWithPath, content: this.readNote(projectId, note.id)?.content ?? content });
+  }
+
+  updateNote(projectId: string, noteId: string, input: UpdateNoteRequestInput): NoteWithContent {
+    const current = this.readNote(projectId, noteId);
+    if (!current) throw new Error(`Note not found: ${projectId}/${noteId}`);
+    const parsed = UpdateNoteRequestSchema.parse(input);
+    if (parsed.paperId && !this.readPaper(parsed.paperId)) throw new Error(`Paper not found: ${parsed.paperId}`);
+    const updated = NoteSchema.parse({
+      ...current,
+      title: parsed.title ?? current.title,
+      paperId: parsed.paperId !== undefined ? parsed.paperId : current.paperId,
+      passageIds: parsed.passageIds ?? current.passageIds,
+      annotationIds: parsed.annotationIds ?? current.annotationIds,
+      workflowRunIds: parsed.workflowRunIds ?? current.workflowRunIds,
+      researchQuestionIds: parsed.researchQuestionIds ?? current.researchQuestionIds,
+      tags: parsed.tags ?? current.tags,
+      updatedAt: nowIso()
+    });
+    const content = parsed.content !== undefined ? parsed.content : current.content;
+    writeNoteMarkdown(this.root, updated, content.endsWith("\n") ? content : `${content}\n`);
+    if (current.paperId && current.paperId !== updated.paperId) {
+      this.removeNoteFromPaperLink(projectId, current.paperId, noteId);
+    }
+    this.syncNoteReferences(updated);
+    return NoteWithContentSchema.parse({ ...updated, content: this.readNote(projectId, noteId)?.content ?? content });
+  }
+
+  deleteNote(projectId: string, noteId: string): { deleted: true } {
+    const note = this.readNote(projectId, noteId);
+    if (!note) throw new Error(`Note not found: ${projectId}/${noteId}`);
+    const annotations = this.listAnnotations(projectId).map((annotation) =>
+      annotation.noteId === noteId ? AnnotationSchema.parse({ ...annotation, noteId: null, updatedAt: nowIso() }) : annotation
+    );
+    this.writeAnnotations(projectId, annotations);
+    const links = this.listPaperLinks(projectId).map((link) =>
+      PaperProjectLinkSchema.parse({ ...link, notes: removeValue(link.notes, noteId), updatedAt: nowIso() })
+    );
+    this.writePaperLinks(projectId, links);
+    fs.rmSync(this.resolve(note.path), { force: true });
+    return { deleted: true };
+  }
+
+  listAnnotations(projectId: string, paperId?: string | null): Annotation[] {
+    if (!this.readProject(projectId)) throw new Error(`Project not found: ${projectId}`);
+    const annotations = readJson(this.annotationsPath(projectId), annotationsArraySchema, []);
+    return annotations
+      .filter((annotation) => !paperId || annotation.paperId === paperId)
+      .sort((a, b) => a.page - b.page || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  readAnnotation(projectId: string, annotationId: string): Annotation | null {
+    return this.listAnnotations(projectId).find((annotation) => annotation.id === annotationId) ?? null;
+  }
+
+  createAnnotation(input: CreateAnnotationRequestInput): Annotation {
+    const parsed = CreateAnnotationRequestSchema.parse(input);
+    if (!this.readProject(parsed.projectId)) throw new Error(`Project not found: ${parsed.projectId}`);
+    if (!this.readPaper(parsed.paperId)) throw new Error(`Paper not found: ${parsed.paperId}`);
+    if (parsed.noteId && !this.readNote(parsed.projectId, parsed.noteId)) {
+      throw new Error(`Note not found: ${parsed.projectId}/${parsed.noteId}`);
+    }
+    this.ensurePaperLinked(parsed.projectId, parsed.paperId);
+    const timestamp = nowIso();
+    const annotation = AnnotationSchema.parse({
+      id: createId("annotation"),
+      paperId: parsed.paperId,
+      projectId: parsed.projectId,
+      page: parsed.page,
+      rects: parsed.rects,
+      quote: parsed.quote,
+      color: parsed.color,
+      noteId: parsed.noteId,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    this.writeAnnotations(parsed.projectId, [...this.listAnnotations(parsed.projectId), annotation]);
+    if (annotation.noteId) {
+      const note = this.readNote(parsed.projectId, annotation.noteId);
+      if (note) {
+        this.updateNote(parsed.projectId, note.id, {
+          paperId: note.paperId ?? annotation.paperId,
+          annotationIds: mergeUnique(note.annotationIds, [annotation.id])
+        });
+      }
+    }
+    return annotation;
+  }
+
+  updateAnnotation(projectId: string, annotationId: string, input: UpdateAnnotationRequestInput): Annotation {
+    const parsed = UpdateAnnotationRequestSchema.parse(input);
+    if (parsed.noteId && !this.readNote(projectId, parsed.noteId)) {
+      throw new Error(`Note not found: ${projectId}/${parsed.noteId}`);
+    }
+    const annotations = this.listAnnotations(projectId);
+    const index = annotations.findIndex((annotation) => annotation.id === annotationId);
+    if (index < 0) throw new Error(`Annotation not found: ${projectId}/${annotationId}`);
+    const current = annotations[index];
+    if (!current) throw new Error(`Annotation not found: ${projectId}/${annotationId}`);
+    const updated = AnnotationSchema.parse({
+      ...current,
+      page: parsed.page ?? current.page,
+      rects: parsed.rects ?? current.rects,
+      quote: parsed.quote ?? current.quote,
+      color: parsed.color ?? current.color,
+      noteId: parsed.noteId !== undefined ? parsed.noteId : current.noteId,
+      updatedAt: nowIso()
+    });
+    annotations[index] = updated;
+    this.writeAnnotations(projectId, annotations);
+    if (current.noteId && current.noteId !== updated.noteId) {
+      const previousNote = this.readNote(projectId, current.noteId);
+      if (previousNote) this.updateNote(projectId, previousNote.id, { annotationIds: removeValue(previousNote.annotationIds, annotationId) });
+    }
+    if (updated.noteId) {
+      const note = this.readNote(projectId, updated.noteId);
+      if (note) {
+        this.updateNote(projectId, note.id, {
+          paperId: note.paperId ?? updated.paperId,
+          annotationIds: mergeUnique(note.annotationIds, [updated.id])
+        });
+      }
+    }
+    return updated;
+  }
+
+  deleteAnnotation(projectId: string, annotationId: string): { deleted: true } {
+    const annotations = this.listAnnotations(projectId);
+    const annotation = annotations.find((candidate) => candidate.id === annotationId);
+    if (!annotation) throw new Error(`Annotation not found: ${projectId}/${annotationId}`);
+    this.writeAnnotations(projectId, annotations.filter((candidate) => candidate.id !== annotationId));
+    if (annotation.noteId) {
+      const note = this.readNote(projectId, annotation.noteId);
+      if (note) this.updateNote(projectId, note.id, { annotationIds: removeValue(note.annotationIds, annotationId) });
+    }
+    return { deleted: true };
+  }
+
   readCollection(projectId: string, collectionId: string): Collection | null {
     const filePath = this.resolve(`projects/${projectId}/collections/${collectionId}.json`);
     if (!fs.existsSync(filePath)) return null;
@@ -553,6 +780,65 @@ export class LitAgentRepository {
     ensureDir(path.dirname(exportPath));
     fs.writeFileSync(exportPath, output, "utf8");
     return output;
+  }
+
+  private annotationsPath(projectId: string): string {
+    return this.resolve(`projects/${projectId}/annotations.json`);
+  }
+
+  private writeAnnotations(projectId: string, annotations: Annotation[]): void {
+    writeJson(this.annotationsPath(projectId), annotationsArraySchema.parse(annotations));
+  }
+
+  private ensurePaperLinked(projectId: string, paperId: string): void {
+    if (!this.listPaperLinks(projectId).some((link) => link.paperId === paperId)) {
+      this.linkPaperToProject(paperId, { projectId });
+    }
+  }
+
+  private addNoteToPaperLink(projectId: string, paperId: string, noteId: string): void {
+    this.ensurePaperLinked(projectId, paperId);
+    const links = this.listPaperLinks(projectId);
+    const index = links.findIndex((link) => link.paperId === paperId);
+    if (index < 0) return;
+    const current = links[index];
+    if (!current) return;
+    links[index] = PaperProjectLinkSchema.parse({
+      ...current,
+      notes: mergeUnique(current.notes, [noteId]),
+      updatedAt: nowIso()
+    });
+    this.writePaperLinks(projectId, links);
+  }
+
+  private removeNoteFromPaperLink(projectId: string, paperId: string, noteId: string): void {
+    const links = this.listPaperLinks(projectId);
+    const index = links.findIndex((link) => link.paperId === paperId);
+    if (index < 0) return;
+    const current = links[index];
+    if (!current) return;
+    links[index] = PaperProjectLinkSchema.parse({
+      ...current,
+      notes: removeValue(current.notes, noteId),
+      updatedAt: nowIso()
+    });
+    this.writePaperLinks(projectId, links);
+  }
+
+  private syncNoteReferences(note: Note): void {
+    if (note.paperId) {
+      this.addNoteToPaperLink(note.projectId, note.paperId, note.id);
+    }
+    if (note.annotationIds.length === 0) return;
+    const annotationIds = new Set(note.annotationIds);
+    const annotations = this.listAnnotations(note.projectId);
+    let changed = false;
+    const updated = annotations.map((annotation) => {
+      if (!annotationIds.has(annotation.id) || annotation.noteId === note.id) return annotation;
+      changed = true;
+      return AnnotationSchema.parse({ ...annotation, noteId: note.id, updatedAt: nowIso() });
+    });
+    if (changed) this.writeAnnotations(note.projectId, updated);
   }
 
   seedDemoData(): void {

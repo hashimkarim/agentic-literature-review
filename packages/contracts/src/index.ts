@@ -110,6 +110,27 @@ export const AnnotationSchema = z.object({
 });
 export type Annotation = z.infer<typeof AnnotationSchema>;
 
+export const NoteSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  title: z.string().min(1),
+  path: z.string(),
+  paperId: z.string().nullable().default(null),
+  passageIds: z.array(z.string()).default([]),
+  annotationIds: z.array(z.string()).default([]),
+  workflowRunIds: z.array(z.string()).default([]),
+  researchQuestionIds: z.array(z.string()).default([]),
+  tags: z.array(z.string()).default([]),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type Note = z.infer<typeof NoteSchema>;
+
+export const NoteWithContentSchema = NoteSchema.extend({
+  content: z.string().default("")
+});
+export type NoteWithContent = z.infer<typeof NoteWithContentSchema>;
+
 export const WorkflowTypeSchema = z.enum([
   "relevance-tagging",
   "metadata-extraction",
@@ -281,3 +302,51 @@ export const LinkPaperRequestSchema = z.object({
 });
 export type LinkPaperRequest = z.infer<typeof LinkPaperRequestSchema>;
 export type LinkPaperRequestInput = z.input<typeof LinkPaperRequestSchema>;
+
+export const CreateNoteRequestSchema = z.object({
+  title: z.string().min(1).default("Untitled note"),
+  content: z.string().default(""),
+  paperId: z.string().nullable().default(null),
+  passageIds: z.array(z.string()).default([]),
+  annotationIds: z.array(z.string()).default([]),
+  workflowRunIds: z.array(z.string()).default([]),
+  researchQuestionIds: z.array(z.string()).default([]),
+  tags: z.array(z.string()).default([])
+});
+export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
+export type CreateNoteRequestInput = z.input<typeof CreateNoteRequestSchema>;
+
+export const UpdateNoteRequestSchema = z.object({
+  title: z.string().min(1).optional(),
+  content: z.string().optional(),
+  paperId: z.string().nullable().optional(),
+  passageIds: z.array(z.string()).optional(),
+  annotationIds: z.array(z.string()).optional(),
+  workflowRunIds: z.array(z.string()).optional(),
+  researchQuestionIds: z.array(z.string()).optional(),
+  tags: z.array(z.string()).optional()
+});
+export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
+export type UpdateNoteRequestInput = z.input<typeof UpdateNoteRequestSchema>;
+
+export const CreateAnnotationRequestSchema = z.object({
+  projectId: z.string(),
+  paperId: z.string(),
+  page: z.number().int().positive(),
+  rects: z.array(PdfRectSchema).default([]),
+  quote: z.string().default(""),
+  color: z.string().default("yellow"),
+  noteId: z.string().nullable().default(null)
+});
+export type CreateAnnotationRequest = z.infer<typeof CreateAnnotationRequestSchema>;
+export type CreateAnnotationRequestInput = z.input<typeof CreateAnnotationRequestSchema>;
+
+export const UpdateAnnotationRequestSchema = z.object({
+  page: z.number().int().positive().optional(),
+  rects: z.array(PdfRectSchema).optional(),
+  quote: z.string().optional(),
+  color: z.string().optional(),
+  noteId: z.string().nullable().optional()
+});
+export type UpdateAnnotationRequest = z.infer<typeof UpdateAnnotationRequestSchema>;
+export type UpdateAnnotationRequestInput = z.input<typeof UpdateAnnotationRequestSchema>;

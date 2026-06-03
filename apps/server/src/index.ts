@@ -10,10 +10,14 @@ import { WebSocketServer } from "ws";
 
 import {
   AgentProviderSettingsPatchSchema,
+  CreateAnnotationRequestSchema,
+  CreateNoteRequestSchema,
   ImportPaperRequestSchema,
   LinkPaperRequestSchema,
   QaRequestSchema,
-  SearchRequestSchema
+  SearchRequestSchema,
+  UpdateAnnotationRequestSchema,
+  UpdateNoteRequestSchema
 } from "@litagent/contracts";
 import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
 import { SearchIndex } from "@litagent/indexer";
@@ -119,6 +123,85 @@ app.get(
   "/api/projects/:id/papers",
   asyncHandler((req, res) => {
     res.json(repo.listPapers(routeParam(req, "id")));
+  })
+);
+
+app.get(
+  "/api/projects/:id/notes",
+  asyncHandler((req, res) => {
+    res.json(repo.listNotes(routeParam(req, "id")));
+  })
+);
+
+app.post(
+  "/api/projects/:id/notes",
+  asyncHandler((req, res) => {
+    const note = repo.createNote(routeParam(req, "id"), CreateNoteRequestSchema.parse(req.body));
+    res.status(201).json(note);
+  })
+);
+
+app.get(
+  "/api/projects/:id/notes/:noteId",
+  asyncHandler((req, res) => {
+    const note = repo.readNote(routeParam(req, "id"), routeParam(req, "noteId"));
+    if (!note) {
+      res.status(404).json({ error: "Note not found" });
+      return;
+    }
+    res.json(note);
+  })
+);
+
+app.patch(
+  "/api/projects/:id/notes/:noteId",
+  asyncHandler((req, res) => {
+    res.json(repo.updateNote(routeParam(req, "id"), routeParam(req, "noteId"), UpdateNoteRequestSchema.parse(req.body)));
+  })
+);
+
+app.delete(
+  "/api/projects/:id/notes/:noteId",
+  asyncHandler((req, res) => {
+    res.json(repo.deleteNote(routeParam(req, "id"), routeParam(req, "noteId")));
+  })
+);
+
+app.get(
+  "/api/projects/:id/annotations",
+  asyncHandler((req, res) => {
+    const paperId = typeof req.query.paperId === "string" && req.query.paperId ? req.query.paperId : null;
+    res.json(repo.listAnnotations(routeParam(req, "id"), paperId));
+  })
+);
+
+app.post(
+  "/api/projects/:id/annotations",
+  asyncHandler((req, res) => {
+    const annotation = repo.createAnnotation(
+      CreateAnnotationRequestSchema.parse({ ...req.body, projectId: routeParam(req, "id") })
+    );
+    res.status(201).json(annotation);
+  })
+);
+
+app.patch(
+  "/api/projects/:id/annotations/:annotationId",
+  asyncHandler((req, res) => {
+    res.json(
+      repo.updateAnnotation(
+        routeParam(req, "id"),
+        routeParam(req, "annotationId"),
+        UpdateAnnotationRequestSchema.parse(req.body)
+      )
+    );
+  })
+);
+
+app.delete(
+  "/api/projects/:id/annotations/:annotationId",
+  asyncHandler((req, res) => {
+    res.json(repo.deleteAnnotation(routeParam(req, "id"), routeParam(req, "annotationId")));
   })
 );
 

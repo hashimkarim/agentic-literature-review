@@ -17,5 +17,9 @@ litagent-workspace/
 *.sqlite-shm
 *.sqlite-wal
 
+# Local-only literature PDFs used for development/test runs.
+# Users provide these files themselves; do not commit copyrighted PDFs.
+tests/fixtures/pdfs/**/*.pdf
+
 # OS/editor
 .DS_Store
