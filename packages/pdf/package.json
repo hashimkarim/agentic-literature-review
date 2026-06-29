@@ -17,6 +17,7 @@
   "dependencies": {
     "pdfjs-dist": "^4.4.168",
     "react-pdf-highlighter-plus": "1.1.4",
-    "react": "^19.2.1"
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
   }
 }

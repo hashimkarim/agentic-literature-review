@@ -1,12 +1,18 @@
 import type { ComponentType, CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import * as Lucide from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import "katex/dist/katex.min.css";
 import type { AgentProvider, CitationTarget, EvidenceRef, Passage, Project, QaResponse, WorkflowRun, WorkflowType } from "@litagent/contracts";
 import { PdfReader, PdfUnavailable } from "@litagent/pdf";
 import type { PdfAnnotation } from "@litagent/pdf";
 import { workflowLabels } from "@litagent/ui";
 
-import { API_BASE, api, type AppStatus, type PaperEntry, type ProjectDetails } from "./api";
+import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
 
 type Screen = "library" | "projects" | "search" | "settings" | "presets";
 type WorkspaceTool = "papers" | "workflows" | "map" | "notes" | "exports";
@@ -383,6 +389,14 @@ function statusLabel(status: WorkflowRun["status"]) {
   return status === "completed" ? "done" : status;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>(() => (localStorage.getItem("la-screen") as Screen | null) ?? "projects");
   const [theme, setThemeState] = useState(() => localStorage.getItem("la-theme") || "comfy");
@@ -399,6 +413,7 @@ function App() {
   const [libraryPaperId, setLibraryPaperId] = useState<string | null>(null);
   const [projectPaperId, setProjectPaperId] = useState<string | null>(null);
   const [markdown, setMarkdown] = useState<string | null>(null);
+  const [markdownNotice, setMarkdownNotice] = useState<string | null>(null);
   const [passages, setPassages] = useState<Passage[]>([]);
   const [qa, setQa] = useState<QaResponse | null>(null);
   const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
@@ -408,6 +423,7 @@ function App() {
   const [isPending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importProjectIdRef = useRef<string | null>(null);
+  const seenTerminalWorkflowIdsRef = useRef<Set<string>>(new Set());
 
   const setTheme = useCallback((nextTheme: string) => {
     setThemeState(nextTheme);
@@ -532,10 +548,19 @@ function App() {
     screen === "library"
       ? libraryPapers.find((paper) => paper.id === libraryPaperId) ?? libraryPapers[0] ?? null
       : projectPapers.find((paper) => paper.id === projectPaperId) ?? projectPapers[0] ?? libraryPapers[0] ?? null;
+  const selectedPaperId = selectedPaper?.id ?? null;
+
+  const loadPaperArtifacts = useCallback(async (paperId: string) => {
+    const [nextMarkdown, nextPassages] = await Promise.all([api.markdown(paperId), api.passages(paperId)]);
+    setMarkdown(nextMarkdown);
+    setPassages(nextPassages);
+    return { markdown: nextMarkdown, passages: nextPassages };
+  }, []);
 
   useEffect(() => {
-    if (!selectedPaper) {
+    if (!selectedPaperId) {
       setMarkdown(null);
+      setMarkdownNotice(null);
       setPassages([]);
       setCitationTarget(null);
       setCitationActivation(0);
@@ -543,15 +568,42 @@ function App() {
       setActivePdfAnnotation(null);
       return;
     }
+    setMarkdownNotice(null);
     setCitationTarget(null);
     setCitationActivation(0);
     setPdfAnnotations([]);
     setActivePdfAnnotation(null);
-    void Promise.all([api.markdown(selectedPaper.id), api.passages(selectedPaper.id)]).then(([nextMarkdown, nextPassages]) => {
+    void loadPaperArtifacts(selectedPaperId).then(({ markdown: nextMarkdown, passages: nextPassages }) => {
       setMarkdown(nextMarkdown);
       setPassages(nextPassages);
     });
-  }, [selectedPaper]);
+  }, [loadPaperArtifacts, selectedPaperId]);
+
+  useEffect(() => {
+    if (!selectedPaperId) return;
+    const terminalRuns = workflows.filter((run) =>
+      (run.status === "completed" || run.status === "failed" || run.status === "cancelled") &&
+      !seenTerminalWorkflowIdsRef.current.has(run.id)
+    );
+    if (!terminalRuns.length) return;
+    for (const run of terminalRuns) seenTerminalWorkflowIdsRef.current.add(run.id);
+    const markdownRun = terminalRuns.find((run) => run.type === "pdf-markdown-processing" && workflowMatchesPaper(run, selectedPaperId));
+    if (!markdownRun) return;
+    if (markdownRun.status !== "completed") {
+      setMarkdownNotice(`PDF to Markdown ${statusLabel(markdownRun.status)}.`);
+      return;
+    }
+    void (async () => {
+      const [{ markdown: nextMarkdown }, nextLibrary, nextProject] = await Promise.all([
+        loadPaperArtifacts(selectedPaperId),
+        api.papers(null),
+        activeProjectId ? api.papers(activeProjectId) : Promise.resolve(projectEntries)
+      ]);
+      setLibraryEntries(nextLibrary);
+      setProjectEntries(nextProject);
+      setMarkdownNotice(nextMarkdown ? "Markdown updated from the completed conversion." : "Conversion completed, but no Markdown file was found for this paper.");
+    })();
+  }, [activeProjectId, loadPaperArtifacts, projectEntries, selectedPaperId, workflows]);
 
   const jumpToPdfAnnotation = useCallback((id: string) => {
     setActivePdfAnnotation((current) => ({ id, version: (current?.version ?? 0) + 1 }));
@@ -577,7 +629,7 @@ function App() {
   );
 
   const runWorkflow = useCallback(
-    (type: WorkflowType, scopeProjectId: string | null, paperIds: string[] = [], query: string | null = null) => {
+    (type: WorkflowType, scopeProjectId: string | null, paperIds: string[] = [], query: string | null = null, options: Record<string, unknown> = {}) => {
       startTransition(() => {
         void api
           .startWorkflow({
@@ -585,6 +637,7 @@ function App() {
             projectId: scopeProjectId,
             paperIds,
             query,
+            options,
             providerId: selectedProviderId,
             model: selectedProviderId === "local-heuristic" ? null : selectedModel
           })
@@ -755,6 +808,7 @@ function App() {
             onSelectPaper={setLibraryPaperId}
             selectedPaper={selectedPaper}
             markdown={markdown}
+            markdownNotice={markdownNotice}
             citationTarget={citationTarget}
             citationActivation={citationActivation}
             pdfAnnotations={pdfAnnotations}
@@ -772,7 +826,8 @@ function App() {
             onProviderChange={changeProviderSelection}
             onModelChange={setSelectedModel}
             workflows={workflows}
-            onRunWorkflow={(type, paperIds, query) => runWorkflow(type, null, paperIds, query)}
+            onRefreshWorkflows={loadSecondaryStatus}
+            onRunWorkflow={(type, paperIds, query, options) => runWorkflow(type, null, paperIds, query, options)}
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, null, paperId)}
             onConvert={convertPaper}
@@ -791,6 +846,7 @@ function App() {
             onSelectPaper={setProjectPaperId}
             selectedPaper={selectedPaper}
             markdown={markdown}
+            markdownNotice={markdownNotice}
             citationTarget={citationTarget}
             citationActivation={citationActivation}
             pdfAnnotations={pdfAnnotations}
@@ -808,7 +864,8 @@ function App() {
             onProviderChange={changeProviderSelection}
             onModelChange={setSelectedModel}
             workflows={workflows}
-            onRunWorkflow={(type, paperIds, query) => runWorkflow(type, activeProjectId, paperIds, query)}
+            onRefreshWorkflows={loadSecondaryStatus}
+            onRunWorkflow={(type, paperIds, query, options) => runWorkflow(type, activeProjectId, paperIds, query, options)}
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, activeProjectId, paperId)}
             onConvert={convertPaper}
@@ -917,6 +974,7 @@ function LibraryScreen(props: WorkspaceProps & { projects: Project[] }) {
             <Reader
               paper={props.selectedPaper}
               markdown={props.markdown}
+              markdownNotice={props.markdownNotice}
               citationTarget={props.citationTarget}
               citationActivation={props.citationActivation}
               pdfAnnotations={props.pdfAnnotations}
@@ -940,6 +998,7 @@ interface WorkspaceProps {
   onSelectPaper: (paperId: string) => void;
   selectedPaper: UiPaper | null;
   markdown: string | null;
+  markdownNotice: string | null;
   citationTarget: CitationTarget | null;
   citationActivation: number;
   pdfAnnotations: PdfAnnotation[];
@@ -957,7 +1016,8 @@ interface WorkspaceProps {
   onProviderChange: (providerId: string) => void;
   onModelChange: (model: string | null) => void;
   workflows: WorkflowRun[];
-  onRunWorkflow: (type: WorkflowType, paperIds?: string[], query?: string | null) => void;
+  onRefreshWorkflows: () => void;
+  onRunWorkflow: (type: WorkflowType, paperIds?: string[], query?: string | null, options?: Record<string, unknown>) => void;
   onCancelWorkflow: (runId: string) => void;
   onAsk: (question: string, paperId: string | null) => void;
   onConvert: (paperId: string) => void;
@@ -1003,6 +1063,7 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
             <Reader
               paper={props.selectedPaper}
               markdown={props.markdown}
+              markdownNotice={props.markdownNotice}
               citationTarget={props.citationTarget}
               citationActivation={props.citationActivation}
               pdfAnnotations={props.pdfAnnotations}
@@ -1331,6 +1392,7 @@ function PaperListPane({ papers, selId, onSelect, title, showScreen = true, filt
 function Reader({
   paper,
   markdown,
+  markdownNotice,
   citationTarget,
   citationActivation,
   pdfAnnotations,
@@ -1340,6 +1402,7 @@ function Reader({
 }: {
   paper: UiPaper | null;
   markdown: string | null;
+  markdownNotice: string | null;
   citationTarget: CitationTarget | null;
   citationActivation: number;
   pdfAnnotations: PdfAnnotation[];
@@ -1396,7 +1459,7 @@ function Reader({
               activePdfAnnotationKey={activePdfAnnotationKey}
             />
           </div>
-          <div className="scroll" style={{ flex: 1 }}><MarkdownView paper={paper} markdown={markdown} /></div>
+          <div className="scroll" style={{ flex: 1 }}><MarkdownView paper={paper} markdown={markdown} notice={markdownNotice} /></div>
         </div>
       ) : (
         <div className="la-readerbody">
@@ -1412,7 +1475,7 @@ function Reader({
               activePdfAnnotationKey={activePdfAnnotationKey}
             />
           ) : null}
-          {tab === "markdown" ? <MarkdownView paper={paper} markdown={markdown} /> : null}
+          {tab === "markdown" ? <MarkdownView paper={paper} markdown={markdown} notice={markdownNotice} /> : null}
           {tab === "notes" ? <NotesView paper={paper} /> : null}
         </div>
       )}
@@ -1521,13 +1584,303 @@ function PdfPage({ paper }: { paper: UiPaper }) {
   );
 }
 
-function MarkdownView({ paper, markdown }: { paper: UiPaper; markdown: string | null }) {
+function isExternalMarkdownUrl(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("#");
+}
+
+function splitMarkdownUrlSuffix(value: string): { path: string; suffix: string } {
+  const suffixIndex = value.search(/[?#]/);
+  if (suffixIndex === -1) return { path: value, suffix: "" };
+  return {
+    path: value.slice(0, suffixIndex),
+    suffix: value.slice(suffixIndex)
+  };
+}
+
+function relativeMarkdownAssetPath(src: string): string | null {
+  const { path: srcPath } = splitMarkdownUrlSuffix(src);
+  const normalized = srcPath.replaceAll("\\", "/").replace(/^\/+/, "").replace(/^(\.\/)+/, "");
+  if (!normalized) return null;
+  const parts = normalized.split("/").filter(Boolean);
+  const assetsIndex = parts.findIndex((part) => part === "assets");
+  if (assetsIndex >= 0) return parts.slice(assetsIndex + 1).join("/") || null;
+  const onlyPart = parts[0];
+  if (parts.length === 1 && onlyPart && /\.(apng|avif|bmp|gif|jpe?g|jfif|pjpeg|pjp|png|svgz?|tiff?|webp)$/i.test(onlyPart)) return onlyPart;
+  return null;
+}
+
+function markdownAssetUrl(paperId: string, src: string | undefined): string | undefined {
+  if (!src) return src;
+  const trimmed = src.trim();
+  if (!trimmed || isExternalMarkdownUrl(trimmed) || trimmed.startsWith("/api/")) return trimmed;
+  const { suffix } = splitMarkdownUrlSuffix(trimmed);
+  const assetPath = relativeMarkdownAssetPath(trimmed);
+  if (!assetPath) return trimmed;
+  const encodedAssetPath = assetPath.split("/").map(encodeURIComponent).join("/");
+  return `${API_BASE}/api/papers/${encodeURIComponent(paperId)}/markdown-assets/${encodedAssetPath}${suffix}`;
+}
+
+function escapeMarkdownLinkLabel(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+}
+
+function cleanMarkdownLinkText(value: string): string {
+  return value
+    .replace(/\\\\_/g, "_")
+    .replace(/\\([\\`*_[\]{}()#+\-.!])/g, "$1")
+    .replace(/\s+/g, "");
+}
+
+function normalizeSplitMarkdownLinks(line: string): string {
+  const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  const matches = [...line.matchAll(linkPattern)];
+  if (matches.length < 2) return line;
+
+  let output = "";
+  let cursor = 0;
+  let index = 0;
+  while (index < matches.length) {
+    const first = matches[index];
+    if (!first || typeof first.index !== "number") break;
+    const href = first[2] ?? "";
+    const run = [first];
+    let runEnd = first.index + first[0].length;
+    let nextIndex = index + 1;
+
+    while (nextIndex < matches.length) {
+      const next = matches[nextIndex];
+      if (!next || typeof next.index !== "number" || next[2] !== href) break;
+      const between = line.slice(runEnd, next.index);
+      if (!/^\s*$/.test(between)) break;
+      run.push(next);
+      runEnd = next.index + next[0].length;
+      nextIndex += 1;
+    }
+
+    output += line.slice(cursor, first.index);
+    if (run.length > 1) {
+      output += `[${escapeMarkdownLinkLabel(href)}](${href})`;
+      cursor = runEnd;
+      index = nextIndex;
+    } else {
+      output += first[0];
+      cursor = runEnd;
+      index += 1;
+    }
+  }
+  return output + line.slice(cursor);
+}
+
+function normalizeBareSplitUrls(line: string): string {
+  return line.replace(
+    /(^|[\s>])((?:https?:\/\/)[^\s<>()]+\/)\s+((?=[A-Za-z0-9_.-]*[._])[A-Za-z0-9_.-]+(?:\/[^\s<>()]*)?)/g,
+    (_match, prefix: string, base: string, suffix: string) => `${prefix}<${base}${suffix}>`
+  );
+}
+
+function normalizeMarkdownMath(markdown: string): string {
+  let inFence: string | null = null;
+  return markdown
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+      const fenceMatch = trimmed.match(/^(```+|~~~+)/);
+      if (fenceMatch) {
+        const fence = fenceMatch[1] ?? "";
+        inFence = inFence && fence.startsWith(inFence[0] ?? "") ? null : fence;
+        return line;
+      }
+      if (inFence) return line;
+      const displayMath = line.match(/^(\s*)\$\$(.+)\$\$(\s*)$/);
+      if (displayMath) {
+        const indent = displayMath[1] ?? "";
+        const expression = displayMath[2]?.trim() ?? "";
+        if (expression) return `${indent}$$\n${indent}${expression}\n${indent}$$`;
+      }
+      return normalizeBareSplitUrls(normalizeSplitMarkdownLinks(line));
+    })
+    .join("\n");
+}
+
+function plainTextFromNode(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(plainTextFromNode).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return plainTextFromNode(node.props.children);
+  return "";
+}
+
+function cleanUrlLabel(value: string): string {
+  return cleanMarkdownLinkText(value).replace(/^mailto:/, "");
+}
+
+const subscriptChars: Record<string, string> = {
+  "0": "₀",
+  "1": "₁",
+  "2": "₂",
+  "3": "₃",
+  "4": "₄",
+  "5": "₅",
+  "6": "₆",
+  "7": "₇",
+  "8": "₈",
+  "9": "₉",
+  "+": "₊",
+  "-": "₋",
+  "=": "₌",
+  "(": "₍",
+  ")": "₎",
+  i: "ᵢ",
+  j: "ⱼ",
+  k: "ₖ",
+  n: "ₙ"
+};
+
+function subscript(value: string): string {
+  return [...value].map((char) => subscriptChars[char] ?? char).join("");
+}
+
+function accentExpression(value: string, accent: "\u0302" | "\u0304"): string {
+  return `${value}${accent}`;
+}
+
+function formatAlgorithmCode(value: string): string {
+  return value
+    .replace(/\\widehat\{([^}]+)\}/g, (_match, expression: string) => accentExpression(expression, "\u0302"))
+    .replace(/\\hat\{([^}]+)\}/g, (_match, expression: string) => accentExpression(expression, "\u0302"))
+    .replace(/\\bar\{([^}]+)\}/g, (_match, expression: string) => accentExpression(expression, "\u0304"))
+    .replace(/\\leftarrow/g, "←")
+    .replace(/\\cdots/g, "⋯")
+    .replace(/\\dots/g, "…")
+    .replace(/\\Delta/g, "Δ")
+    .replace(/\\in/g, "∈")
+    .replace(/\\\{/g, "{")
+    .replace(/\\\}/g, "}")
+    .replace(/\b([A-Za-z])_\{([^}]+)\}/g, (_match, base: string, expression: string) => `${base}${subscript(expression)}`)
+    .replace(/\b([A-Za-z])_([A-Za-z0-9+-]+)/g, (_match, base: string, expression: string) => `${base}${subscript(expression)}`)
+    .replace(/Δ\s+B/g, "ΔB")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type AlgorithmRow = {
+  code: string;
+  comment: string | null;
+  indent: number;
+  kind: "statement" | "keyword" | "comment";
+};
+
+function isAlgorithmCode(value: string): boolean {
+  return /\\leftarrow|\\hat\{|\\bar\{|\\widehat\{|end for|end if|for .+ do/.test(value);
+}
+
+function parseAlgorithmRows(source: string): AlgorithmRow[] {
+  const rows: AlgorithmRow[] = [];
+  const lines = source.replace(/\n+$/g, "").split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\t/g, "    ").replace(/\s+$/g, "");
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const indent = Math.min(5, Math.floor((line.match(/^\s*/)?.[0].length ?? 0) / 4));
+    const commentSplit = trimmed.split(/[▶⊳]/);
+    const rawCode = (commentSplit[0] ?? "").trim();
+    const rawComment = commentSplit.slice(1).join(" ").trim();
+    const commentOnly = !rawCode || (!/\\leftarrow|←|for\b|if\b|end\b|append|\[|\]/.test(rawCode) && /\s/.test(rawCode));
+
+    if (commentOnly) {
+      const comment = formatAlgorithmCode(rawComment || rawCode);
+      const previous = rows.at(-1);
+      if (previous && !previous.comment) {
+        previous.comment = comment;
+      } else {
+        rows.push({ code: "", comment, indent, kind: "comment" });
+      }
+      continue;
+    }
+
+    const code = formatAlgorithmCode(rawCode);
+    const keyword = /^(for|if|end\b)/.test(code);
+    rows.push({
+      code,
+      comment: rawComment ? formatAlgorithmCode(rawComment) : null,
+      indent,
+      kind: keyword ? "keyword" : "statement"
+    });
+  }
+  return rows;
+}
+
+function AlgorithmBlock({ source }: { source: string }) {
+  const rows = useMemo(() => parseAlgorithmRows(source), [source]);
+  return (
+    <figure className="la-algo" aria-label="Algorithm pseudocode">
+      <ol>
+        {rows.map((row, index) => (
+          <li key={`${index}-${row.code || row.comment}`} className={`la-algo-row ${row.kind}`} style={{ "--indent": row.indent } as CSSProperties}>
+            <span className="la-algo-num">{index + 1}</span>
+            <span className="la-algo-code">{row.code}</span>
+            {row.comment ? <span className="la-algo-comment">{row.comment}</span> : null}
+          </li>
+        ))}
+      </ol>
+    </figure>
+  );
+}
+
+function MarkdownView({ paper, markdown, notice }: { paper: UiPaper; markdown: string | null; notice?: string | null }) {
+  const renderedMarkdown = useMemo(() => (markdown ? normalizeMarkdownMath(markdown) : null), [markdown]);
   if (markdown) {
     return (
       <div className="la-md">
-        <h1>{paper.title}</h1>
-        <div className="byline">{paper.authors} · converted Markdown · <code>library/markdown/{paper.id}/paper.md</code></div>
-        <pre className="la-markdown-pre">{markdown}</pre>
+        <div className="la-md-head">
+          <h1>{paper.title}</h1>
+          <div className="byline">{paper.authors} · converted Markdown · <code>library/markdown/{paper.id}/paper.md</code></div>
+        </div>
+        {notice ? (
+          <div className="la-md-notice">
+            <Icon name="check-circle-2" size={13} />
+            {notice}
+          </div>
+        ) : null}
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeRaw, rehypeKatex]}
+          disallowedElements={["script", "style", "iframe", "object", "embed"]}
+          components={{
+            pre: ({ children, ...props }) => {
+              const source = plainTextFromNode(Children.toArray(children)).replace(/\n$/g, "");
+              if (isAlgorithmCode(source)) return <AlgorithmBlock source={source} />;
+              return <pre {...props}>{children}</pre>;
+            },
+            code: ({ className, children, ...props }) => (
+              <code {...props} className={className}>
+                {children}
+              </code>
+            ),
+            img: ({ src, alt, ...props }) => (
+              <img {...props} src={markdownAssetUrl(paper.id, src)} alt={alt ?? ""} loading="lazy" />
+            ),
+            a: ({ href, children, ...props }) => {
+              const rawLabel = plainTextFromNode(children);
+              const isHttp = !!href && /^https?:\/\//i.test(href);
+              const displayAsUrl = isHttp && (/^https?:\/\//i.test(cleanMarkdownLinkText(rawLabel)) || rawLabel.includes("\\_"));
+              const className = `${props.className ?? ""}${displayAsUrl ? " la-url" : ""}`.trim() || undefined;
+              return (
+              <a
+                {...props}
+                className={className}
+                href={href ?? undefined}
+                target={isHttp ? "_blank" : undefined}
+                rel={isHttp ? "noreferrer" : undefined}
+                title={isHttp ? href : props.title}
+              >
+                {displayAsUrl && href ? cleanUrlLabel(href) : children}
+              </a>
+              );
+            }
+          }}
+        >
+          {renderedMarkdown}
+        </ReactMarkdown>
       </div>
     );
   }
@@ -1535,6 +1888,12 @@ function MarkdownView({ paper, markdown }: { paper: UiPaper; markdown: string | 
     <div className="la-md">
       <h1>{paper.title}</h1>
       <div className="byline">{paper.authors} · {paper.venue} {paper.year ?? ""}</div>
+      {notice ? (
+        <div className="la-md-notice warn">
+          <Icon name="alert-triangle" size={13} />
+          {notice}
+        </div>
+      ) : null}
       <h2>Markdown not generated yet</h2>
       <p>Run PDF to Markdown conversion to create a versioned Markdown file, assets, passage records, and search index entries for this paper.</p>
       <h2>Known metadata</h2>
@@ -1643,18 +2002,30 @@ function AgentPanel({
   const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
   const [input, setInput] = useState("");
   const [collapsed, setCollapsed] = useState(false);
-  const running = workflows.filter((run) => run.status === "running").length;
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
   const evidence: EvidenceRef[] = qa?.evidence.length ? qa.evidence : passages.slice(0, 5).map((passage) => ({ passageId: passage.id, paperId: passage.paperId, page: passage.page, quote: passage.quote, confidence: 0.75 }));
+  const queueWorkflows = workflows.filter((run) => workflowMatchesContext(run, selectedPaper, scopeProjectId));
+  const queueRunning = queueWorkflows.filter((run) => run.status === "running" || run.status === "queued").length;
+  const renderTab = (
+    id: "details" | "ask" | "evidence" | "annotations" | "queue",
+    label: string,
+    count?: number,
+    countStyle?: CSSProperties
+  ) => (
+    <button type="button" className={`la-atab${tab === id ? " on" : ""}`} onClick={() => setTab(id)} title={label}>
+      <span className="la-atab-label">{label}</span>
+      {count !== undefined && (count > 0 || id === "annotations") ? <span className="n" style={countStyle}>{count}</span> : null}
+    </button>
+  );
   return (
     <div className="la-agent la-colborder-l">
       <div className="la-agenttabs">
-        <button type="button" className={`la-atab${tab === "details" ? " on" : ""}`} onClick={() => setTab("details")}>Details</button>
-        <button type="button" className={`la-atab${tab === "ask" ? " on" : ""}`} onClick={() => setTab("ask")}>Ask</button>
-        <button type="button" className={`la-atab${tab === "evidence" ? " on" : ""}`} onClick={() => setTab("evidence")}>Evidence<span className="n">{evidence.length}</span></button>
-        <button type="button" className={`la-atab${tab === "annotations" ? " on" : ""}`} onClick={() => setTab("annotations")}>Annotations<span className="n">{pdfAnnotations.length}</span></button>
-        <button type="button" className={`la-atab${tab === "queue" ? " on" : ""}`} onClick={() => setTab("queue")}>Queue{running > 0 ? <span className="n" style={{ color: "var(--accent-bright)" }}>{running}</span> : null}</button>
-        <button type="button" className="la-iconbtn" title="Minimize panel" style={{ flexShrink: 0, alignSelf: "center", marginRight: 4 }} onClick={() => setCollapsed(true)}><Icon name="panel-right-close" size={15} /></button>
+        {renderTab("details", "Details")}
+        {renderTab("ask", "Ask")}
+        {renderTab("evidence", "Evidence", evidence.length)}
+        {renderTab("annotations", "Annotations", pdfAnnotations.length)}
+        {renderTab("queue", "Queue", queueRunning > 0 ? queueRunning : undefined, { color: "var(--accent-bright)" })}
+        <button type="button" className="la-iconbtn" title="Minimize panel" onClick={() => setCollapsed(true)}><Icon name="panel-right-close" size={15} /></button>
       </div>
       {tab === "ask" || tab === "evidence" ? (
         <div className="la-modelbar">
@@ -1754,7 +2125,12 @@ function AgentPanel({
       ) : null}
       {tab === "queue" ? (
         <div className="la-agentbody fade-in">
-          <WorkflowQueue workflows={workflows} onCancelWorkflow={onCancelWorkflow} />
+          <WorkflowQueue
+            workflows={queueWorkflows}
+            onCancelWorkflow={onCancelWorkflow}
+            emptyTitle={selectedPaper ? "No runs for this paper" : "No runs in this scope"}
+            emptyDesc={selectedPaper ? "Selected-paper workflow runs will appear here." : "Project or global workflow runs will appear here."}
+          />
         </div>
       ) : null}
     </div>
@@ -1833,7 +2209,27 @@ function truncatePdfAnnotation(text: string): string {
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 
-function WorkflowQueue({ workflows, onCancelWorkflow }: { workflows: WorkflowRun[]; onCancelWorkflow: (runId: string) => void }) {
+function workflowMatchesPaper(run: WorkflowRun, paperId: string): boolean {
+  return run.scope.paperIds.includes(paperId);
+}
+
+function workflowMatchesContext(run: WorkflowRun, paper: UiPaper | null, projectId: string | null): boolean {
+  if (paper) return workflowMatchesPaper(run, paper.id);
+  if (projectId) return run.projectId === projectId;
+  return run.projectId === null;
+}
+
+function WorkflowQueue({
+  workflows,
+  onCancelWorkflow,
+  emptyTitle = "No workflow runs yet",
+  emptyDesc = "Run an agentic task from the Ask tab or Workflows tool."
+}: {
+  workflows: WorkflowRun[];
+  onCancelWorkflow: (runId: string) => void;
+  emptyTitle?: string;
+  emptyDesc?: string;
+}) {
   return (
     <div className="la-wfqueue">
       {workflows.length ? workflows.map((run) => (
@@ -1849,7 +2245,7 @@ function WorkflowQueue({ workflows, onCancelWorkflow }: { workflows: WorkflowRun
           {(run.status === "running" || run.status === "queued") ? <div className="la-progress"><span style={{ width: run.status === "running" ? "62%" : "8%" }} /></div> : null}
           <Badge variant={run.status === "completed" ? "success" : run.status === "running" ? "accent" : run.status === "failed" ? "error" : undefined}>{statusLabel(run.status)}</Badge>
         </div>
-      )) : <Empty icon="workflow" title="No workflow runs yet" desc="Run an agentic task from the Ask tab or Workflows tool." />}
+      )) : <Empty icon="workflow" title={emptyTitle} desc={emptyDesc} />}
     </div>
   );
 }
@@ -1862,10 +2258,65 @@ function ScopedToolView(props: WorkspaceProps & { tool: WorkspaceTool; contextLa
   return null;
 }
 
-function WorkflowsView({ contextLabel, selectedPaper, workflows, onRunWorkflow, onCancelWorkflow }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
+function WorkflowsView({ contextLabel, scopeProjectId, papers, selectedPaper, workflows, onRefreshWorkflows, onRunWorkflow, onCancelWorkflow }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
+  const [sourceDir, setSourceDir] = useState("pdfs");
+  const [force, setForce] = useState(false);
+  const [intervalMinutes, setIntervalMinutes] = useState(15);
+  const [inbox, setInbox] = useState<PdfInboxItem[]>([]);
+  const [automation, setAutomation] = useState<PdfInboxAutomationRule | null>(null);
+  const [converterStatus, setConverterStatus] = useState<ConverterStatus | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const scanInbox = useCallback(() => {
+    setScanning(true);
+    void api
+      .pdfInbox(sourceDir)
+      .then(setInbox)
+      .finally(() => setScanning(false));
+  }, [sourceDir]);
+
+  useEffect(() => {
+    scanInbox();
+  }, [scanInbox]);
+
+  useEffect(() => {
+    void api.pdfInboxAutomation().then((rule) => {
+      setAutomation(rule);
+      setSourceDir(rule.sourceDir);
+      setForce(rule.force);
+      setIntervalMinutes(rule.intervalMinutes);
+    });
+    void api.converterStatus().then(setConverterStatus);
+  }, []);
+
+  const patchAutomation = useCallback((patch: Parameters<typeof api.updatePdfInboxAutomation>[0]) => {
+    void api.updatePdfInboxAutomation(patch).then((rule) => {
+      setAutomation(rule);
+      setSourceDir(rule.sourceDir);
+      setForce(rule.force);
+      setIntervalMinutes(rule.intervalMinutes);
+    });
+  }, []);
+
+  const runAutomationTrigger = useCallback(() => {
+    void api.runPdfInboxAutomation().then(async () => {
+      const rule = await api.pdfInboxAutomation();
+      setAutomation(rule);
+      onRefreshWorkflows();
+    });
+  }, [onRefreshWorkflows]);
+
+  const selectedPaperIds = selectedPaper ? [selectedPaper.id] : [];
+  const scopePaperIds = papers.map((paper) => paper.id);
+  const eventTriggerOn = Boolean(automation?.enabled && automation.eventTriggerEnabled);
+  const timerTriggerOn = Boolean(automation?.enabled && automation.timerTriggerEnabled);
+  const markdownRuns = workflows.filter((run) => run.type === "pdf-markdown-processing");
+  const activeMarkdownRun = markdownRuns.find((run) => run.status === "running" || run.status === "queued") ?? null;
+  const latestMarkdownRun = markdownRuns[0] ?? null;
+  const contextWorkflows = workflows.filter((run) => workflowMatchesContext(run, selectedPaper, scopeProjectId));
+
   return (
     <div className="scroll" style={{ flex: 1 }}>
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 28px 50px" }}>
+      <div style={{ maxWidth: 980, margin: "0 auto", padding: "24px 28px 50px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
           <h1 style={{ font: "var(--text-h1)", color: "var(--text-high)", margin: 0 }}>Workflows</h1>
           <Badge variant="accent" dot="var(--accent-bright)">{contextLabel}</Badge>
@@ -1873,20 +2324,167 @@ function WorkflowsView({ contextLabel, selectedPaper, workflows, onRunWorkflow, 
         <p style={{ font: "var(--text-body-sm)", color: "var(--text-muted)", margin: "4px 0 22px" }}>
           Agentic document workflows. Generated tags and metadata are proposed first. Every claim stores evidence references.
         </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-          {workflowRecipes.map((recipe) => (
-            <div key={recipe.type} className="la-workflow-card">
-              <div className="la-workflow-icon"><Icon name={recipe.icon} size={17} /></div>
-              <div style={{ flex: 1 }}>
-                <div style={{ font: "var(--text-body-sm)", fontWeight: 500, color: "var(--text-primary)" }}>{recipe.name}</div>
-                <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 2 }}>{recipe.desc}</div>
-              </div>
-              <Btn variant="subtle" sm icon="play" onClick={() => onRunWorkflow(recipe.type, selectedPaper ? [selectedPaper.id] : [], null)}>Run</Btn>
+
+        <section className="la-workflow-section">
+          <div className="la-workflow-sectionhead">
+            <div>
+              <h2>Automatic</h2>
+              <p>Event and timer-style recipes for unattended processing.</p>
             </div>
-          ))}
-        </div>
+            <Badge variant={inbox.length ? "accent" : undefined}>{scanning ? "scanning" : `${inbox.length} PDF${inbox.length === 1 ? "" : "s"}`}</Badge>
+          </div>
+          <div className="la-automation-card">
+            <div className="la-workflow-icon"><Icon name="folder-open" size={17} /></div>
+            <div className="la-auto-main">
+              <div className="la-auto-title">
+                <span>PDF inbox to Markdown</span>
+                <Badge variant="success">Marker first pass</Badge>
+                {activeMarkdownRun ? <Badge variant="accent">running</Badge> : latestMarkdownRun ? <Badge>{statusLabel(latestMarkdownRun.status)}</Badge> : null}
+              </div>
+              <div className={`la-converter-status${converterStatus?.marker.available ? " ok" : " warn"}`}>
+                <Icon name={converterStatus?.marker.available ? "check-circle-2" : "alert-triangle"} size={12} />
+                <span>{converterStatus?.marker.message ?? "Checking Marker runtime..."}</span>
+                {converterStatus ? <span className="mono">{converterStatus.marker.source}</span> : null}
+              </div>
+              <div className="la-auto-grid">
+                <label className="la-mini-field">
+                  <span>Source</span>
+                  <input
+                    value={sourceDir}
+                    onChange={(event) => setSourceDir(event.currentTarget.value)}
+                    onBlur={() => patchAutomation({ sourceDir })}
+                  />
+                </label>
+                <label className="la-mini-field">
+                  <span>Every</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={intervalMinutes}
+                    onChange={(event) => setIntervalMinutes(Number(event.currentTarget.value))}
+                    onBlur={() => patchAutomation({ intervalMinutes: Math.max(1, Math.min(1440, intervalMinutes || 15)) })}
+                  />
+                </label>
+                <label className="la-mini-toggle">
+                  <span>Force</span>
+                  <Toggle
+                    on={force}
+                    onClick={() => {
+                      const next = !force;
+                      setForce(next);
+                      patchAutomation({ force: next });
+                    }}
+                  />
+                </label>
+                <label className="la-mini-toggle">
+                  <span>Event</span>
+                  <Toggle
+                    on={eventTriggerOn}
+                    onClick={() => patchAutomation({ enabled: eventTriggerOn ? timerTriggerOn : true, eventTriggerEnabled: !eventTriggerOn })}
+                  />
+                </label>
+                <label className="la-mini-toggle muted">
+                  <span>Timer</span>
+                  <Toggle
+                    on={timerTriggerOn}
+                    onClick={() => patchAutomation({ enabled: timerTriggerOn ? eventTriggerOn : true, timerTriggerEnabled: !timerTriggerOn })}
+                  />
+                </label>
+              </div>
+              <div className="la-inbox-list">
+                {inbox.slice(0, 4).map((item) => (
+                  <div key={item.sourcePath} className="la-inbox-row">
+                    <Icon name="file-text" size={12} />
+                    <span>{item.relativePath}</span>
+                    <span className="mono">{formatBytes(item.size)}</span>
+                  </div>
+                ))}
+                {!inbox.length ? <div className="la-inbox-empty">No PDFs found under {sourceDir}</div> : null}
+                {inbox.length > 4 ? <div className="la-inbox-empty">+ {inbox.length - 4} more</div> : null}
+              </div>
+            </div>
+            <div className="la-auto-actions">
+              <Btn variant="ghost" sm icon="refresh-cw" onClick={scanInbox} disabled={scanning}>Scan</Btn>
+              <Btn
+                variant="primary"
+                sm
+                icon="play"
+                onClick={runAutomationTrigger}
+                disabled={!inbox.length || Boolean(activeMarkdownRun)}
+              >
+                Run trigger
+              </Btn>
+            </div>
+          </div>
+        </section>
+
+        <section className="la-workflow-section">
+          <div className="la-workflow-sectionhead">
+            <div>
+              <h2>Manual</h2>
+              <p>Run a workflow on the selected paper or current scope.</p>
+            </div>
+            <Badge>{scopeProjectId ? "project scoped" : "global scoped"}</Badge>
+          </div>
+          <div className={`la-workflow-target${selectedPaper ? "" : " empty"}`}>
+            <div className="la-workflow-target-icon">
+              <Icon name={selectedPaper ? "file-text" : "circle-dashed"} size={16} />
+            </div>
+            <div className="la-workflow-target-main">
+              <div className="la-workflow-target-label">Selected paper</div>
+              <div className="la-workflow-target-title">{selectedPaper?.title ?? "No paper selected"}</div>
+              <div className="la-workflow-target-meta">
+                {selectedPaper ? `${selectedPaper.authors} · ${selectedPaper.year ?? "unknown year"} · ${selectedPaper.venue}` : "Pick a paper from the list before running selected-paper workflows."}
+              </div>
+            </div>
+            <Badge variant={selectedPaper ? "accent" : undefined}>{selectedPaper ? selectedPaper.id.slice(0, 12) : "none"}</Badge>
+          </div>
+          <div className="la-manual-grid">
+            <div className="la-workflow-card">
+              <div className="la-workflow-icon"><Icon name="file-code" size={17} /></div>
+              <div style={{ flex: 1 }}>
+                <div style={{ font: "var(--text-body-sm)", fontWeight: 500, color: "var(--text-primary)" }}>Convert selected</div>
+                <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 2 }}>Marker pass, assets, passages, index</div>
+              </div>
+              <Btn variant="subtle" sm icon="play" onClick={() => onRunWorkflow("pdf-markdown-processing", selectedPaperIds, null, { force })} disabled={!selectedPaper || Boolean(activeMarkdownRun)}>Run</Btn>
+            </div>
+            <div className="la-workflow-card">
+              <div className="la-workflow-icon"><Icon name="files" size={17} /></div>
+              <div style={{ flex: 1 }}>
+                <div style={{ font: "var(--text-body-sm)", fontWeight: 500, color: "var(--text-primary)" }}>Convert scope</div>
+                <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 2 }}>{scopePaperIds.length} paper{scopePaperIds.length === 1 ? "" : "s"} in scope</div>
+              </div>
+              <Btn variant="subtle" sm icon="play" onClick={() => onRunWorkflow("pdf-markdown-processing", scopePaperIds, null, { force })} disabled={!scopePaperIds.length || Boolean(activeMarkdownRun)}>Run</Btn>
+            </div>
+            <div className="la-workflow-card">
+              <div className="la-workflow-icon"><Icon name="sparkles" size={17} /></div>
+              <div style={{ flex: 1 }}>
+                <div style={{ font: "var(--text-body-sm)", fontWeight: 500, color: "var(--text-primary)" }}>Refine Markdown</div>
+                <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 2 }}>Targeted LLM cleanup proposals</div>
+              </div>
+              <Btn variant="subtle" sm icon="play" onClick={() => onRunWorkflow("markdown-refinement", selectedPaperIds, null, { targeted: true })} disabled={!selectedPaper}>Run</Btn>
+            </div>
+            {workflowRecipes.map((recipe) => (
+              <div key={recipe.type} className="la-workflow-card">
+                <div className="la-workflow-icon"><Icon name={recipe.icon} size={17} /></div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ font: "var(--text-body-sm)", fontWeight: 500, color: "var(--text-primary)" }}>{recipe.name}</div>
+                  <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 2 }}>{recipe.desc}</div>
+                </div>
+                <Btn variant="subtle" sm icon="play" onClick={() => onRunWorkflow(recipe.type, selectedPaper ? [selectedPaper.id] : [], null)}>Run</Btn>
+              </div>
+            ))}
+          </div>
+        </section>
+
         <h2 style={{ font: "var(--text-h2)", color: "var(--text-high)", margin: "28px 0 12px" }}>Recent runs</h2>
-        <WorkflowQueue workflows={workflows} onCancelWorkflow={onCancelWorkflow} />
+        <WorkflowQueue
+          workflows={contextWorkflows}
+          onCancelWorkflow={onCancelWorkflow}
+          emptyTitle={selectedPaper ? "No runs for this paper" : "No runs in this scope"}
+          emptyDesc={selectedPaper ? "Run a selected-paper workflow to populate this history." : "Run a project or global workflow to populate this history."}
+        />
       </div>
     </div>
   );

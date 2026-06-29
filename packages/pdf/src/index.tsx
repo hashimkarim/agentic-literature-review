@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, PointerEvent as ReactPointerEvent, ReactNode, SetStateAction } from "react";
+import { createRoot } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import {
   AreaHighlight,
   DrawingHighlight,
   FreetextHighlight,
   PdfHighlighter,
-  ShapeHighlight,
   TextHighlight,
   extractPageTextItems,
   useHighlightContainerContext
@@ -42,12 +43,23 @@ export interface PdfHighlightRect {
   height: number;
 }
 
+type AnnotationColorKey = "yellow" | "green" | "blue" | "orange" | "pink" | "purple";
+type ShapeFillMode = "outline" | "tint" | "solid";
+
+type AnnotationStyleSettings = {
+  color: AnnotationColorKey;
+  markOpacity: number;
+  shapeFillMode: ShapeFillMode;
+  shapeOpacity: number;
+  strokeWidth: number;
+};
+
 export interface PdfHighlight {
   id?: string;
   activationKey?: string | number;
   page: number;
   quote: string;
-  color?: "yellow" | "green" | "blue";
+  color?: AnnotationColorKey;
   rects?: PdfHighlightRect[];
   active?: boolean;
 }
@@ -69,15 +81,11 @@ type LitHighlight = Highlight & {
   litActive: boolean;
   litResolvedFrom: "quote" | "rect" | "page" | "selection";
   litFill?: string;
+  litFillMode?: ShapeFillMode;
   litFreetextStyle?: FreetextStyle;
   litShapeStyle?: ShapeStyle;
 };
 export type PdfAnnotation = LitHighlight;
-
-type PdfEventBus = {
-  on(eventName: string, listener: (event: { pageNumber?: number }) => void): void;
-  off(eventName: string, listener: (event: { pageNumber?: number }) => void): void;
-};
 
 type AnnotationMode = "idle" | "text" | "area" | "note" | "draw" | ShapeType;
 
@@ -86,7 +94,28 @@ const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.1;
 const MIN_ARROW_HITBOX = 36;
 const ARROW_EDITOR_PADDING = 14;
+const MIN_SHAPE_SIZE = 20;
 const DEFAULT_WORKER_SRC = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+
+const annotationPalette: Array<{ id: AnnotationColorKey; label: string; hex: string; rgb: [number, number, number] }> = [
+  { id: "yellow", label: "Yellow", hex: "#ffd666", rgb: [255, 214, 102] },
+  { id: "green", label: "Green", hex: "#43b581", rgb: [67, 181, 129] },
+  { id: "blue", label: "Blue", hex: "#7289da", rgb: [114, 137, 218] },
+  { id: "orange", label: "Orange", hex: "#f59f45", rgb: [245, 159, 69] },
+  { id: "pink", label: "Pink", hex: "#ff7aa2", rgb: [255, 122, 162] },
+  { id: "purple", label: "Purple", hex: "#b084f5", rgb: [176, 132, 245] }
+];
+
+const defaultAnnotationStyle: AnnotationStyleSettings = {
+  color: "yellow",
+  markOpacity: 0.22,
+  shapeFillMode: "outline",
+  shapeOpacity: 0.18,
+  strokeWidth: 2
+};
+
+const textHighlightColorPresets = annotationPalette.map((color) => rgbaFromRgb(color.rgb, defaultAnnotationStyle.markOpacity));
+const areaHighlightColorPresets = annotationPalette.map((color) => rgbaFromRgb(color.rgb, 0.16));
 
 const annotationTools: Array<{ mode: Exclude<AnnotationMode, "idle">; label: string; title: string }> = [
   { mode: "text", label: "Highlight text", title: "Select text to create a highlight" },
@@ -107,10 +136,12 @@ export function PdfReader({
   activeAnnotationKey: controlledActiveAnnotationKey = 0,
   fallback
 }: PdfReaderProps) {
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState<PdfScaleValue>("page-width");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [annotationMode, setAnnotationMode] = useState<AnnotationMode>("idle");
+  const [annotationStyle, setAnnotationStyle] = useState<AnnotationStyleSettings>(defaultAnnotationStyle);
   const [internalAnnotations, setInternalAnnotations] = useState<PdfAnnotation[]>([]);
   const [internalActiveAnnotation, setInternalActiveAnnotation] = useState<{ id: string; version: number } | null>(null);
   const annotationsControlled = annotations !== undefined || onAnnotationsChange !== undefined;
@@ -139,8 +170,27 @@ export function PdfReader({
     setInternalActiveAnnotation(null);
   }, [setManualHighlights, source]);
 
+  useEffect(() => {
+    const syncPageFromDom = () => {
+      const viewer = shellRef.current?.querySelector<HTMLElement>(".PdfHighlighter");
+      if (!viewer) return;
+      const pageNumbers = Array.from(viewer.querySelectorAll<HTMLElement>(".page[data-page-number]"))
+        .map((page) => Number(page.dataset.pageNumber))
+        .filter((page) => Number.isFinite(page));
+      const nextPageCount = Math.max(...pageNumbers, 0);
+      if (nextPageCount <= 0) return;
+      const nextPage = getVisiblePageNumberFromContainer(viewer, nextPageCount);
+      setPageCount((current) => (current === nextPageCount ? current : nextPageCount));
+      setCurrentPage((current) => (current === nextPage ? current : nextPage));
+    };
+
+    const interval = window.setInterval(syncPageFromDom, 250);
+    syncPageFromDom();
+    return () => window.clearInterval(interval);
+  }, [source]);
+
   return (
-    <div className="pdf-reader-shell">
+    <div ref={shellRef} className="pdf-reader-shell">
       <PdfToolbar
         scale={scale}
         setScale={setScale}
@@ -158,6 +208,7 @@ export function PdfReader({
                   highlights={highlights}
                   annotationMode={annotationMode}
                   setAnnotationMode={setAnnotationMode}
+                  annotationStyle={annotationStyle}
                   manualHighlights={manualHighlights}
                   setManualHighlights={setManualHighlights}
                   activeAnnotationId={activeAnnotationId}
@@ -180,6 +231,8 @@ export function PdfReader({
           <PdfAnnotationMenu
             annotationMode={annotationMode}
             setAnnotationMode={setAnnotationMode}
+            annotationStyle={annotationStyle}
+            setAnnotationStyle={setAnnotationStyle}
             annotationCount={manualHighlights.length}
             onClearAnnotations={clearAnnotations}
           />
@@ -353,11 +406,15 @@ function PdfToolbar({
 function PdfAnnotationMenu({
   annotationMode,
   setAnnotationMode,
+  annotationStyle,
+  setAnnotationStyle,
   annotationCount,
   onClearAnnotations
 }: {
   annotationMode: AnnotationMode;
   setAnnotationMode: (mode: AnnotationMode) => void;
+  annotationStyle: AnnotationStyleSettings;
+  setAnnotationStyle: Dispatch<SetStateAction<AnnotationStyleSettings>>;
   annotationCount: number;
   onClearAnnotations: () => void;
 }) {
@@ -374,6 +431,25 @@ function PdfAnnotationMenu({
   const clearAnnotations = () => {
     onClearAnnotations();
     setOpen(false);
+  };
+  const setColor = (color: AnnotationColorKey) => {
+    setAnnotationStyle((current) => ({ ...current, color }));
+  };
+  const setMarkOpacity = (markOpacity: number) => {
+    setAnnotationStyle((current) => ({ ...current, markOpacity }));
+  };
+  const setShapeFillMode = (shapeFillMode: ShapeFillMode) => {
+    setAnnotationStyle((current) => ({
+      ...current,
+      shapeFillMode,
+      shapeOpacity: shapeFillMode === "solid" ? Math.max(current.shapeOpacity, 0.42) : current.shapeOpacity
+    }));
+  };
+  const setShapeOpacity = (shapeOpacity: number) => {
+    setAnnotationStyle((current) => ({ ...current, shapeOpacity }));
+  };
+  const setStrokeWidth = (strokeWidth: number) => {
+    setAnnotationStyle((current) => ({ ...current, strokeWidth }));
   };
 
   return (
@@ -403,6 +479,82 @@ function PdfAnnotationMenu({
               </button>
             ))}
           </div>
+          <div className="pdf-annotation-section">
+            <span className="pdf-annotation-section-label">Color</span>
+            <div className="pdf-annotation-swatches" aria-label="Annotation color">
+              {annotationPalette.map((color) => (
+                <button
+                  key={color.id}
+                  type="button"
+                  className={`pdf-annotation-swatch${annotationStyle.color === color.id ? " is-active" : ""}`}
+                  style={{ backgroundColor: color.hex }}
+                  title={color.label}
+                  aria-label={color.label}
+                  onClick={() => setColor(color.id)}
+                />
+              ))}
+            </div>
+          </div>
+          <label className="pdf-annotation-slider">
+            <span>Highlight opacity</span>
+            <input
+              type="range"
+              min="8"
+              max="45"
+              step="1"
+              value={Math.round(annotationStyle.markOpacity * 100)}
+              onChange={(event) => setMarkOpacity(Number(event.currentTarget.value) / 100)}
+            />
+            <strong>{Math.round(annotationStyle.markOpacity * 100)}%</strong>
+          </label>
+          <div className="pdf-annotation-section">
+            <span className="pdf-annotation-section-label">Shape fill</span>
+            <div className="pdf-annotation-segmented" aria-label="Shape fill mode">
+              {[
+                { id: "outline", label: "Outline" },
+                { id: "tint", label: "Tint" },
+                { id: "solid", label: "Solid" }
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={annotationStyle.shapeFillMode === option.id ? "is-active" : ""}
+                  onClick={() => setShapeFillMode(option.id as ShapeFillMode)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className={`pdf-annotation-slider${annotationStyle.shapeFillMode === "outline" ? " is-disabled" : ""}`}>
+            <span>Fill opacity</span>
+            <input
+              type="range"
+              min="8"
+              max="60"
+              step="1"
+              disabled={annotationStyle.shapeFillMode === "outline"}
+              value={Math.round(annotationStyle.shapeOpacity * 100)}
+              onChange={(event) => setShapeOpacity(Number(event.currentTarget.value) / 100)}
+            />
+            <strong>{annotationStyle.shapeFillMode === "outline" ? "0%" : `${Math.round(annotationStyle.shapeOpacity * 100)}%`}</strong>
+          </label>
+          <div className="pdf-annotation-section">
+            <span className="pdf-annotation-section-label">Stroke</span>
+            <div className="pdf-annotation-strokes" aria-label="Annotation stroke width">
+              {[1, 2, 3, 4].map((width) => (
+                <button
+                  key={width}
+                  type="button"
+                  className={annotationStyle.strokeWidth === width ? "is-active" : ""}
+                  title={`${width}px stroke`}
+                  onClick={() => setStrokeWidth(width)}
+                >
+                  {width}
+                </button>
+              ))}
+            </div>
+          </div>
           <button type="button" className="pdf-annotation-clear" disabled={annotationCount === 0} onClick={clearAnnotations}>
             Clear local annotations{annotationCount ? ` (${annotationCount})` : ""}
           </button>
@@ -422,12 +574,61 @@ function PdfAnnotationMenu({
   );
 }
 
+function IsolatedReactRoot({ children }: { children: ReactNode }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<Root | null>(null);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const root = createRoot(host);
+    rootRef.current = root;
+    return () => {
+      rootRef.current = null;
+      root.unmount();
+      host.replaceChildren();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    rootRef.current?.render(<>{children}</>);
+  }, [children]);
+
+  return <div ref={hostRef} className="pdf-isolated-root" />;
+}
+
+function pdfDocumentKey(pdfDocument: PDFDocumentProxy): string {
+  const fingerprint = pdfDocument.fingerprints.filter((value): value is string => !!value).join(":");
+  return fingerprint || `pages-${pdfDocument.numPages}`;
+}
+
+function getVisiblePageNumberFromContainer(container: HTMLElement, pageCount: number, fallback = 1): number {
+  const containerRect = container.getBoundingClientRect();
+  const pages = Array.from(container.querySelectorAll<HTMLElement>(".page[data-page-number]"));
+  let bestPage = normalizePageNumber(fallback, pageCount);
+  let bestVisibleHeight = 0;
+
+  for (const page of pages) {
+    const pageNumber = Number(page.dataset.pageNumber);
+    if (!Number.isFinite(pageNumber)) continue;
+    const pageRect = page.getBoundingClientRect();
+    const visibleHeight = Math.min(pageRect.bottom, containerRect.bottom) - Math.max(pageRect.top, containerRect.top);
+    if (visibleHeight > bestVisibleHeight) {
+      bestVisibleHeight = visibleHeight;
+      bestPage = normalizePageNumber(pageNumber, pageCount);
+    }
+  }
+
+  return bestPage;
+}
+
 function HighlighterSurface({
   pdfDocument,
   scale,
   highlights,
   annotationMode,
   setAnnotationMode,
+  annotationStyle,
   manualHighlights,
   setManualHighlights,
   activeAnnotationId,
@@ -440,6 +641,7 @@ function HighlighterSurface({
   highlights: PdfHighlight[];
   annotationMode: AnnotationMode;
   setAnnotationMode: (mode: AnnotationMode) => void;
+  annotationStyle: AnnotationStyleSettings;
   manualHighlights: LitHighlight[];
   setManualHighlights: Dispatch<SetStateAction<LitHighlight[]>>;
   activeAnnotationId: string | null;
@@ -450,8 +652,13 @@ function HighlighterSurface({
   const utilsRef = useRef<PdfHighlighterUtils | null>(null);
   const [utils, setUtils] = useState<PdfHighlighterUtils | null>(null);
   const [resolvedHighlights, setResolvedHighlights] = useState<LitHighlight[]>([]);
+  const documentKey = useMemo(() => pdfDocumentKey(pdfDocument), [pdfDocument]);
   const highlightsKey = useMemo(() => serializeHighlights(highlights), [highlights]);
   const renderedHighlights = useMemo(() => [...resolvedHighlights, ...manualHighlights], [manualHighlights, resolvedHighlights]);
+  const selectedHexColor = paletteHex(annotationStyle.color);
+  const selectedMarkColor = paletteRgba(annotationStyle.color, annotationStyle.markOpacity);
+  const selectedAreaColor = paletteRgba(annotationStyle.color, Math.max(0.12, annotationStyle.markOpacity - 0.04));
+  const selectedShapeFill = shapeFillColor(annotationStyle);
   const activeHighlight = useMemo(
     () =>
       (activeAnnotationId ? manualHighlights.find((highlight) => highlight.id === activeAnnotationId) : null) ??
@@ -478,25 +685,6 @@ function HighlighterSurface({
       cancelled = true;
     };
   }, [pdfDocument, highlightsKey]);
-
-  useEffect(() => {
-    if (!utils) return;
-    const viewer = utils.getViewer();
-    const eventBus = utils.getEventBus() as PdfEventBus | null;
-
-    const syncPage = (event?: { pageNumber?: number }) => {
-      const page = event?.pageNumber ?? viewer?.currentPageNumber ?? 1;
-      onPageStateChange(page, pdfDocument.numPages);
-    };
-
-    syncPage();
-    eventBus?.on("pagechanging", syncPage);
-    eventBus?.on("pagesinit", syncPage);
-    return () => {
-      eventBus?.off("pagechanging", syncPage);
-      eventBus?.off("pagesinit", syncPage);
-    };
-  }, [pdfDocument.numPages, onPageStateChange, utils]);
 
   useEffect(() => {
     if (!utils || !activeHighlight) return;
@@ -528,7 +716,7 @@ function HighlighterSurface({
           type: "area",
           position: selection.position,
           text: selection.content.text ?? "Area highlight",
-          fill: "rgba(114, 137, 218, 0.18)",
+          fill: selectedAreaColor,
           pageNumber
         })
       ]);
@@ -548,13 +736,13 @@ function HighlighterSurface({
         type: "text",
         position: selection.position,
         text,
-        fill: "rgba(255, 214, 102, 0.12)",
+        fill: selectedMarkColor,
         pageNumber
       })
     ]);
     window.getSelection()?.removeAllRanges();
     setAnnotationMode("idle");
-  }, [annotationMode, setAnnotationMode, setManualHighlights]);
+  }, [annotationMode, selectedAreaColor, selectedMarkColor, setAnnotationMode, setManualHighlights]);
 
   const handleFreetextClick = useCallback((position: ScaledPosition) => {
     setManualHighlights((current) => [
@@ -563,18 +751,18 @@ function HighlighterSurface({
         type: "freetext",
         position,
         text: "Note",
-        fill: "#fff3b0",
+        fill: paletteRgba(annotationStyle.color, 0.28),
         pageNumber: position.boundingRect.pageNumber,
         freetextStyle: {
           color: "#24262d",
-          backgroundColor: "#fff3b0",
+          backgroundColor: paletteRgba(annotationStyle.color, 0.72),
           fontSize: "14px",
           fontFamily: "Inter, sans-serif"
         }
       })
     ]);
     setAnnotationMode("idle");
-  }, [setAnnotationMode, setManualHighlights]);
+  }, [annotationStyle.color, setAnnotationMode, setManualHighlights]);
 
   const handleDrawingComplete = useCallback((image: string, position: ScaledPosition, strokes: DrawingStroke[]) => {
     setManualHighlights((current) => [
@@ -583,13 +771,13 @@ function HighlighterSurface({
         type: "drawing",
         position,
         text: "Drawing",
-        fill: "rgba(255, 214, 102, 0.18)",
+        fill: paletteRgba(annotationStyle.color, annotationStyle.markOpacity),
         pageNumber: position.boundingRect.pageNumber,
         content: { image, strokes }
       })
     ]);
     setAnnotationMode("idle");
-  }, [setAnnotationMode, setManualHighlights]);
+  }, [annotationStyle.color, annotationStyle.markOpacity, setAnnotationMode, setManualHighlights]);
 
   const handleShapeComplete = useCallback((position: ScaledPosition, shape: ShapeData) => {
     const normalizedShape = normalizeShapePosition(position, shape);
@@ -599,60 +787,71 @@ function HighlighterSurface({
         type: "shape",
         position: normalizedShape.position,
         text: `${shape.shapeType} annotation`,
-        fill: "rgba(255, 214, 102, 0.14)",
+        fill: selectedShapeFill,
         pageNumber: normalizedShape.position.boundingRect.pageNumber,
-        content: { shape: normalizedShape.shape },
+        content: {
+          shape: {
+            ...normalizedShape.shape,
+            strokeColor: selectedHexColor,
+            strokeWidth: annotationStyle.strokeWidth
+          }
+        },
+        fillMode: annotationStyle.shapeFillMode,
         shapeStyle: {
-          strokeColor: shape.strokeColor,
-          strokeWidth: shape.strokeWidth
+          strokeColor: selectedHexColor,
+          strokeWidth: annotationStyle.strokeWidth
         }
       })
     ]);
     setAnnotationMode("idle");
-  }, [setAnnotationMode, setManualHighlights]);
+  }, [annotationStyle.shapeFillMode, annotationStyle.strokeWidth, selectedHexColor, selectedShapeFill, setAnnotationMode, setManualHighlights]);
 
   return (
-    <PdfHighlighter
-      highlights={renderedHighlights}
-      pdfDocument={pdfDocument}
-      pdfScaleValue={scale}
-      textSelectionColor={annotationMode === "text" ? "rgba(114, 137, 218, 0.24)" : "transparent"}
-      onSelection={handleSelection}
-      enableAreaSelection={() => annotationMode === "area"}
-      areaSelectionMode={annotationMode === "area"}
-      mouseSelectionStyle={{
-        background: "rgba(114, 137, 218, 0.14)",
-        border: "1px solid rgba(114, 137, 218, 0.8)"
-      }}
-      enableFreetextCreation={() => annotationMode === "note"}
-      onFreetextClick={handleFreetextClick}
-      enableDrawingMode={annotationMode === "draw"}
-      drawingStrokeColor="#7289da"
-      drawingStrokeWidth={3}
-      onDrawingComplete={handleDrawingComplete}
-      onDrawingCancel={() => setAnnotationMode("idle")}
-      enableShapeMode={shapeMode(annotationMode)}
-      shapeStrokeColor="#7289da"
-      shapeStrokeWidth={2}
-      onShapeComplete={handleShapeComplete}
-      onShapeCancel={() => setAnnotationMode("idle")}
-      utilsRef={(nextUtils) => {
-        utilsRef.current = nextUtils;
-        setUtils((current) => (current === nextUtils ? current : nextUtils));
-      }}
-      style={{ backgroundColor: "var(--bg-tertiary)" }}
-      theme={{
-        mode: "light",
-        containerBackgroundColor: "var(--bg-tertiary)",
-        scrollbarThumbColor: "var(--accent-primary)",
-        scrollbarTrackColor: "var(--bg-secondary)"
-      }}
-    >
-      <AnnotationRenderer
-        onUpdate={updateManualHighlight}
-        onDelete={onDeleteAnnotation}
-      />
-    </PdfHighlighter>
+    <div className="pdf-highlighter-host">
+      <IsolatedReactRoot key={documentKey}>
+        <PdfHighlighter
+          highlights={renderedHighlights}
+          pdfDocument={pdfDocument}
+          pdfScaleValue={scale}
+          textSelectionColor={annotationMode === "text" ? paletteRgba(annotationStyle.color, Math.min(0.32, annotationStyle.markOpacity + 0.08)) : "transparent"}
+          onSelection={handleSelection}
+          enableAreaSelection={() => annotationMode === "area"}
+          areaSelectionMode={annotationMode === "area"}
+          mouseSelectionStyle={{
+            background: paletteRgba(annotationStyle.color, Math.max(0.08, annotationStyle.markOpacity - 0.08)),
+            border: `1px solid ${selectedHexColor}`
+          }}
+          enableFreetextCreation={() => annotationMode === "note"}
+          onFreetextClick={handleFreetextClick}
+          enableDrawingMode={annotationMode === "draw"}
+          drawingStrokeColor={selectedHexColor}
+          drawingStrokeWidth={annotationStyle.strokeWidth}
+          onDrawingComplete={handleDrawingComplete}
+          onDrawingCancel={() => setAnnotationMode("idle")}
+          enableShapeMode={shapeMode(annotationMode)}
+          shapeStrokeColor={selectedHexColor}
+          shapeStrokeWidth={annotationStyle.strokeWidth}
+          onShapeComplete={handleShapeComplete}
+          onShapeCancel={() => setAnnotationMode("idle")}
+          utilsRef={(nextUtils) => {
+            utilsRef.current = nextUtils;
+            setUtils((current) => (current === nextUtils ? current : nextUtils));
+          }}
+          style={{ backgroundColor: "var(--bg-tertiary)" }}
+          theme={{
+            mode: "light",
+            containerBackgroundColor: "var(--bg-tertiary)",
+            scrollbarThumbColor: "var(--accent-primary)",
+            scrollbarTrackColor: "var(--bg-secondary)"
+          }}
+        >
+          <AnnotationRenderer
+            onUpdate={updateManualHighlight}
+            onDelete={onDeleteAnnotation}
+          />
+        </PdfHighlighter>
+      </IsolatedReactRoot>
+    </div>
   );
 }
 
@@ -683,6 +882,7 @@ function AnnotationRenderer({
         isScrolledTo={isScrolledTo}
         highlightColor={highlight.litFill ?? "rgba(114, 137, 218, 0.18)"}
         copyText={highlight.litQuote}
+        colorPresets={areaHighlightColorPresets}
         {...(isManual
           ? {
               onChange: updateSingleRect,
@@ -690,7 +890,7 @@ function AnnotationRenderer({
               onStyleChange: (style: AreaHighlightStyle) =>
                 onUpdate(highlight.id, (current) => ({
                   ...current,
-                  ...(style.highlightColor ? { litFill: style.highlightColor } : {})
+                  ...(style.highlightColor ? { litFill: colorWithOpacity(style.highlightColor, 0.16) } : {})
                 }))
             }
           : {})}
@@ -767,25 +967,17 @@ function AnnotationRenderer({
     }
 
     return (
-      <ShapeHighlight
+      <BoxShapeEditor
         highlight={highlight}
         isScrolledTo={isScrolledTo}
-        shapeType={shape?.shapeType ?? "rectangle"}
+        isManual={isManual}
+        shapeType={shape?.shapeType === "circle" ? "circle" : "rectangle"}
+        fillColor={highlight.litFill ?? "transparent"}
         strokeColor={highlight.litShapeStyle?.strokeColor ?? shape?.strokeColor ?? "#7289da"}
         strokeWidth={highlight.litShapeStyle?.strokeWidth ?? shape?.strokeWidth ?? 2}
-        {...(shape?.startPoint ? { startPoint: shape.startPoint } : {})}
-        {...(shape?.endPoint ? { endPoint: shape.endPoint } : {})}
-        {...(isManual
-          ? {
-              onChange: updateSingleRect,
-              onStyleChange: (style: ShapeStyle) =>
-                onUpdate(highlight.id, (current) => ({
-                  ...current,
-                  litShapeStyle: { ...(current.litShapeStyle ?? {}), ...style }
-                })),
-              onDelete: () => onDelete(highlight.id)
-            }
-          : {})}
+        viewportToScaled={viewportToScaled}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
       />
     );
   }
@@ -796,6 +988,7 @@ function AnnotationRenderer({
       isScrolledTo={isScrolledTo}
       highlightColor={highlight.litFill ?? highlightColor(highlight.litColor)}
       copyText={highlight.litQuote}
+      colorPresets={textHighlightColorPresets}
         style={{
           borderRadius: 2,
           boxShadow: isScrolledTo ? `inset 0 0 0 1px ${highlightBorderColor(highlight.litColor)}` : undefined
@@ -806,7 +999,7 @@ function AnnotationRenderer({
             onStyleChange: (style: TextHighlightStyle) =>
               onUpdate(highlight.id, (current) => ({
                 ...current,
-                ...(style.highlightColor ? { litFill: style.highlightColor } : {})
+                ...(style.highlightColor ? { litFill: colorWithOpacity(style.highlightColor, defaultAnnotationStyle.markOpacity) } : {})
               }))
           }
         : {})}
@@ -816,6 +1009,179 @@ function AnnotationRenderer({
 
 type ArrowEndpoint = "start" | "end";
 type ArrowPoint = { x: number; y: number };
+type BoxShapeType = Extract<ShapeType, "rectangle" | "circle">;
+type BoxResizeHandle = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
+
+const boxResizeHandles: Array<{ id: BoxResizeHandle; label: string }> = [
+  { id: "nw", label: "Resize top left" },
+  { id: "n", label: "Resize top" },
+  { id: "ne", label: "Resize top right" },
+  { id: "e", label: "Resize right" },
+  { id: "se", label: "Resize bottom right" },
+  { id: "s", label: "Resize bottom" },
+  { id: "sw", label: "Resize bottom left" },
+  { id: "w", label: "Resize left" }
+];
+
+function BoxShapeEditor({
+  highlight,
+  isScrolledTo,
+  isManual,
+  shapeType,
+  fillColor,
+  strokeColor,
+  strokeWidth,
+  viewportToScaled,
+  onUpdate,
+  onDelete
+}: {
+  highlight: ViewportHighlight<LitHighlight>;
+  isScrolledTo: boolean;
+  isManual: boolean;
+  shapeType: BoxShapeType;
+  fillColor: string;
+  strokeColor: string;
+  strokeWidth: number;
+  viewportToScaled: (rect: LTWHP) => Scaled;
+  onUpdate: (id: string, updater: (highlight: LitHighlight) => LitHighlight) => void;
+  onDelete: (id: string) => void;
+}) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const rect = highlight.position.boundingRect;
+
+  const commitBox = useCallback((nextRect: LTWHP) => {
+    const scaled = viewportToScaled(nextRect);
+    onUpdate(highlight.id, (current) => {
+      const currentShape = current.content?.shape;
+      return {
+        ...current,
+        position: {
+          ...current.position,
+          boundingRect: scaled,
+          rects: []
+        },
+        content: {
+          ...(current.content ?? {}),
+          shape: {
+            ...(currentShape ?? { shapeType, strokeColor, strokeWidth }),
+            shapeType,
+            strokeColor,
+            strokeWidth
+          }
+        },
+        litFill: fillColor,
+        litShapeStyle: {
+          ...(current.litShapeStyle ?? {}),
+          strokeColor,
+          strokeWidth
+        }
+      };
+    });
+  }, [fillColor, highlight.id, onUpdate, shapeType, strokeColor, strokeWidth, viewportToScaled]);
+
+  const startMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isManual || event.button !== 0 || isBoxShapeControl(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const pageBounds = getArrowPageBounds(editorRef.current);
+    const baseClient = { x: event.clientX, y: event.clientY };
+    const baseRect = rect;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault();
+      commitBox(
+        clampViewportRectToPage(
+          {
+            ...baseRect,
+            left: baseRect.left + moveEvent.clientX - baseClient.x,
+            top: baseRect.top + moveEvent.clientY - baseClient.y
+          },
+          pageBounds
+        )
+      );
+    };
+
+    attachWindowPointerDrag(handleMove);
+  };
+
+  const startResize = (event: ReactPointerEvent<HTMLButtonElement>, handle: BoxResizeHandle) => {
+    if (!isManual || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const pageBounds = getArrowPageBounds(editorRef.current);
+    const baseClient = { x: event.clientX, y: event.clientY };
+    const baseRect = rect;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      moveEvent.preventDefault();
+      commitBox(
+        resizeViewportRect(
+          baseRect,
+          handle,
+          moveEvent.clientX - baseClient.x,
+          moveEvent.clientY - baseClient.y,
+          pageBounds
+        )
+      );
+    };
+
+    attachWindowPointerDrag(handleMove);
+  };
+
+  return (
+    <div
+      ref={editorRef}
+      className={`pdf-shape-editor ${shapeType}${isManual ? " is-editable" : ""}${isScrolledTo ? " is-scrolled" : ""}`}
+      style={{
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+      }}
+      onPointerDown={startMove}
+    >
+      <div
+        className="pdf-shape-box"
+        style={{
+          borderColor: strokeColor,
+          borderWidth: strokeWidth,
+          backgroundColor: fillColor,
+          borderRadius: shapeType === "circle" ? 999 : 3
+        }}
+        aria-hidden="true"
+      />
+      {isManual ? (
+        <>
+          {boxResizeHandles.map((handle) => (
+            <button
+              key={handle.id}
+              type="button"
+              className={`pdf-shape-handle pdf-shape-control ${handle.id}`}
+              aria-label={handle.label}
+              title={handle.label}
+              onPointerDown={(event) => startResize(event, handle.id)}
+            />
+          ))}
+          <button
+            type="button"
+            className="pdf-shape-delete pdf-shape-control"
+            aria-label="Delete shape annotation"
+            title="Delete shape annotation"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(highlight.id);
+            }}
+          >
+            x
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
+}
 
 function ArrowShapeEditor({
   highlight,
@@ -1251,11 +1617,60 @@ function toScaledRect(page: PdfExtractedPage, rect: LTWHP): Scaled {
   };
 }
 
+function paletteEntry(color: AnnotationColorKey): (typeof annotationPalette)[number] {
+  return annotationPalette.find((entry) => entry.id === color) ?? annotationPalette[0]!;
+}
+
+function paletteHex(color: AnnotationColorKey): string {
+  return paletteEntry(color).hex;
+}
+
+function paletteRgba(color: AnnotationColorKey, opacity: number): string {
+  return rgbaFromRgb(paletteEntry(color).rgb, opacity);
+}
+
+function rgbaFromRgb([red, green, blue]: [number, number, number], opacity: number): string {
+  return `rgba(${red}, ${green}, ${blue}, ${clamp(opacity, 0, 1)})`;
+}
+
+function shapeFillColor(style: AnnotationStyleSettings): string {
+  if (style.shapeFillMode === "outline") return "transparent";
+  return paletteRgba(style.color, style.shapeOpacity);
+}
+
+function colorWithOpacity(color: string, fallbackOpacity: number): string {
+  const hex = parseHexColor(color);
+  if (hex) return rgbaFromRgb(hex, fallbackOpacity);
+
+  const rgb = color.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+  if (rgb) return rgbaFromRgb([Number(rgb[1]), Number(rgb[2]), Number(rgb[3])], fallbackOpacity);
+
+  return color;
+}
+
+function parseHexColor(color: string): [number, number, number] | null {
+  const trimmed = color.trim();
+  const short = trimmed.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+  if (short) {
+    const red = short[1]!;
+    const green = short[2]!;
+    const blue = short[3]!;
+    return [parseInt(red + red, 16), parseInt(green + green, 16), parseInt(blue + blue, 16)];
+  }
+
+  const full = trimmed.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (!full) return null;
+  return [parseInt(full[1]!, 16), parseInt(full[2]!, 16), parseInt(full[3]!, 16)];
+}
+
 function highlightColor(color: PdfHighlight["color"]): string {
   return {
     yellow: "rgba(255, 214, 102, 0.1)",
     green: "rgba(67, 181, 129, 0.1)",
-    blue: "rgba(114, 137, 218, 0.1)"
+    blue: "rgba(114, 137, 218, 0.1)",
+    orange: "rgba(245, 159, 69, 0.1)",
+    pink: "rgba(255, 122, 162, 0.1)",
+    purple: "rgba(176, 132, 245, 0.1)"
   }[color ?? "yellow"];
 }
 
@@ -1263,7 +1678,10 @@ function highlightBorderColor(color: PdfHighlight["color"]): string {
   return {
     yellow: "rgba(217, 151, 48, 0.5)",
     green: "rgba(67, 181, 129, 0.45)",
-    blue: "rgba(114, 137, 218, 0.48)"
+    blue: "rgba(114, 137, 218, 0.48)",
+    orange: "rgba(245, 159, 69, 0.48)",
+    pink: "rgba(255, 122, 162, 0.45)",
+    purple: "rgba(176, 132, 245, 0.48)"
   }[color ?? "yellow"];
 }
 
@@ -1281,6 +1699,7 @@ function createManualHighlight({
   position,
   text,
   fill,
+  fillMode,
   pageNumber,
   content,
   freetextStyle,
@@ -1290,6 +1709,7 @@ function createManualHighlight({
   position: ScaledPosition;
   text: string;
   fill: string;
+  fillMode?: ShapeFillMode;
   pageNumber: number;
   content?: Highlight["content"];
   freetextStyle?: FreetextStyle;
@@ -1309,6 +1729,7 @@ function createManualHighlight({
     litActive: false,
     litResolvedFrom: "selection",
     litFill: fill,
+    ...(fillMode ? { litFillMode: fillMode } : {}),
     ...(freetextStyle ? { litFreetextStyle: freetextStyle } : {}),
     ...(shapeStyle ? { litShapeStyle: shapeStyle } : {})
   };
@@ -1443,8 +1864,51 @@ function clampArrowPointToPage(point: ArrowPoint, pageBounds: ArrowPageBounds | 
   };
 }
 
+function resizeViewportRect(
+  rect: LTWHP,
+  handle: BoxResizeHandle,
+  deltaX: number,
+  deltaY: number,
+  pageBounds: ArrowPageBounds | null
+): LTWHP {
+  let left = rect.left;
+  let top = rect.top;
+  let right = rect.left + rect.width;
+  let bottom = rect.top + rect.height;
+
+  if (handle.includes("w")) left += deltaX;
+  if (handle.includes("e")) right += deltaX;
+  if (handle.includes("n")) top += deltaY;
+  if (handle.includes("s")) bottom += deltaY;
+
+  if (right - left < MIN_SHAPE_SIZE) {
+    if (handle.includes("w")) left = right - MIN_SHAPE_SIZE;
+    else right = left + MIN_SHAPE_SIZE;
+  }
+
+  if (bottom - top < MIN_SHAPE_SIZE) {
+    if (handle.includes("n")) top = bottom - MIN_SHAPE_SIZE;
+    else bottom = top + MIN_SHAPE_SIZE;
+  }
+
+  return clampViewportRectToPage(
+    {
+      pageNumber: rect.pageNumber,
+      left,
+      top,
+      width: right - left,
+      height: bottom - top
+    },
+    pageBounds
+  );
+}
+
 function isArrowControl(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest(".pdf-arrow-control"));
+}
+
+function isBoxShapeControl(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest(".pdf-shape-control"));
 }
 
 function attachWindowPointerDrag(onMove: (event: PointerEvent) => void) {
