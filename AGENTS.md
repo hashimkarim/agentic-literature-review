@@ -13,6 +13,12 @@
 - Each commit should leave the app in a working state and should not knowingly break typecheck, tests, or core workflows.
 - Stage changes intentionally so unrelated user work or generated artifacts are not swept into a commit.
 
+## Source Language Policy
+
+- Use TypeScript (`.ts`) and TSX (`.tsx`) for handwritten app and package source.
+- Avoid new JavaScript/JSX source files except for generated output, third-party files, or config files that must remain JavaScript.
+- Prefer Bun-driven TypeScript scripts for local automation.
+
 ## Project Snapshot
 
 LitAgent is a local-first, project-centered literature review workspace. It uses
