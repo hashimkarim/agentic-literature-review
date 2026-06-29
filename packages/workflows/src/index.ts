@@ -13,6 +13,8 @@ import {
   QaRequestSchema,
   QaResponseSchema,
   QaScopeSchema,
+  QaThreadRequestSchema,
+  QaThreadSchema,
   WorkflowRunSchema,
   WorkflowTypeSchema,
   type EvidenceRef,
@@ -22,6 +24,8 @@ import {
   type QaRequestInput,
   type QaResponse,
   type QaScope,
+  type QaThread,
+  type QaThreadRequestInput,
   type SearchResult,
   type WorkflowRun,
   type WorkflowType
@@ -210,7 +214,56 @@ function buildEvidence(results: SearchResult[], limit: number): EvidenceRef[] {
         quote: result.passage?.quote ?? "",
         confidence: Math.max(0.4, 0.92 - index * 0.1)
       })
-    );
+	    );
+}
+
+const markdownContextCharBudget = 180_000;
+const answerEvidenceStopwords = new Set([
+  "about",
+  "after",
+  "also",
+  "because",
+  "between",
+  "could",
+  "from",
+  "have",
+  "into",
+  "more",
+  "only",
+  "paper",
+  "papers",
+  "question",
+  "should",
+  "source",
+  "sources",
+  "that",
+  "their",
+  "there",
+  "these",
+  "this",
+  "those",
+  "using",
+  "what",
+  "when",
+  "where",
+  "which",
+  "with",
+  "would"
+]);
+
+interface QaMarkdownPaperContext {
+  paper: Paper;
+  markdown: string;
+  passages: ReturnType<LitAgentRepository["readPassages"]>;
+  truncated: boolean;
+}
+
+interface QaMarkdownContext {
+  papers: QaMarkdownPaperContext[];
+  promptContext: string;
+  contextChars: number;
+  passageCount: number;
+  truncated: boolean;
 }
 
 function buildExtractiveAnswer(question: string, evidence: EvidenceRef[]): string {
@@ -252,32 +305,19 @@ function bestEvidenceSentence(quote: string, terms: string[]): string {
     .sort((left, right) => right.score - left.score)[0]?.sentence ?? quote.trim();
 }
 
-function buildProviderQaPrompt(question: string, evidence: EvidenceRef[]): string {
-  const evidenceBlock = evidence
-    .map((item, index) => {
-      const location = [item.paperTitle || item.paperId, item.section || null, item.page ? `p.${item.page}` : null]
-        .filter(Boolean)
-        .join(", ");
-      return [
-        `[${index + 1}] ${location}`,
-        `paperId: ${item.paperId}`,
-        `passageId: ${item.passageId}`,
-        `quote: ${item.quote}`
-      ].join("\n");
-    })
-    .join("\n\n");
-
+function buildProviderQaPrompt(question: string, context: QaMarkdownContext): string {
   return [
-    "You are LitAgent answering a literature-review question from retrieved source passages.",
-    "Use only the passages below. Do not inspect files, run tools, or write files.",
-    "If the passages do not answer the question, say: Not found in the selected sources.",
-    "Every factual claim in your answer must cite one or more evidence numbers like [1] or [2].",
+    "You are LitAgent answering a literature-review question from converted Markdown papers.",
+    "Use only the Markdown context below. Do not inspect files, run tools, or write files.",
+    "If the Markdown context does not answer the question, say: Not found in the selected sources.",
+    "Answer from the whole paper context, not from a preselected evidence snippet list.",
     "Keep the answer concise and avoid adding outside knowledge.",
+    "After you answer, LitAgent will attach supporting evidence by linking your claims back to source passages.",
     "",
     `Question: ${question}`,
     "",
-    "Evidence:",
-    evidenceBlock
+    "Markdown context:",
+    context.promptContext
   ].join("\n");
 }
 
@@ -293,6 +333,115 @@ function ensureCitedProviderAnswer(answer: string, evidence: EvidenceRef[]): str
   const trimmed = answer.trim();
   if (!trimmed || evidence.length === 0 || /\[\d+\]/.test(trimmed)) return trimmed;
   return `${trimmed} [1]`;
+}
+
+function buildQaMarkdownContext(repo: LitAgentRepository, scope: QaScope): QaMarkdownContext {
+  const paperIds = scope.paperIds;
+  const maxPerPaper = scope.type === "paper"
+    ? markdownContextCharBudget
+    : Math.max(12_000, Math.floor(markdownContextCharBudget / Math.max(1, paperIds.length)));
+  const papers: QaMarkdownPaperContext[] = [];
+  let remaining = markdownContextCharBudget;
+  let truncated = false;
+  for (const paperId of paperIds) {
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    const paper = repo.readPaper(paperId);
+    const markdown = repo.readMarkdown(paperId);
+    if (!paper || !markdown) continue;
+    const allowed = Math.min(maxPerPaper, remaining);
+    const included = markdown.length > allowed ? markdown.slice(0, allowed) : markdown;
+    const paperTruncated = included.length < markdown.length;
+    papers.push({
+      paper,
+      markdown: included,
+      passages: repo.readPassages(paperId),
+      truncated: paperTruncated
+    });
+    remaining -= included.length;
+    if (paperTruncated) truncated = true;
+  }
+  const promptContext = papers
+    .map((item, index) =>
+      [
+        `--- PAPER ${index + 1}: ${item.paper.title} ---`,
+        `paperId: ${item.paper.id}`,
+        item.paper.authors.length ? `authors: ${item.paper.authors.join(", ")}` : "authors: unknown",
+        item.paper.year ? `year: ${item.paper.year}` : "year: unknown",
+        item.truncated ? "note: Markdown was truncated to fit the current model context budget." : "note: Full available Markdown included.",
+        "",
+        item.markdown
+      ].join("\n")
+    )
+    .join("\n\n");
+  return {
+    papers,
+    promptContext,
+    contextChars: promptContext.length,
+    passageCount: papers.reduce((count, item) => count + item.passages.length, 0),
+    truncated
+  };
+}
+
+function supportTerms(text: string): string[] {
+  return [
+    ...new Set(
+      text
+        .toLowerCase()
+        .replace(/[^\p{Letter}\p{Number}\s-]/gu, " ")
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length > 3 && !answerEvidenceStopwords.has(term))
+    )
+  ];
+}
+
+function buildEvidenceFromAnswer(question: string, answer: string, context: QaMarkdownContext, limit: number): EvidenceRef[] {
+  if (/not found in the selected sources/i.test(answer)) return [];
+  const answerTerms = supportTerms(answer);
+  const questionTerms = supportTerms(question);
+  if (answerTerms.length === 0) return [];
+  return context.papers
+    .flatMap((item) =>
+      item.passages.map((passage) => {
+        const quote = passage.quote.toLowerCase();
+        const answerHits = answerTerms.filter((term) => quote.includes(term)).length;
+        const questionHits = questionTerms.filter((term) => quote.includes(term)).length;
+        const score = answerHits * 2 + questionHits;
+        return { item, passage, score };
+      })
+    )
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+    .map((candidate, index) =>
+      EvidenceRefSchema.parse({
+        paperId: candidate.item.paper.id,
+        passageId: candidate.passage.id,
+        page: candidate.passage.page,
+        paperTitle: candidate.item.paper.title,
+        section: candidate.passage.section,
+        quote: candidate.passage.quote,
+        confidence: Math.max(0.45, 0.88 - index * 0.08)
+      })
+    );
+}
+
+function qaThreadScope(input: QaThreadRequestInput) {
+  const parsed = QaThreadRequestSchema.parse(input);
+  return {
+    projectId: parsed.projectId,
+    paperId: parsed.paperId,
+    paperIds: [...new Set(parsed.paperIds)].sort(),
+    collectionId: parsed.collectionId
+  };
+}
+
+function qaThreadId(input: QaThreadRequestInput): string {
+  const hash = crypto.createHash("sha256").update(JSON.stringify(qaThreadScope(input))).digest("hex").slice(0, 18);
+  return `qa_${hash}`;
 }
 
 function metadataPatchFor(paper: Paper): Record<string, unknown> {
@@ -1149,11 +1298,91 @@ export class WorkflowEngine {
     return this.buildLocalQaResponse(parsed);
   }
 
+  readQaThread(input: QaThreadRequestInput): QaThread {
+    const parsed = qaThreadScope(input);
+    const id = qaThreadId(parsed);
+    const filePath = this.qaThreadPath(id);
+    if (fs.existsSync(filePath)) {
+      return QaThreadSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    }
+    const timestamp = nowIso();
+    return QaThreadSchema.parse({
+      id,
+      title: this.qaThreadTitle(parsed),
+      projectId: parsed.projectId,
+      paperId: parsed.paperId,
+      paperIds: parsed.paperIds,
+      collectionId: parsed.collectionId,
+      messages: [],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+  }
+
+  recordQaExchange(input: QaThreadRequestInput, response: QaResponse): { thread: QaThread; response: QaResponse } {
+    const thread = this.readQaThread(input);
+    const timestamp = nowIso();
+    const userMessageId = createId("qmsg");
+    const assistantMessageId = createId("qmsg");
+    const responseWithThread = QaResponseSchema.parse({
+      ...response,
+      threadId: thread.id,
+      messageId: assistantMessageId
+    });
+    const updated = QaThreadSchema.parse({
+      ...thread,
+      messages: [
+        ...thread.messages,
+        {
+          id: userMessageId,
+          role: "user",
+          content: response.question,
+          createdAt: timestamp,
+          response: null
+        },
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          content: responseWithThread.answer,
+          createdAt: timestamp,
+          response: responseWithThread
+        }
+      ],
+      updatedAt: timestamp
+    });
+    fs.mkdirSync(path.dirname(this.qaThreadPath(thread.id)), { recursive: true });
+    fs.writeFileSync(this.qaThreadPath(thread.id), `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+    return { thread: updated, response: responseWithThread };
+  }
+
   async answerQuestionWithProvider(input: QaRequestInput): Promise<QaResponse> {
     const parsed = QaRequestSchema.parse(input);
-    const base = this.buildLocalQaResponse(parsed);
-    if (base.status !== "answered" || base.evidence.length === 0 || !this.isProviderBackedRun(parsed.providerId)) {
-      return base;
+    const scope = resolveQaScope(this.repo, parsed);
+    const context = buildQaMarkdownContext(this.repo, scope);
+    if (!this.isProviderBackedRun(parsed.providerId)) {
+      return this.buildLocalQaResponse(parsed);
+    }
+    const baseDiagnostics = {
+      retrievedCount: context.passageCount,
+      evidenceCount: 0,
+      providerId: parsed.providerId,
+      model: parsed.model,
+      contextMode: "markdown-context" as const,
+      contextChars: context.contextChars,
+      message: context.papers.length
+        ? `Using Markdown context from ${context.papers.length} paper${context.papers.length === 1 ? "" : "s"}${context.truncated ? " (truncated to fit context budget)" : ""}.`
+        : "No converted Markdown exists in the selected scope. Run PDF-to-Markdown conversion first."
+    };
+    if (context.papers.length === 0) {
+      return QaResponseSchema.parse({
+        answer: "Not found in the selected sources. Run PDF-to-Markdown conversion first so LitAgent can use the Markdown context.",
+        evidence: [],
+        runId: null,
+        question: parsed.question,
+        status: "not_found",
+        scope,
+        diagnostics: baseDiagnostics
+      });
     }
 
     const runId = createId("run");
@@ -1165,7 +1394,7 @@ export class WorkflowEngine {
       type: "ask-with-citations",
       projectId: parsed.projectId,
       scope: {
-        paperIds: base.scope.paperIds,
+        paperIds: scope.paperIds,
         collectionIds: parsed.collectionId ? [parsed.collectionId] : [],
         query: parsed.question,
         options: { directQa: true }
@@ -1178,18 +1407,6 @@ export class WorkflowEngine {
       updatedAt: timestamp
     });
     this.writeRun(run);
-    for (const evidence of base.evidence) {
-      appendEvent(
-        absoluteEventsPath,
-        event({
-          runId,
-          providerId: parsed.providerId,
-          type: "evidence.found",
-          message: evidence.quote,
-          payload: evidence
-        })
-      );
-    }
 
     const outputPath = this.repo.resolve(`.litagent/cache/provider-runs/${runId}/qa-answer.md`);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -1198,7 +1415,7 @@ export class WorkflowEngine {
         runId,
         providerId: parsed.providerId,
         cwd: this.repo.root,
-        prompt: buildProviderQaPrompt(parsed.question, base.evidence),
+        prompt: buildProviderQaPrompt(parsed.question, context),
         model: parsed.model,
         eventsPath: absoluteEventsPath,
         outputPath,
@@ -1207,26 +1424,47 @@ export class WorkflowEngine {
       const result = await session.finished;
       const text = providerFinalText(result);
       if (result.status === "completed" && text) {
+        const evidence = buildEvidenceFromAnswer(parsed.question, text, context, 5);
+        for (const item of evidence) {
+          appendEvent(
+            absoluteEventsPath,
+            event({
+              runId,
+              providerId: parsed.providerId,
+              type: "evidence.found",
+              message: item.quote,
+              payload: item
+            })
+          );
+        }
+        const status = /not found in the selected sources/i.test(text) || evidence.length === 0 ? "not_found" : "answered";
         this.writeRun(WorkflowRunSchema.parse({ ...run, status: "completed", updatedAt: nowIso() }));
         return QaResponseSchema.parse({
-          ...base,
-          answer: ensureCitedProviderAnswer(text, base.evidence),
+          answer: status === "not_found" ? "Not found in the selected sources." : ensureCitedProviderAnswer(text, evidence),
+          evidence,
           runId,
+          question: parsed.question,
+          status,
+          scope,
           diagnostics: {
-            ...base.diagnostics,
-            message: `Generated with ${parsed.providerId}${parsed.model ? `/${parsed.model}` : ""} from ${base.evidence.length} cited passage${base.evidence.length === 1 ? "" : "s"}.`
+            ...baseDiagnostics,
+            evidenceCount: evidence.length,
+            message: status === "not_found"
+              ? `Generated with ${parsed.providerId}, but no supporting passage could be linked from the Markdown context.`
+              : `Generated with ${parsed.providerId}${parsed.model ? `/${parsed.model}` : ""} from Markdown context; attached ${evidence.length} supporting passage${evidence.length === 1 ? "" : "s"}.`
           }
         });
       }
 
       const status = result.status === "cancelled" ? "cancelled" : "failed";
       this.writeRun(WorkflowRunSchema.parse({ ...run, status, updatedAt: nowIso() }));
+      const fallback = this.buildLocalQaResponse(parsed);
       return QaResponseSchema.parse({
-        ...base,
+        ...fallback,
         runId,
         diagnostics: {
-          ...base.diagnostics,
-          message: `Provider ${parsed.providerId} did not return an answer${result.failureClass ? ` (${result.failureClass})` : ""}; showing extractive fallback. ${base.diagnostics.message}`
+          ...fallback.diagnostics,
+          message: `Provider ${parsed.providerId} did not return an answer${result.failureClass ? ` (${result.failureClass})` : ""}; showing extractive fallback. ${fallback.diagnostics.message}`
         }
       });
     } catch (error) {
@@ -1241,12 +1479,13 @@ export class WorkflowEngine {
         })
       );
       this.writeRun(WorkflowRunSchema.parse({ ...run, status: "failed", updatedAt: nowIso() }));
+      const fallback = this.buildLocalQaResponse(parsed);
       return QaResponseSchema.parse({
-        ...base,
+        ...fallback,
         runId,
         diagnostics: {
-          ...base.diagnostics,
-          message: `Provider ${parsed.providerId} failed before answering; showing extractive fallback. ${base.diagnostics.message}`
+          ...fallback.diagnostics,
+          message: `Provider ${parsed.providerId} failed before answering; showing extractive fallback. ${fallback.diagnostics.message}`
         }
       });
     }
@@ -1481,6 +1720,18 @@ export class WorkflowEngine {
   private writeRun(run: WorkflowRun): void {
     fs.mkdirSync(this.repo.resolve("workflows"), { recursive: true });
     fs.writeFileSync(this.repo.resolve(`workflows/${run.id}.run.json`), `${JSON.stringify(run, null, 2)}\n`, "utf8");
+  }
+
+  private qaThreadPath(threadId: string): string {
+    return this.repo.resolve(`.litagent/chat-threads/${threadId}.json`);
+  }
+
+  private qaThreadTitle(input: ReturnType<typeof qaThreadScope>): string {
+    if (input.paperId) return this.repo.readPaper(input.paperId)?.title ?? "Paper Q&A";
+    if (input.collectionId && input.projectId) return this.repo.readCollection(input.projectId, input.collectionId)?.name ?? "Collection Q&A";
+    if (input.projectId) return this.repo.readProject(input.projectId)?.name ?? "Project Q&A";
+    if (input.paperIds.length > 0) return `Selection Q&A (${input.paperIds.length} papers)`;
+    return "Global library Q&A";
   }
 
   private isProviderBackedRun(providerId: string): boolean {

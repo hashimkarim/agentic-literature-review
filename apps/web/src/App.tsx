@@ -7,7 +7,7 @@ import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
-import type { AgentProvider, CitationTarget, EvidenceRef, Passage, Project, QaResponse, WorkflowRun, WorkflowType } from "@litagent/contracts";
+import type { AgentProvider, CitationTarget, EvidenceRef, Passage, Project, QaResponse, QaThread, WorkflowRun, WorkflowType } from "@litagent/contracts";
 import { PdfReader, PdfUnavailable } from "@litagent/pdf";
 import type { PdfAnnotation } from "@litagent/pdf";
 import { workflowLabels } from "@litagent/ui";
@@ -427,6 +427,7 @@ function App() {
   const [markdownNotice, setMarkdownNotice] = useState<string | null>(null);
   const [passages, setPassages] = useState<Passage[]>([]);
   const [qa, setQa] = useState<QaResponse | null>(null);
+  const [qaThread, setQaThread] = useState<QaThread | null>(null);
   const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
   const [citationActivation, setCitationActivation] = useState(0);
   const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([]);
@@ -687,10 +688,31 @@ function App() {
     });
   }, []);
 
+  const loadQaThread = useCallback((scopeProjectId: string | null, paperId: string | null) => {
+    void api
+      .qaThread({ projectId: scopeProjectId, paperId })
+      .then((thread) => {
+        setQaThread(thread);
+        const latestResponse = [...thread.messages].reverse().find((message) => message.response)?.response ?? null;
+        setQa(latestResponse);
+      })
+      .catch(() => {
+        setQaThread(null);
+        setQa(null);
+      });
+  }, []);
+
+  const loadLibraryQaThread = useCallback((paperId: string | null) => {
+    loadQaThread(null, paperId);
+  }, [loadQaThread]);
+
+  const loadProjectQaThread = useCallback((paperId: string | null) => {
+    loadQaThread(activeProjectId, paperId);
+  }, [activeProjectId, loadQaThread]);
+
   const askQuestion = useCallback(
     (question: string, scopeProjectId: string | null, paperId: string | null) => {
       startTransition(() => {
-        setQa(null);
         void api
           .qa({
             question,
@@ -699,7 +721,10 @@ function App() {
             providerId: selectedProviderId,
             model: selectedModel
           })
-          .then(setQa);
+          .then(async (response) => {
+            setQa(response);
+            setQaThread(await api.qaThread({ projectId: scopeProjectId, paperId }));
+          });
       });
     },
     [selectedModel, selectedProviderId]
@@ -846,6 +871,7 @@ function App() {
             onClearPdfAnnotations={clearPdfAnnotations}
             passages={passages}
             qa={qa}
+            qaThread={qaThread}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -856,6 +882,7 @@ function App() {
             onRunWorkflow={(type, paperIds, query, options) => runWorkflow(type, null, paperIds, query, options)}
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, null, paperId)}
+            onLoadQaThread={loadLibraryQaThread}
             onConvert={convertPaper}
             onImportPapers={openImportPicker}
             onOpenCitation={openCitation}
@@ -884,6 +911,7 @@ function App() {
             onClearPdfAnnotations={clearPdfAnnotations}
             passages={passages}
             qa={qa}
+            qaThread={qaThread}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -894,6 +922,7 @@ function App() {
             onRunWorkflow={(type, paperIds, query, options) => runWorkflow(type, activeProjectId, paperIds, query, options)}
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, activeProjectId, paperId)}
+            onLoadQaThread={loadProjectQaThread}
             onConvert={convertPaper}
             onImportPapers={openImportPicker}
             onOpenCitation={openCitation}
@@ -1036,6 +1065,7 @@ interface WorkspaceProps {
   onClearPdfAnnotations: () => void;
   passages: Passage[];
   qa: QaResponse | null;
+  qaThread: QaThread | null;
   providers: AgentProvider[];
   selectedProviderId: string;
   selectedModel: string | null;
@@ -1046,6 +1076,7 @@ interface WorkspaceProps {
   onRunWorkflow: (type: WorkflowType, paperIds?: string[], query?: string | null, options?: Record<string, unknown>) => void;
   onCancelWorkflow: (runId: string) => void;
   onAsk: (question: string, paperId: string | null) => void;
+  onLoadQaThread: (paperId: string | null) => void;
   onConvert: (paperId: string) => void;
   onImportPapers: (projectId: string | null) => void;
   onOpenCitation: (ref: EvidenceRef, projectId: string | null) => void;
@@ -2015,6 +2046,7 @@ function AgentPanel({
   workflows,
   passages,
   qa,
+  qaThread,
   pdfAnnotations,
   activePdfAnnotationId,
   onJumpPdfAnnotation,
@@ -2023,22 +2055,34 @@ function AgentPanel({
   onRunWorkflow,
   onCancelWorkflow,
   onAsk,
+  onLoadQaThread,
   onOpenCitation
 }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
   const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
   const [input, setInput] = useState("");
   const [qaScope, setQaScope] = useState<"paper" | "context">("paper");
+  const [activeQaMessageId, setActiveQaMessageId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     setQaScope(selectedPaper ? "paper" : "context");
   }, [selectedPaper?.id]);
-  if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
   const effectiveQaScope = selectedPaper ? qaScope : "context";
   const askPaperId = effectiveQaScope === "paper" ? selectedPaper?.id ?? null : null;
   const contextScopeLabel = scopeProjectId ? "Project" : "Global";
   const qaScopeLabel = effectiveQaScope === "paper" && selectedPaper ? "Current paper" : contextScopeLabel;
-  const evidence: EvidenceRef[] = qa?.evidence.length
-    ? qa.evidence
+  useEffect(() => {
+    onLoadQaThread(askPaperId);
+  }, [askPaperId, onLoadQaThread]);
+  const assistantMessages = qaThread?.messages.filter((message) => message.role === "assistant" && message.response) ?? [];
+  useEffect(() => {
+    const latest = assistantMessages.at(-1);
+    setActiveQaMessageId((current) => current && assistantMessages.some((message) => message.id === current) ? current : latest?.id ?? null);
+  }, [assistantMessages.map((message) => message.id).join(":")]);
+  if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
+  const activeQaMessage = assistantMessages.find((message) => message.id === activeQaMessageId) ?? assistantMessages.at(-1) ?? null;
+  const activeQa = activeQaMessage?.response ?? qa;
+  const evidence: EvidenceRef[] = activeQa
+    ? activeQa.evidence
     : passages.slice(0, 5).map((passage) => ({
         passageId: passage.id,
         paperId: passage.paperId,
@@ -2102,22 +2146,48 @@ function AgentPanel({
             </div>
             <div className="la-sectionlabel">Cited Q&A · {contextLabel}</div>
             <div className="la-qa">
-              {qa ? (
-                <div className={`la-amsg${qa.status === "not_found" ? " notfound" : ""}`}>
-                  <div className="la-qameta">
-                    <span className={`qa-status ${qa.status}`}>{qa.status === "not_found" ? "Not found" : "Answered"}</span>
-                    <span>{qa.scope.type}</span>
-                    <span>{qa.diagnostics.evidenceCount} evidence</span>
-                    <span>{qa.diagnostics.retrievedCount} retrieved</span>
-                  </div>
-                  <div className="la-qaanswer">{qa.answer}</div>
-                  {qa.evidence.map((item, index) => (
-                    <span key={`${item.paperId}-${item.passageId}`} className="cite" onClick={() => { setTab("evidence"); onOpenCitation(item, scopeProjectId); }}>{index + 1}</span>
-                  ))}
-                  <div className="la-qadiag">{qa.diagnostics.message}</div>
-                </div>
+              {qaThread?.messages.length ? (
+                qaThread.messages.map((message) => {
+                  if (message.role === "user") {
+                    return <div key={message.id} className="la-qmsg">{message.content}</div>;
+                  }
+                  const response = message.response;
+                  if (!response) return null;
+                  const isActive = activeQaMessage?.id === message.id;
+                  return (
+                    <div
+                      key={message.id}
+                      className={`la-amsg${response.status === "not_found" ? " notfound" : ""}${isActive ? " active" : ""}`}
+                      onClick={() => setActiveQaMessageId(message.id)}
+                      title="Use this answer's evidence stack"
+                    >
+                      <div className="la-qameta">
+                        <span className={`qa-status ${response.status}`}>{response.status === "not_found" ? "Not found" : "Answered"}</span>
+                        <span>{response.scope.type}</span>
+                        <span>{response.diagnostics.evidenceCount} evidence</span>
+                        <span>{response.diagnostics.contextMode === "markdown-context" ? `${Math.round(response.diagnostics.contextChars / 1000)}k Markdown` : `${response.diagnostics.retrievedCount} retrieved`}</span>
+                      </div>
+                      <div className="la-qaanswer">{response.answer}</div>
+                      {response.evidence.map((item, index) => (
+                        <span
+                          key={`${message.id}-${item.paperId}-${item.passageId}`}
+                          className="cite"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setActiveQaMessageId(message.id);
+                            setTab("evidence");
+                            onOpenCitation(item, scopeProjectId);
+                          }}
+                        >
+                          {index + 1}
+                        </span>
+                      ))}
+                      <div className="la-qadiag">{response.diagnostics.message}</div>
+                    </div>
+                  );
+                })
               ) : (
-                <div className="la-amsg notfound">Ask a question. Answers must cite indexed passages and will say not found when retrieval has no evidence.</div>
+                <div className="la-amsg notfound">Ask a question. LitAgent uses the scoped Markdown context first, then attaches linked supporting evidence to the answer.</div>
               )}
             </div>
           </div>
@@ -2169,7 +2239,7 @@ function AgentPanel({
       {tab === "evidence" ? (
         <div className="la-agentbody fade-in" style={{ paddingTop: 12 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px 10px" }}>
-            <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>Evidence stack · {evidence.length} saved</span>
+            <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>Selected answer evidence · {evidence.length} linked</span>
             <Btn variant="ghost" sm icon="download">Export</Btn>
           </div>
           {evidence.length ? evidence.map((item, index) => (

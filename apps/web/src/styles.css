@@ -655,8 +655,9 @@ button { font-family: var(--font-sans); }
 
 /* Q&A */
 .la-qa { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
-.la-qmsg { align-self: flex-end; max-width: 90%; background: var(--accent-deep); color: var(--text-high); padding: 8px 11px; border-radius: 10px 10px 3px 10px; font: var(--text-body-sm); }
-.la-amsg { align-self: flex-start; max-width: 96%; background: var(--bg-tertiary); border: 1px solid var(--border-light); padding: 10px 12px; border-radius: 10px 10px 10px 3px; font: var(--text-body-sm); color: var(--text-primary); }
+.la-qmsg { align-self: flex-end; max-width: 90%; background: var(--accent-deep); color: var(--text-high); padding: 8px 11px; border-radius: 10px 10px 3px 10px; font: var(--text-body-sm); overflow-wrap: anywhere; }
+.la-amsg { align-self: flex-start; max-width: 96%; background: var(--bg-tertiary); border: 1px solid var(--border-light); padding: 10px 12px; border-radius: 10px 10px 10px 3px; font: var(--text-body-sm); color: var(--text-primary); cursor: pointer; overflow-wrap: anywhere; }
+.la-amsg.active { border-color: var(--accent-primary); box-shadow: inset 2px 0 0 var(--accent-primary); }
 .la-amsg .cite { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; background: #7289da33; color: var(--accent-bright); border-radius: 4px; font: var(--text-caption); font-family: var(--font-mono); font-size: 10px; cursor: pointer; vertical-align: super; margin: 0 1px; }
 .la-amsg.notfound { color: var(--state-warning); border-color: color-mix(in srgb, var(--state-warning) 40%, var(--border-light)); }
 .la-qameta { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }

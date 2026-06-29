@@ -16,6 +16,7 @@ import {
   ImportPaperRequestSchema,
   LinkPaperRequestSchema,
   QaRequestSchema,
+  QaThreadRequestSchema,
   SearchRequestSchema,
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema
@@ -91,6 +92,21 @@ function routeParam(req: Request, name: string): string {
     throw new Error(`Missing route parameter: ${name}`);
   }
   return value;
+}
+
+function queryString(req: Request, name: string): string | null {
+  const value = req.query[name];
+  return typeof value === "string" && value ? value : null;
+}
+
+function qaThreadScopeFromQuery(req: Request) {
+  const paperIds = queryString(req, "paperIds")?.split(",").map((paperId) => paperId.trim()).filter(Boolean) ?? [];
+  return QaThreadRequestSchema.parse({
+    projectId: queryString(req, "projectId"),
+    paperId: queryString(req, "paperId"),
+    collectionId: queryString(req, "collectionId"),
+    paperIds
+  });
 }
 
 function staticContentType(filePath: string): string {
@@ -560,10 +576,19 @@ app.post(
   })
 );
 
+app.get(
+  "/api/qa/thread",
+  asyncHandler((req, res) => {
+    res.json(workflows.readQaThread(qaThreadScopeFromQuery(req)));
+  })
+);
+
 app.post(
   "/api/qa",
   asyncHandler(async (req, res) => {
-    res.json(await workflows.answerQuestionWithProvider(QaRequestSchema.parse(req.body)));
+    const parsed = QaRequestSchema.parse(req.body);
+    const response = await workflows.answerQuestionWithProvider(parsed);
+    res.json(workflows.recordQaExchange(parsed, response).response);
   })
 );
 

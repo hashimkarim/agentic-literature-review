@@ -340,6 +340,8 @@ export const QaDiagnosticsSchema = z.object({
   evidenceCount: z.number().int().nonnegative().default(0),
   providerId: z.string().default("local-heuristic"),
   model: z.string().nullable().default(null),
+  contextMode: z.enum(["passage-search", "markdown-context"]).default("passage-search"),
+  contextChars: z.number().int().nonnegative().default(0),
   message: z.string().default("")
 });
 export type QaDiagnostics = z.infer<typeof QaDiagnosticsSchema>;
@@ -348,6 +350,8 @@ export const QaResponseSchema = z.object({
   answer: z.string(),
   evidence: z.array(EvidenceRefSchema),
   runId: z.string().nullable().default(null),
+  threadId: z.string().nullable().default(null),
+  messageId: z.string().nullable().default(null),
   question: z.string().default(""),
   status: QaStatusSchema.default("answered"),
   scope: QaScopeSchema.default({
@@ -364,10 +368,43 @@ export const QaResponseSchema = z.object({
     evidenceCount: 0,
     providerId: "local-heuristic",
     model: null,
+    contextMode: "passage-search",
+    contextChars: 0,
     message: ""
   })
 });
 export type QaResponse = z.infer<typeof QaResponseSchema>;
+
+export const QaThreadRequestSchema = z.object({
+  projectId: z.string().nullable().default(null),
+  paperId: z.string().nullable().default(null),
+  paperIds: z.array(z.string()).default([]),
+  collectionId: z.string().nullable().default(null)
+});
+export type QaThreadRequest = z.infer<typeof QaThreadRequestSchema>;
+export type QaThreadRequestInput = z.input<typeof QaThreadRequestSchema>;
+
+export const QaThreadMessageSchema = z.object({
+  id: z.string(),
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+  createdAt: isoDateSchema,
+  response: QaResponseSchema.nullable().default(null)
+});
+export type QaThreadMessage = z.infer<typeof QaThreadMessageSchema>;
+
+export const QaThreadSchema = z.object({
+  id: z.string(),
+  title: z.string().default("Q&A thread"),
+  projectId: z.string().nullable().default(null),
+  paperId: z.string().nullable().default(null),
+  paperIds: z.array(z.string()).default([]),
+  collectionId: z.string().nullable().default(null),
+  messages: z.array(QaThreadMessageSchema).default([]),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type QaThread = z.infer<typeof QaThreadSchema>;
 
 export const ImportPaperRequestSchema = z.object({
   sourcePath: z.string().optional(),

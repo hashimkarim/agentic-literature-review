@@ -328,11 +328,41 @@ describe("RAG question answering", () => {
     expect(answer.status).toBe("answered");
     expect(answer.answer).toContain("Provider synthesis");
     expect(answer.answer).toContain("[1]");
+    expect(answer.diagnostics.contextMode).toBe("markdown-context");
+    expect(answer.diagnostics.contextChars).toBeGreaterThan(0);
     expect(answer.runId).toMatch(/^run_/);
     const { run, events } = engine.readRun(answer.runId ?? "");
     expect(run.status).toBe("completed");
     expect(events.map((event) => event.type)).toContain("evidence.found");
     expect(events.map((event) => event.type)).toContain("model.delta");
+    index.close();
+  });
+
+  it("persists questions and answers in a scoped Q&A thread", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Thread QA" });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Thread Paper" }
+    });
+    repo.writeMarkdown(imported.paper.id, "# Findings\n\nPersistent threads keep the question and cited answer together.");
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+    const response = engine.answerQuestion({
+      question: "What do persistent threads keep together?",
+      projectId: project.id,
+      paperId: imported.paper.id
+    });
+
+    const recorded = engine.recordQaExchange({ projectId: project.id, paperId: imported.paper.id }, response);
+    const loaded = engine.readQaThread({ projectId: project.id, paperId: imported.paper.id });
+
+    expect(recorded.thread.id).toBe(loaded.id);
+    expect(loaded.messages).toHaveLength(2);
+    expect(loaded.messages[0]).toMatchObject({ role: "user", content: "What do persistent threads keep together?" });
+    expect(loaded.messages[1]?.response?.messageId).toBe(loaded.messages[1]?.id);
+    expect(loaded.messages[1]?.response?.threadId).toBe(loaded.id);
     index.close();
   });
 });

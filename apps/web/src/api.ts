@@ -6,6 +6,7 @@ import type {
   Passage,
   Project,
   QaResponse,
+  QaThread,
   CitationTarget,
   SearchResult,
   WorkflowRun,
@@ -119,6 +120,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }),
+  qaThread: (body: { projectId: string | null; paperId?: string | null; paperIds?: string[]; collectionId?: string | null }) => {
+    const params = new URLSearchParams();
+    if (body.projectId) params.set("projectId", body.projectId);
+    if (body.paperId) params.set("paperId", body.paperId);
+    if (body.collectionId) params.set("collectionId", body.collectionId);
+    if (body.paperIds?.length) params.set("paperIds", body.paperIds.join(","));
+    const query = params.toString();
+    return request<QaThread>(`/api/qa/thread${query ? `?${query}` : ""}`);
+  },
   workflows: () => request<WorkflowRun[]>("/api/workflows"),
   pdfInbox: (sourceDir = "pdfs") =>
     request<PdfInboxItem[]>(`/api/pdf-inbox?sourceDir=${encodeURIComponent(sourceDir)}`),
