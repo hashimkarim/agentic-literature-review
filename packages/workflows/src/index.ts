@@ -252,6 +252,49 @@ function bestEvidenceSentence(quote: string, terms: string[]): string {
     .sort((left, right) => right.score - left.score)[0]?.sentence ?? quote.trim();
 }
 
+function buildProviderQaPrompt(question: string, evidence: EvidenceRef[]): string {
+  const evidenceBlock = evidence
+    .map((item, index) => {
+      const location = [item.paperTitle || item.paperId, item.section || null, item.page ? `p.${item.page}` : null]
+        .filter(Boolean)
+        .join(", ");
+      return [
+        `[${index + 1}] ${location}`,
+        `paperId: ${item.paperId}`,
+        `passageId: ${item.passageId}`,
+        `quote: ${item.quote}`
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  return [
+    "You are LitAgent answering a literature-review question from retrieved source passages.",
+    "Use only the passages below. Do not inspect files, run tools, or write files.",
+    "If the passages do not answer the question, say: Not found in the selected sources.",
+    "Every factual claim in your answer must cite one or more evidence numbers like [1] or [2].",
+    "Keep the answer concise and avoid adding outside knowledge.",
+    "",
+    `Question: ${question}`,
+    "",
+    "Evidence:",
+    evidenceBlock
+  ].join("\n");
+}
+
+function providerFinalText(result: ProviderRunResult): string {
+  const artifactText =
+    result.artifacts
+      .map((artifactPath) => (fs.existsSync(artifactPath) ? fs.readFileSync(artifactPath, "utf8") : ""))
+      .find((content) => content.trim().length > 0) ?? "";
+  return (artifactText || result.transcript).trim();
+}
+
+function ensureCitedProviderAnswer(answer: string, evidence: EvidenceRef[]): string {
+  const trimmed = answer.trim();
+  if (!trimmed || evidence.length === 0 || /\[\d+\]/.test(trimmed)) return trimmed;
+  return `${trimmed} [1]`;
+}
+
 function metadataPatchFor(paper: Paper): Record<string, unknown> {
   return {
     paperId: paper.id,
@@ -1103,6 +1146,113 @@ export class WorkflowEngine {
 
   answerQuestion(input: QaRequestInput): QaResponse {
     const parsed = QaRequestSchema.parse(input);
+    return this.buildLocalQaResponse(parsed);
+  }
+
+  async answerQuestionWithProvider(input: QaRequestInput): Promise<QaResponse> {
+    const parsed = QaRequestSchema.parse(input);
+    const base = this.buildLocalQaResponse(parsed);
+    if (base.status !== "answered" || base.evidence.length === 0 || !this.isProviderBackedRun(parsed.providerId)) {
+      return base;
+    }
+
+    const runId = createId("run");
+    const eventsPath = `workflows/${runId}.jsonl`;
+    const absoluteEventsPath = this.repo.resolve(eventsPath);
+    const timestamp = nowIso();
+    const run = WorkflowRunSchema.parse({
+      id: runId,
+      type: "ask-with-citations",
+      projectId: parsed.projectId,
+      scope: {
+        paperIds: base.scope.paperIds,
+        collectionIds: parsed.collectionId ? [parsed.collectionId] : [],
+        query: parsed.question,
+        options: { directQa: true }
+      },
+      providerId: parsed.providerId,
+      model: parsed.model,
+      status: "running",
+      eventsPath,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    this.writeRun(run);
+    for (const evidence of base.evidence) {
+      appendEvent(
+        absoluteEventsPath,
+        event({
+          runId,
+          providerId: parsed.providerId,
+          type: "evidence.found",
+          message: evidence.quote,
+          payload: evidence
+        })
+      );
+    }
+
+    const outputPath = this.repo.resolve(`.litagent/cache/provider-runs/${runId}/qa-answer.md`);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    try {
+      const session = this.harness.startRun({
+        runId,
+        providerId: parsed.providerId,
+        cwd: this.repo.root,
+        prompt: buildProviderQaPrompt(parsed.question, base.evidence),
+        model: parsed.model,
+        eventsPath: absoluteEventsPath,
+        outputPath,
+        artifactPaths: [outputPath]
+      });
+      const result = await session.finished;
+      const text = providerFinalText(result);
+      if (result.status === "completed" && text) {
+        this.writeRun(WorkflowRunSchema.parse({ ...run, status: "completed", updatedAt: nowIso() }));
+        return QaResponseSchema.parse({
+          ...base,
+          answer: ensureCitedProviderAnswer(text, base.evidence),
+          runId,
+          diagnostics: {
+            ...base.diagnostics,
+            message: `Generated with ${parsed.providerId}${parsed.model ? `/${parsed.model}` : ""} from ${base.evidence.length} cited passage${base.evidence.length === 1 ? "" : "s"}.`
+          }
+        });
+      }
+
+      const status = result.status === "cancelled" ? "cancelled" : "failed";
+      this.writeRun(WorkflowRunSchema.parse({ ...run, status, updatedAt: nowIso() }));
+      return QaResponseSchema.parse({
+        ...base,
+        runId,
+        diagnostics: {
+          ...base.diagnostics,
+          message: `Provider ${parsed.providerId} did not return an answer${result.failureClass ? ` (${result.failureClass})` : ""}; showing extractive fallback. ${base.diagnostics.message}`
+        }
+      });
+    } catch (error) {
+      appendEvent(
+        absoluteEventsPath,
+        event({
+          runId,
+          providerId: parsed.providerId,
+          type: "run.failed",
+          message: error instanceof Error ? error.message : String(error),
+          payload: { failureClass: "harness_error" }
+        })
+      );
+      this.writeRun(WorkflowRunSchema.parse({ ...run, status: "failed", updatedAt: nowIso() }));
+      return QaResponseSchema.parse({
+        ...base,
+        runId,
+        diagnostics: {
+          ...base.diagnostics,
+          message: `Provider ${parsed.providerId} failed before answering; showing extractive fallback. ${base.diagnostics.message}`
+        }
+      });
+    }
+  }
+
+  private buildLocalQaResponse(parsed: QaRequest): QaResponse {
     const scope = resolveQaScope(this.repo, parsed);
     const results = this.index.search(this.repo, {
       query: parsed.question,

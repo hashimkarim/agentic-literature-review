@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { AgentHarness, AgentProviderCatalog, type ProviderDefinition } from "@litagent/agents";
 import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
 
@@ -284,6 +285,54 @@ describe("RAG question answering", () => {
     expect(engine.readRun(run.id).run.status).toBe("completed");
     expect(evidenceEvent?.payload.paperId).toBe(first.paper.id);
     expect(evidenceEvent?.payload.paperId).not.toBe(second.paper.id);
+    index.close();
+  });
+
+  it("can synthesize a cited answer with a selected CLI provider", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Provider QA" });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Provider Paper", authors: ["Tester"] }
+    });
+    repo.writeMarkdown(
+      imported.paper.id,
+      "# Findings\n\nLow latency streaming inference improves reliable mobile music analysis."
+    );
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const fakeProvider: ProviderDefinition = {
+      id: "fake",
+      label: "Fake Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => [
+        "-e",
+        "process.stdout.write('Provider synthesis says low latency streaming inference improves reliability [1].')"
+      ],
+      promptDelivery: "stdin"
+    };
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+
+    const answer = await engine.answerQuestionWithProvider({
+      question: "What improves reliable mobile music analysis?",
+      projectId: project.id,
+      providerId: "fake"
+    });
+
+    expect(answer.status).toBe("answered");
+    expect(answer.answer).toContain("Provider synthesis");
+    expect(answer.answer).toContain("[1]");
+    expect(answer.runId).toMatch(/^run_/);
+    const { run, events } = engine.readRun(answer.runId ?? "");
+    expect(run.status).toBe("completed");
+    expect(events.map((event) => event.type)).toContain("evidence.found");
+    expect(events.map((event) => event.type)).toContain("model.delta");
     index.close();
   });
 });

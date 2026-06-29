@@ -562,8 +562,8 @@ app.post(
 
 app.post(
   "/api/qa",
-  asyncHandler((req, res) => {
-    res.json(workflows.answerQuestion(QaRequestSchema.parse(req.body)));
+  asyncHandler(async (req, res) => {
+    res.json(await workflows.answerQuestionWithProvider(QaRequestSchema.parse(req.body)));
   })
 );
 
