@@ -7,6 +7,7 @@ import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { WebSocketServer } from "ws";
+import { z } from "zod";
 
 import {
   AgentProviderSettingsPatchSchema,
@@ -22,7 +23,7 @@ import {
 import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
 import { SearchIndex } from "@litagent/indexer";
 import { DEFAULT_REPO_ROOT, LitAgentRepository } from "@litagent/library";
-import { WorkflowEngine, WorkflowStartRequestSchema, convertPaperWithMarker } from "@litagent/workflows";
+import { WorkflowEngine, WorkflowStartRequestSchema, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema } from "@litagent/workflows";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.LITAGENT_PORT ?? 3874);
@@ -39,6 +40,32 @@ const providerSettings = new AgentProviderSettingsStore(repo.resolve(".litagent/
 const providers = new AgentProviderCatalog(undefined, providerSettings.read());
 const workflows = new WorkflowEngine(repo, index, providers, undefined, providerSettings);
 const upload = multer({ dest: repo.resolve(".litagent/cache/uploads") });
+
+const PdfInboxAutomationRuleSchema = z.object({
+  id: z.literal("pdf-inbox"),
+  enabled: z.boolean().default(false),
+  eventTriggerEnabled: z.boolean().default(true),
+  timerTriggerEnabled: z.boolean().default(false),
+  intervalMinutes: z.number().int().positive().max(1440).default(15),
+  sourceDir: z.string().min(1).default("pdfs"),
+  force: z.boolean().default(false),
+  projectId: z.string().nullable().default(null),
+  knownKeys: z.array(z.string()).default([]),
+  lastCheckedAt: z.string().datetime().nullable().default(null),
+  lastRunAt: z.string().datetime().nullable().default(null),
+  updatedAt: z.string().datetime()
+});
+type PdfInboxAutomationRule = z.infer<typeof PdfInboxAutomationRuleSchema>;
+
+const PdfInboxAutomationPatchSchema = PdfInboxAutomationRuleSchema.partial().omit({
+  id: true,
+  knownKeys: true,
+  lastCheckedAt: true,
+  lastRunAt: true,
+  updatedAt: true
+});
+
+const automationPath = repo.resolve(".litagent/workflow-automations.json");
 
 const app = express();
 app.use(cors());
@@ -66,6 +93,53 @@ function routeParam(req: Request, name: string): string {
   return value;
 }
 
+function staticContentType(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  switch (extension) {
+    case ".apng":
+      return "image/apng";
+    case ".avif":
+      return "image/avif";
+    case ".bmp":
+      return "image/bmp";
+    case ".gif":
+      return "image/gif";
+    case ".jpg":
+    case ".jpeg":
+    case ".jfif":
+    case ".pjpeg":
+    case ".pjp":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".svg":
+    case ".svgz":
+      return "image/svg+xml";
+    case ".tif":
+    case ".tiff":
+      return "image/tiff";
+    case ".webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function decodeUrlPath(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeMarkdownAssetPath(value: string): string {
+  const normalized = decodeUrlPath(value).replaceAll("\\", "/").replace(/^\/+/, "").replace(/^(\.\/)+/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  const assetsIndex = parts.findIndex((part) => part === "assets");
+  return (assetsIndex >= 0 ? parts.slice(assetsIndex + 1) : parts).join("/");
+}
+
 function indexPaper(paperId: string): void {
   const paper = repo.readPaper(paperId);
   if (!paper) return;
@@ -75,6 +149,71 @@ function indexPaper(paperId: string): void {
 function refreshProviders() {
   providers.setSettings(providerSettings.read());
   return providers.discover();
+}
+
+function defaultPdfInboxAutomation(): PdfInboxAutomationRule {
+  return PdfInboxAutomationRuleSchema.parse({
+    id: "pdf-inbox",
+    updatedAt: new Date().toISOString()
+  });
+}
+
+function readPdfInboxAutomation(): PdfInboxAutomationRule {
+  if (!fs.existsSync(automationPath)) return defaultPdfInboxAutomation();
+  const parsed = JSON.parse(fs.readFileSync(automationPath, "utf8")) as { pdfInbox?: unknown };
+  return PdfInboxAutomationRuleSchema.parse(parsed.pdfInbox ?? defaultPdfInboxAutomation());
+}
+
+function writePdfInboxAutomation(rule: PdfInboxAutomationRule): PdfInboxAutomationRule {
+  fs.mkdirSync(path.dirname(automationPath), { recursive: true });
+  const parsed = fs.existsSync(automationPath) ? JSON.parse(fs.readFileSync(automationPath, "utf8")) : {};
+  const updated = PdfInboxAutomationRuleSchema.parse({ ...rule, updatedAt: new Date().toISOString() });
+  fs.writeFileSync(automationPath, `${JSON.stringify({ ...parsed, pdfInbox: updated }, null, 2)}\n`, "utf8");
+  return updated;
+}
+
+function pdfInboxKey(item: { sourcePath: string; size: number; modifiedAt: string }): string {
+  return `${item.sourcePath}:${item.size}:${item.modifiedAt}`;
+}
+
+function runPdfInboxAutomation(reason: "event" | "timer" | "manual"): { runId: string | null; matched: number; reason: string } {
+  const rule = readPdfInboxAutomation();
+  const now = new Date();
+  const discovered = discoverPdfInputs(repo, { sourceDir: rule.sourceDir });
+  const discoveredKeys = discovered.map(pdfInboxKey);
+  const known = new Set(rule.knownKeys);
+  const newItems = discovered.filter((item) => !known.has(pdfInboxKey(item)));
+  const due =
+    rule.timerTriggerEnabled &&
+    (!rule.lastRunAt || now.getTime() - new Date(rule.lastRunAt).getTime() >= rule.intervalMinutes * 60_000);
+
+  const checked = writePdfInboxAutomation({
+    ...rule,
+    knownKeys: [...new Set([...rule.knownKeys, ...discoveredKeys])],
+    lastCheckedAt: now.toISOString()
+  });
+
+  if (reason !== "manual" && (!checked.enabled || (!checked.eventTriggerEnabled && !checked.timerTriggerEnabled))) {
+    return { runId: null, matched: discovered.length, reason };
+  }
+  if (reason === "event" && newItems.length === 0) return { runId: null, matched: discovered.length, reason };
+  if (reason === "timer" && !due) return { runId: null, matched: discovered.length, reason };
+  if (discovered.length === 0) return { runId: null, matched: 0, reason };
+
+  const run = workflows.startWorkflow(
+    WorkflowStartRequestSchema.parse({
+      type: "pdf-markdown-processing",
+      projectId: checked.projectId,
+      providerId: "local-heuristic",
+      model: null,
+      options: {
+        sourceDir: checked.sourceDir,
+        force: checked.force
+      }
+    })
+  );
+  writePdfInboxAutomation({ ...checked, lastRunAt: new Date().toISOString() });
+  return { runId: run.id, matched: discovered.length, reason };
 }
 
 app.get(
@@ -255,6 +394,40 @@ app.post(
 );
 
 app.get(
+  "/api/pdf-inbox",
+  asyncHandler((req, res) => {
+    const only = typeof req.query.only === "string" && req.query.only ? [req.query.only] : [];
+    const sourceDir = typeof req.query.sourceDir === "string" && req.query.sourceDir ? req.query.sourceDir : "pdfs";
+    const limit = typeof req.query.limit === "string" && req.query.limit ? Number(req.query.limit) : undefined;
+    res.json(discoverPdfInputs(repo, PdfProcessingOptionsSchema.parse({ sourceDir, only, limit })));
+  })
+);
+
+app.get(
+  "/api/workflow-automations/pdf-inbox",
+  asyncHandler((_req, res) => {
+    res.json(readPdfInboxAutomation());
+  })
+);
+
+app.patch(
+  "/api/workflow-automations/pdf-inbox",
+  asyncHandler((req, res) => {
+    const current = readPdfInboxAutomation();
+    const patch = PdfInboxAutomationPatchSchema.parse(req.body);
+    const definedPatch = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+    res.json(writePdfInboxAutomation({ ...current, ...definedPatch }));
+  })
+);
+
+app.post(
+  "/api/workflow-automations/pdf-inbox/run",
+  asyncHandler((_req, res) => {
+    res.status(201).json(runPdfInboxAutomation("manual"));
+  })
+);
+
+app.get(
   "/api/papers/:id/pdf",
   asyncHandler((req, res) => {
     const pdfPath = repo.pdfPath(routeParam(req, "id"));
@@ -300,6 +473,41 @@ app.get(
       return;
     }
     res.type("text/markdown").send(markdown);
+  })
+);
+
+app.get(
+  /^\/api\/papers\/([^/]+)\/markdown-assets\/(.+)$/,
+  asyncHandler((req, res) => {
+    const paperId = String(req.params[0] ?? "");
+    const assetPath = normalizeMarkdownAssetPath(String(req.params[1] ?? ""));
+    const assetRoot = path.resolve(repo.resolve(`library/markdown/${paperId}/assets`));
+    const resolvedAsset = path.resolve(assetRoot, assetPath);
+    if (!resolvedAsset.startsWith(assetRoot + path.sep) && resolvedAsset !== assetRoot) {
+      res.status(400).json({ error: "Invalid asset path" });
+      return;
+    }
+    if (!fs.existsSync(resolvedAsset)) {
+      res.status(404).json({ error: "Markdown asset not found" });
+      return;
+    }
+    const stat = fs.statSync(resolvedAsset);
+    if (!stat.isFile()) {
+      res.status(404).json({ error: "Markdown asset not found" });
+      return;
+    }
+    res.setHeader("Content-Type", staticContentType(resolvedAsset));
+    res.setHeader("Content-Length", String(stat.size));
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    const stream = fs.createReadStream(resolvedAsset);
+    stream.on("error", (error) => {
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+        return;
+      }
+      res.destroy(error);
+    });
+    stream.pipe(res);
   })
 );
 
@@ -370,7 +578,6 @@ app.post(
   "/api/workflows",
   asyncHandler((req, res) => {
     const run = workflows.startWorkflow(WorkflowStartRequestSchema.parse(req.body));
-    index.rebuild(repo);
     res.status(201).json(run);
   })
 );
@@ -401,6 +608,15 @@ app.get(
   "/api/provider-status",
   asyncHandler((_req, res) => {
     res.json(refreshProviders());
+  })
+);
+
+app.get(
+  "/api/converter-status",
+  asyncHandler((_req, res) => {
+    res.json({
+      marker: markerRuntimeStatus()
+    });
   })
 );
 
@@ -485,6 +701,16 @@ wss.on("connection", (socket, request) => {
   const timer = setInterval(sendEvents, 1000);
   socket.on("close", () => clearInterval(timer));
 });
+
+const automationTimer = setInterval(() => {
+  try {
+    runPdfInboxAutomation("event");
+    runPdfInboxAutomation("timer");
+  } catch (error) {
+    console.warn("PDF inbox automation skipped:", error instanceof Error ? error.message : String(error));
+  }
+}, 60_000);
+server.on("close", () => clearInterval(automationTimer));
 
 server.listen(port, () => {
   console.log(`LitAgent server listening on http://localhost:${port}`);

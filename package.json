@@ -13,6 +13,7 @@
     "dev:server": "bun run --filter @litagent/server dev",
     "dev:web": "bun run --filter @litagent/web dev",
     "dev:desktop": "bun run --filter @litagent/desktop dev",
+    "prepare:marker-runtime": "bun scripts/prepare-marker-runtime.ts",
     "build": "bun run --workspaces --if-present build",
     "typecheck": "bunx tsc -b",
     "test": "bunx vitest run",

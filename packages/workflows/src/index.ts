@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import { z } from "zod";
 
 import { AgentHarness, AgentProviderCatalog, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
@@ -30,10 +31,53 @@ export const WorkflowStartRequestSchema = z.object({
   paperIds: z.array(z.string()).default([]),
   collectionIds: z.array(z.string()).default([]),
   query: z.string().nullable().default(null),
+  options: z.record(z.string(), z.unknown()).default({}),
   providerId: z.string().default("local-heuristic"),
   model: z.string().nullable().default(null)
 });
 export type WorkflowStartRequest = z.infer<typeof WorkflowStartRequestSchema>;
+
+export const PdfProcessingOptionsSchema = z.object({
+  sourceDir: z.string().trim().min(1).default("pdfs"),
+  force: z.boolean().default(false),
+  limit: z.number().int().positive().optional(),
+  only: z.array(z.string()).default([]),
+  pauseSeconds: z.number().min(0).max(60).default(0),
+  refineWithAgent: z.boolean().default(false)
+});
+export type PdfProcessingOptions = z.infer<typeof PdfProcessingOptionsSchema>;
+
+export interface PdfDiscoveryItem {
+  sourcePath: string;
+  relativePath: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface PdfProcessingItem {
+  sourcePath: string;
+  relativePath: string;
+  paperId: string;
+  title: string;
+  importStatus: "imported" | "updated";
+  conversionStatus: ConversionResult["status"] | "skipped";
+  markdownPath: string | null;
+  passageCount: number;
+  message: string;
+  seconds: number;
+}
+
+export interface PdfProcessingResult {
+  status: "ok" | "partial" | "empty";
+  sourceDir: string;
+  discovered: number;
+  imported: number;
+  converted: number;
+  skipped: number;
+  failed: number;
+  summaryPath: string | null;
+  items: PdfProcessingItem[];
+}
 
 function event(input: {
   runId: string;
@@ -148,19 +192,50 @@ function findMarkdownFiles(root: string): string[] {
     if (entry.isDirectory()) out.push(...findMarkdownFiles(fullPath));
     else if (entry.name.endsWith(".md")) out.push(fullPath);
   }
-  return out;
+  return out.sort((a, b) => a.localeCompare(b));
 }
 
-function rewriteAssetLinks(markdown: string, sourceDir: string, assetDir: string): string {
-  return markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (full, alt: string, target: string) => {
-    if (target.includes("://") || target.startsWith("data:") || target.startsWith("#")) return full;
-    const sourceAsset = path.resolve(sourceDir, decodeURIComponent(target));
+function markdownMetrics(markdown: string, assetsCopied: number): Pick<ConversionResult, "lines" | "imageRefs" | "links" | "assetsCopied"> {
+  return {
+    lines: markdown.split(/\r?\n/).length,
+    imageRefs: markdown.match(/!\[[^\]]*\]\([^)]+\)/g)?.length ?? 0,
+    links: markdown.match(/\]\([^)]+\)/g)?.length ?? 0,
+    assetsCopied
+  };
+}
+
+function rewriteAssetLinks(markdown: string, sourceDir: string, assetDir: string): { markdown: string; metrics: Pick<ConversionResult, "lines" | "imageRefs" | "links" | "assetsCopied"> } {
+  const copied = new Map<string, string>();
+  const rewritten = markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (full, alt: string, target: string) => {
+    const trimmed = target.trim();
+    if (trimmed.includes("://") || trimmed.startsWith("data:") || trimmed.startsWith("#")) return full;
+    const sourceAsset = path.resolve(sourceDir, decodeURIComponent(trimmed));
     if (!fs.existsSync(sourceAsset) || !fs.statSync(sourceAsset).isFile()) return full;
     fs.mkdirSync(assetDir, { recursive: true });
-    const destination = path.join(assetDir, path.basename(sourceAsset));
+    const cached = copied.get(sourceAsset);
+    if (cached) return `![${alt}](${cached})`;
+
+    let destination = path.join(assetDir, path.basename(sourceAsset));
+    let counter = 1;
+    while (fs.existsSync(destination)) {
+      const parsed = path.parse(sourceAsset);
+      destination = path.join(assetDir, `${parsed.name}_${counter}${parsed.ext}`);
+      counter += 1;
+    }
     fs.copyFileSync(sourceAsset, destination);
-    return `![${alt}](assets/${path.basename(destination)})`;
+    const relativeAssetPath = `assets/${path.basename(destination)}`;
+    copied.set(sourceAsset, relativeAssetPath);
+    return `![${alt}](${relativeAssetPath})`;
   });
+  return {
+    markdown: rewritten,
+    metrics: markdownMetrics(rewritten, copied.size)
+  };
+}
+
+function clearMarkdownAssets(markdownDir: string): void {
+  const assetsDir = path.join(markdownDir, "assets");
+  if (fs.existsSync(assetsDir)) fs.rmSync(assetsDir, { recursive: true, force: true });
 }
 
 export interface ConversionResult {
@@ -168,30 +243,266 @@ export interface ConversionResult {
   markdownPath: string | null;
   passageCount: number;
   message: string;
+  lines?: number;
+  imageRefs?: number;
+  links?: number;
+  assetsCopied?: number;
 }
 
-export function convertPaperWithMarker(repo: LitAgentRepository, paperId: string): ConversionResult {
-  const paper = repo.readPaper(paperId);
-  if (!paper) throw new Error(`Paper not found: ${paperId}`);
-  const pdfPath = repo.pdfPath(paperId);
-  if (!pdfPath) {
-    const markdown = ensureMarkdownFallback(repo, paper);
+const skippedPdfDirs = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".litagent",
+  ".venv",
+  "__pycache__",
+  "node_modules",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache"
+]);
+
+function resolvePdfSourceDir(repo: LitAgentRepository, sourceDir: string): string {
+  const candidate = path.isAbsolute(sourceDir) ? sourceDir : repo.resolve(sourceDir);
+  const resolved = path.resolve(candidate);
+  const root = path.resolve(repo.root);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+    throw new Error(`PDF source directory must be inside the research repository: ${sourceDir}`);
+  }
+  return resolved;
+}
+
+function walkPdfFiles(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      if (skippedPdfDirs.has(entry.name)) continue;
+      out.push(...walkPdfFiles(fullPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(".pdf")) out.push(fullPath);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+export function discoverPdfInputs(repo: LitAgentRepository, input: Partial<PdfProcessingOptions> = {}): PdfDiscoveryItem[] {
+  const options = PdfProcessingOptionsSchema.parse(input);
+  const sourceRoot = resolvePdfSourceDir(repo, options.sourceDir);
+  let pdfs = walkPdfFiles(sourceRoot);
+  if (options.only.length > 0) {
+    const filters = options.only.map((term) => term.toLowerCase());
+    pdfs = pdfs.filter((pdfPath) => filters.some((term) => path.relative(sourceRoot, pdfPath).toLowerCase().includes(term)));
+  }
+  if (options.limit) pdfs = pdfs.slice(0, options.limit);
+
+  return pdfs.map((sourcePath) => {
+    const stat = fs.statSync(sourcePath);
     return {
-      status: "placeholder",
-      markdownPath: repo.readPaper(paperId)?.filePaths.markdown ?? null,
-      passageCount: parseMarkdownPassages(paperId, markdown).length,
-      message: "No PDF is attached; wrote placeholder Markdown."
+      sourcePath,
+      relativePath: path.relative(sourceRoot, sourcePath),
+      size: stat.size,
+      modifiedAt: new Date(stat.mtimeMs).toISOString()
     };
+  });
+}
+
+function titleFromPdfPath(sourcePath: string): string {
+  return path.basename(sourcePath, path.extname(sourcePath)).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim() || "Untitled paper";
+}
+
+function writePdfProcessingSummary(repo: LitAgentRepository, runId: string | null, result: Omit<PdfProcessingResult, "summaryPath">): string {
+  const summaryPath = runId ? `workflows/${runId}.pdf-processing-summary.json` : `workflows/pdf-processing-summary.json`;
+  const absolutePath = repo.resolve(summaryPath);
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, `${JSON.stringify({ ...result, summaryPath }, null, 2)}\n`, "utf8");
+  return summaryPath;
+}
+
+export function processPdfInbox(
+  repo: LitAgentRepository,
+  input: Partial<PdfProcessingOptions> & { projectId?: string | null; runId?: string | null } = {},
+  hooks: {
+    convertPaper?: (repo: LitAgentRepository, paperId: string) => ConversionResult;
+    indexPaper?: (paperId: string) => void;
+    onProgress?: (message: string, payload?: Record<string, unknown>) => void;
+  } = {}
+): PdfProcessingResult {
+  const options = PdfProcessingOptionsSchema.parse(input);
+  const projectId = input.projectId ?? null;
+  const sourceRoot = resolvePdfSourceDir(repo, options.sourceDir);
+  const discovered = discoverPdfInputs(repo, options);
+  hooks.onProgress?.(`Discovered ${discovered.length} PDF(s) under ${path.relative(repo.root, sourceRoot) || "."}`, {
+    sourceDir: options.sourceDir,
+    discovered: discovered.length
+  });
+
+  const knownPaperIds = new Set(repo.listGlobalPapers().map((paper) => paper.id));
+  const items: PdfProcessingItem[] = [];
+  for (const [index, pdf] of discovered.entries()) {
+    const start = performance.now();
+    hooks.onProgress?.(`Processing PDF ${index + 1}/${discovered.length}: ${pdf.relativePath}`, {
+      sourcePath: pdf.sourcePath,
+      relativePath: pdf.relativePath
+    });
+    const imported = repo.importPaper({
+      sourcePath: pdf.sourcePath,
+      projectId,
+      metadata: {
+        title: titleFromPdfPath(pdf.sourcePath),
+        authors: []
+      }
+    });
+    const paperBeforeConversion = repo.readPaper(imported.paper.id) ?? imported.paper;
+    const importStatus = knownPaperIds.has(imported.paper.id) ? "updated" : "imported";
+    knownPaperIds.add(imported.paper.id);
+
+    let conversion: ConversionResult;
+    if (!options.force && paperBeforeConversion.filePaths.markdown && repo.readMarkdown(imported.paper.id)) {
+      conversion = {
+        status: "ok",
+        markdownPath: paperBeforeConversion.filePaths.markdown,
+        passageCount: repo.readPassages(imported.paper.id).length,
+        message: "Markdown already exists; skipped conversion."
+      };
+      hooks.indexPaper?.(imported.paper.id);
+      items.push({
+        sourcePath: pdf.sourcePath,
+        relativePath: pdf.relativePath,
+        paperId: imported.paper.id,
+        title: imported.paper.title,
+        importStatus,
+        conversionStatus: "skipped",
+        markdownPath: conversion.markdownPath,
+        passageCount: conversion.passageCount,
+        message: conversion.message,
+        seconds: roundSeconds(performance.now() - start)
+      });
+      continue;
+    }
+
+    conversion = (hooks.convertPaper ?? convertPaperWithMarker)(repo, imported.paper.id);
+    hooks.indexPaper?.(imported.paper.id);
+    items.push({
+      sourcePath: pdf.sourcePath,
+      relativePath: pdf.relativePath,
+      paperId: imported.paper.id,
+      title: repo.readPaper(imported.paper.id)?.title ?? imported.paper.title,
+      importStatus,
+      conversionStatus: conversion.status,
+      markdownPath: conversion.markdownPath,
+      passageCount: conversion.passageCount,
+      message: conversion.message,
+      seconds: roundSeconds(performance.now() - start)
+    });
   }
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-marker-"));
-  const command = [
-    "--from",
-    "marker-pdf",
-    "marker_single",
+  const failed = items.filter((item) => item.conversionStatus === "failed").length;
+  const baseResult = {
+    status: discovered.length === 0 ? "empty" as const : failed > 0 ? "partial" as const : "ok" as const,
+    sourceDir: path.relative(repo.root, sourceRoot) || ".",
+    discovered: discovered.length,
+    imported: items.filter((item) => item.importStatus === "imported").length,
+    converted: items.filter((item) => item.conversionStatus === "ok" || item.conversionStatus === "placeholder").length,
+    skipped: items.filter((item) => item.conversionStatus === "skipped").length,
+    failed,
+    items
+  };
+  const summaryPath = writePdfProcessingSummary(repo, input.runId ?? null, baseResult);
+  return { ...baseResult, summaryPath };
+}
+
+export function processPaperSetWithMarker(
+  repo: LitAgentRepository,
+  paperIds: string[],
+  input: Partial<PdfProcessingOptions> & { runId?: string | null } = {},
+  hooks: {
+    convertPaper?: (repo: LitAgentRepository, paperId: string) => ConversionResult;
+    indexPaper?: (paperId: string) => void;
+    onProgress?: (message: string, payload?: Record<string, unknown>) => void;
+  } = {}
+): PdfProcessingResult {
+  const options = PdfProcessingOptionsSchema.parse(input);
+  const items: PdfProcessingItem[] = [];
+  for (const [index, paperId] of paperIds.entries()) {
+    const paper = repo.readPaper(paperId);
+    if (!paper) continue;
+    const start = performance.now();
+    hooks.onProgress?.(`Processing paper ${index + 1}/${paperIds.length}: ${paper.title}`, { paperId });
+
+    if (!options.force && paper.filePaths.markdown && repo.readMarkdown(paper.id)) {
+      hooks.indexPaper?.(paper.id);
+      items.push({
+        sourcePath: paper.filePaths.pdf ? repo.resolve(paper.filePaths.pdf) : "",
+        relativePath: paper.filePaths.pdf ?? paper.id,
+        paperId: paper.id,
+        title: paper.title,
+        importStatus: "updated",
+        conversionStatus: "skipped",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paper.id).length,
+        message: "Markdown already exists; skipped conversion.",
+        seconds: roundSeconds(performance.now() - start)
+      });
+      continue;
+    }
+
+    const conversion = (hooks.convertPaper ?? convertPaperWithMarker)(repo, paper.id);
+    hooks.indexPaper?.(paper.id);
+    items.push({
+      sourcePath: paper.filePaths.pdf ? repo.resolve(paper.filePaths.pdf) : "",
+      relativePath: paper.filePaths.pdf ?? paper.id,
+      paperId: paper.id,
+      title: paper.title,
+      importStatus: "updated",
+      conversionStatus: conversion.status,
+      markdownPath: conversion.markdownPath,
+      passageCount: conversion.passageCount,
+      message: conversion.message,
+      seconds: roundSeconds(performance.now() - start)
+    });
+  }
+
+  const failed = items.filter((item) => item.conversionStatus === "failed").length;
+  const baseResult = {
+    status: paperIds.length === 0 ? "empty" as const : failed > 0 ? "partial" as const : "ok" as const,
+    sourceDir: "selected-papers",
+    discovered: paperIds.length,
+    imported: 0,
+    converted: items.filter((item) => item.conversionStatus === "ok" || item.conversionStatus === "placeholder").length,
+    skipped: items.filter((item) => item.conversionStatus === "skipped").length,
+    failed,
+    items
+  };
+  const summaryPath = writePdfProcessingSummary(repo, input.runId ?? null, baseResult);
+  return { ...baseResult, summaryPath };
+}
+
+function roundSeconds(ms: number): number {
+  return Math.round(ms / 10) / 100;
+}
+
+interface MarkerRuntime {
+  command: string;
+  argsPrefix: string[];
+  source: "env" | "bundled" | "uvx";
+  displayCommand: string;
+}
+
+export interface MarkerRuntimeStatus {
+  available: boolean;
+  source: MarkerRuntime["source"];
+  command: string;
+  displayCommand: string;
+  message: string;
+}
+
+function markerArgs(pdfPath: string, outputDir: string): string[] {
+  return [
     pdfPath,
     "--output_dir",
-    tmpDir,
+    outputDir,
     "--output_format",
     "markdown",
     "--disable_multiprocessing",
@@ -205,38 +516,473 @@ export function convertPaperWithMarker(repo: LitAgentRepository, paperId: string
     "--equation_batch_size",
     "1"
   ];
-  const marker = spawnSync("uvx", command, {
+}
+
+function markerExecutableName(): string {
+  return process.platform === "win32" ? "marker_single.exe" : "marker_single";
+}
+
+function bundledMarkerCandidates(converterDir: string): string[] {
+  const executable = markerExecutableName();
+  return [
+    path.join(converterDir, "marker", executable),
+    path.join(converterDir, "marker", "bin", executable),
+    path.join(converterDir, "marker", "Scripts", executable),
+    path.join(converterDir, executable)
+  ];
+}
+
+function fileExists(filePath: string): boolean {
+  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
+function resolveMarkerRuntime(): MarkerRuntime {
+  const explicitMarker = process.env.LITAGENT_MARKER_BIN;
+  if (explicitMarker) {
+    return {
+      command: explicitMarker,
+      argsPrefix: [],
+      source: "env",
+      displayCommand: explicitMarker
+    };
+  }
+
+  const converterDir = process.env.LITAGENT_CONVERTER_DIR;
+  if (converterDir) {
+    const bundledMarker = bundledMarkerCandidates(converterDir).find(fileExists);
+    if (bundledMarker) {
+      return {
+        command: bundledMarker,
+        argsPrefix: [],
+        source: "bundled",
+        displayCommand: bundledMarker
+      };
+    }
+  }
+
+  const uvx = process.env.LITAGENT_UVX_BIN ?? "uvx";
+  return {
+    command: uvx,
+    argsPrefix: ["--from", "marker-pdf", "marker_single"],
+    source: "uvx",
+    displayCommand: `${uvx} --from marker-pdf marker_single`
+  };
+}
+
+export function markerRuntimeStatus(): MarkerRuntimeStatus {
+  const runtime = resolveMarkerRuntime();
+  if (runtime.source !== "uvx") {
+    const available = fileExists(runtime.command);
+    return {
+      available,
+      source: runtime.source,
+      command: runtime.command,
+      displayCommand: runtime.displayCommand,
+      message: available
+        ? "Marker runtime is available."
+        : `Configured Marker runtime does not exist: ${runtime.command}`
+    };
+  }
+
+  const check = spawnSync(runtime.command, ["--version"], { encoding: "utf8" });
+  const available = !check.error && check.status === 0;
+  return {
+    available,
+    source: runtime.source,
+    command: runtime.command,
+    displayCommand: runtime.displayCommand,
+    message: available
+      ? "Using development uvx fallback for Marker."
+      : "Marker runtime is not bundled and uvx is not available. Package a Marker runtime under resources/converters or set LITAGENT_MARKER_BIN."
+  };
+}
+
+function tail(text: string, max = 2400): string {
+  const trimmed = text.trim();
+  return trimmed.length > max ? trimmed.slice(trimmed.length - max) : trimmed;
+}
+
+function markerFailureMessage(stdout: string, stderr: string): string {
+  return `Marker failed: ${tail(stderr || stdout || "unknown error")}`;
+}
+
+function markerSpawnErrorMessage(error: unknown): string {
+  const status = markerRuntimeStatus();
+  const detail = error instanceof Error ? error.message : String(error);
+  return `${status.message} ${detail}`.trim();
+}
+
+export function convertPaperWithMarker(repo: LitAgentRepository, paperId: string): ConversionResult {
+  const paper = repo.readPaper(paperId);
+  if (!paper) throw new Error(`Paper not found: ${paperId}`);
+  const pdfPath = repo.pdfPath(paperId);
+  if (!pdfPath) {
+    const markdown = ensureMarkdownFallback(repo, paper);
+    const metrics = markdownMetrics(markdown, 0);
+    return {
+      status: "placeholder",
+      markdownPath: repo.readPaper(paperId)?.filePaths.markdown ?? null,
+      passageCount: parseMarkdownPassages(paperId, markdown).length,
+      message: "No PDF is attached; wrote placeholder Markdown.",
+      ...metrics
+    };
+  }
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-marker-"));
+  try {
+    const runtime = resolveMarkerRuntime();
+    const marker = spawnSync(runtime.command, [...runtime.argsPrefix, ...markerArgs(pdfPath, tmpDir)], {
+      cwd: repo.root,
+      env: { ...process.env, PYTORCH_CUDA_ALLOC_CONF: process.env.PYTORCH_CUDA_ALLOC_CONF ?? "expandable_segments:True" },
+      encoding: "utf8"
+    });
+    if (marker.error) {
+      return {
+        status: "failed",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paperId).length,
+        message: markerSpawnErrorMessage(marker.error)
+      };
+    }
+    if (marker.status !== 0) {
+      return {
+        status: "failed",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paperId).length,
+        message: markerFailureMessage(marker.stdout ?? "", marker.stderr ?? "")
+      };
+    }
+    const markdownFile = findMarkdownFiles(tmpDir)[0];
+    if (!markdownFile) {
+      return {
+        status: "failed",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paperId).length,
+        message: "Marker finished but did not write a Markdown file."
+      };
+    }
+    const raw = fs.readFileSync(markdownFile, "utf8");
+    const markdownDir = repo.resolve(`library/markdown/${paperId}`);
+    clearMarkdownAssets(markdownDir);
+    const rewritten = rewriteAssetLinks(raw, path.dirname(markdownFile), path.join(markdownDir, "assets"));
+    const result = repo.writeMarkdown(paperId, rewritten.markdown);
+    return {
+      status: "ok",
+      markdownPath: result.markdownPath,
+      passageCount: result.passages.length,
+      message: `Converted PDF with Marker: ${rewritten.metrics.lines ?? 0} lines, ${rewritten.metrics.imageRefs ?? 0} image refs, ${rewritten.metrics.assetsCopied ?? 0} assets.`,
+      ...rewritten.metrics
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function attachLineProgress(
+  stream: NodeJS.ReadableStream,
+  streamName: "stdout" | "stderr",
+  onProgress?: (message: string, payload?: Record<string, unknown>) => void
+): Promise<string> {
+  return new Promise((resolve) => {
+    let collected = "";
+    let buffered = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk: string) => {
+      collected += chunk;
+      buffered += chunk;
+      const lines = buffered.split(/\r?\n/);
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        const message = line.trim();
+        if (message) {
+          onProgress?.(`Marker ${streamName}: ${message.slice(0, 500)}`, {
+            stream: streamName,
+            line: message
+          });
+        }
+      }
+    });
+    stream.on("end", () => {
+      const message = buffered.trim();
+      if (message) {
+        onProgress?.(`Marker ${streamName}: ${message.slice(0, 500)}`, {
+          stream: streamName,
+          line: message
+        });
+      }
+      resolve(collected);
+    });
+  });
+}
+
+async function runMarker(
+  repo: LitAgentRepository,
+  pdfPath: string,
+  tmpDir: string,
+  onProgress?: (message: string, payload?: Record<string, unknown>) => void
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const runtime = resolveMarkerRuntime();
+  const child = spawn(runtime.command, [...runtime.argsPrefix, ...markerArgs(pdfPath, tmpDir)], {
     cwd: repo.root,
     env: { ...process.env, PYTORCH_CUDA_ALLOC_CONF: process.env.PYTORCH_CUDA_ALLOC_CONF ?? "expandable_segments:True" },
-    encoding: "utf8"
+    stdio: ["ignore", "pipe", "pipe"]
   });
-  if (marker.status !== 0) {
-    return {
-      status: "failed",
-      markdownPath: paper.filePaths.markdown,
-      passageCount: repo.readPassages(paperId).length,
-      message: `Marker failed: ${(marker.stderr || marker.stdout || "").trim()}`
-    };
-  }
-  const markdownFile = findMarkdownFiles(tmpDir)[0];
-  if (!markdownFile) {
-    return {
-      status: "failed",
-      markdownPath: paper.filePaths.markdown,
-      passageCount: repo.readPassages(paperId).length,
-      message: "Marker finished but did not write a Markdown file."
-    };
-  }
-  const raw = fs.readFileSync(markdownFile, "utf8");
-  const markdownDir = repo.resolve(`library/markdown/${paperId}`);
-  const rewritten = rewriteAssetLinks(raw, path.dirname(markdownFile), path.join(markdownDir, "assets"));
-  const result = repo.writeMarkdown(paperId, rewritten);
+
+  const stdout = child.stdout ? attachLineProgress(child.stdout, "stdout", onProgress) : Promise.resolve("");
+  const stderr = child.stderr ? attachLineProgress(child.stderr, "stderr", onProgress) : Promise.resolve("");
+  const status = await new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => resolve(code));
+  });
   return {
-    status: "ok",
-    markdownPath: result.markdownPath,
-    passageCount: result.passages.length,
-    message: "Converted PDF with Marker."
+    status,
+    stdout: await stdout,
+    stderr: await stderr
   };
+}
+
+export async function convertPaperWithMarkerAsync(
+  repo: LitAgentRepository,
+  paperId: string,
+  hooks: {
+    onProgress?: (message: string, payload?: Record<string, unknown>) => void;
+  } = {}
+): Promise<ConversionResult> {
+  const paper = repo.readPaper(paperId);
+  if (!paper) throw new Error(`Paper not found: ${paperId}`);
+  const pdfPath = repo.pdfPath(paperId);
+  if (!pdfPath) return convertPaperWithMarker(repo, paperId);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-marker-"));
+  try {
+    hooks.onProgress?.(`Starting Marker for ${paper.title}`, { paperId, pdfPath: paper.filePaths.pdf });
+    let marker: { status: number | null; stdout: string; stderr: string };
+    try {
+      marker = await runMarker(repo, pdfPath, tmpDir, hooks.onProgress);
+    } catch (error) {
+      return {
+        status: "failed",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paperId).length,
+        message: markerSpawnErrorMessage(error)
+      };
+    }
+    if (marker.status !== 0) {
+      return {
+        status: "failed",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paperId).length,
+        message: markerFailureMessage(marker.stdout, marker.stderr)
+      };
+    }
+    const markdownFile = findMarkdownFiles(tmpDir)[0];
+    if (!markdownFile) {
+      return {
+        status: "failed",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paperId).length,
+        message: "Marker finished but did not write a Markdown file."
+      };
+    }
+    const raw = fs.readFileSync(markdownFile, "utf8");
+    const markdownDir = repo.resolve(`library/markdown/${paperId}`);
+    clearMarkdownAssets(markdownDir);
+    const rewritten = rewriteAssetLinks(raw, path.dirname(markdownFile), path.join(markdownDir, "assets"));
+    const result = repo.writeMarkdown(paperId, rewritten.markdown);
+    return {
+      status: "ok",
+      markdownPath: result.markdownPath,
+      passageCount: result.passages.length,
+      message: `Converted PDF with Marker: ${rewritten.metrics.lines ?? 0} lines, ${rewritten.metrics.imageRefs ?? 0} image refs, ${rewritten.metrics.assetsCopied ?? 0} assets.`,
+      ...rewritten.metrics
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+export async function processPdfInboxAsync(
+  repo: LitAgentRepository,
+  input: Partial<PdfProcessingOptions> & { projectId?: string | null; runId?: string | null } = {},
+  hooks: {
+    convertPaper?: (repo: LitAgentRepository, paperId: string) => Promise<ConversionResult>;
+    indexPaper?: (paperId: string) => void;
+    onProgress?: (message: string, payload?: Record<string, unknown>) => void;
+  } = {}
+): Promise<PdfProcessingResult> {
+  const options = PdfProcessingOptionsSchema.parse(input);
+  const projectId = input.projectId ?? null;
+  const sourceRoot = resolvePdfSourceDir(repo, options.sourceDir);
+  const discovered = discoverPdfInputs(repo, options);
+  hooks.onProgress?.(`Discovered ${discovered.length} PDF(s) under ${path.relative(repo.root, sourceRoot) || "."}`, {
+    sourceDir: options.sourceDir,
+    discovered: discovered.length
+  });
+
+  const knownPaperIds = new Set(repo.listGlobalPapers().map((paper) => paper.id));
+  const items: PdfProcessingItem[] = [];
+  for (const [index, pdf] of discovered.entries()) {
+    const start = performance.now();
+    hooks.onProgress?.(`Processing PDF ${index + 1}/${discovered.length}: ${pdf.relativePath}`, {
+      sourcePath: pdf.sourcePath,
+      relativePath: pdf.relativePath,
+      index: index + 1,
+      total: discovered.length
+    });
+    const imported = repo.importPaper({
+      sourcePath: pdf.sourcePath,
+      projectId,
+      metadata: {
+        title: titleFromPdfPath(pdf.sourcePath),
+        authors: []
+      }
+    });
+    const paperBeforeConversion = repo.readPaper(imported.paper.id) ?? imported.paper;
+    const importStatus = knownPaperIds.has(imported.paper.id) ? "updated" : "imported";
+    knownPaperIds.add(imported.paper.id);
+
+    let item: PdfProcessingItem;
+    if (!options.force && paperBeforeConversion.filePaths.markdown && repo.readMarkdown(imported.paper.id)) {
+      hooks.indexPaper?.(imported.paper.id);
+      item = {
+        sourcePath: pdf.sourcePath,
+        relativePath: pdf.relativePath,
+        paperId: imported.paper.id,
+        title: imported.paper.title,
+        importStatus,
+        conversionStatus: "skipped",
+        markdownPath: paperBeforeConversion.filePaths.markdown,
+        passageCount: repo.readPassages(imported.paper.id).length,
+        message: "Markdown already exists; skipped conversion.",
+        seconds: roundSeconds(performance.now() - start)
+      };
+    } else {
+      const convert = hooks.convertPaper ?? ((repository, paperId) =>
+        convertPaperWithMarkerAsync(repository, paperId, hooks.onProgress ? { onProgress: hooks.onProgress } : {}));
+      const conversion = await convert(repo, imported.paper.id);
+      hooks.indexPaper?.(imported.paper.id);
+      item = {
+        sourcePath: pdf.sourcePath,
+        relativePath: pdf.relativePath,
+        paperId: imported.paper.id,
+        title: repo.readPaper(imported.paper.id)?.title ?? imported.paper.title,
+        importStatus,
+        conversionStatus: conversion.status,
+        markdownPath: conversion.markdownPath,
+        passageCount: conversion.passageCount,
+        message: conversion.message,
+        seconds: roundSeconds(performance.now() - start)
+      };
+    }
+    items.push(item);
+    hooks.onProgress?.(`${item.conversionStatus === "failed" ? "Failed" : "Finished"} ${pdf.relativePath}: ${item.message}`, {
+      paperId: item.paperId,
+      status: item.conversionStatus,
+      markdownPath: item.markdownPath,
+      passageCount: item.passageCount,
+      seconds: item.seconds
+    });
+    if (options.pauseSeconds > 0 && index < discovered.length - 1) await wait(options.pauseSeconds * 1000);
+  }
+
+  const failed = items.filter((item) => item.conversionStatus === "failed").length;
+  const baseResult = {
+    status: discovered.length === 0 ? "empty" as const : failed > 0 ? "partial" as const : "ok" as const,
+    sourceDir: path.relative(repo.root, sourceRoot) || ".",
+    discovered: discovered.length,
+    imported: items.filter((item) => item.importStatus === "imported").length,
+    converted: items.filter((item) => item.conversionStatus === "ok" || item.conversionStatus === "placeholder").length,
+    skipped: items.filter((item) => item.conversionStatus === "skipped").length,
+    failed,
+    items
+  };
+  const summaryPath = writePdfProcessingSummary(repo, input.runId ?? null, baseResult);
+  return { ...baseResult, summaryPath };
+}
+
+export async function processPaperSetWithMarkerAsync(
+  repo: LitAgentRepository,
+  paperIds: string[],
+  input: Partial<PdfProcessingOptions> & { runId?: string | null } = {},
+  hooks: {
+    convertPaper?: (repo: LitAgentRepository, paperId: string) => Promise<ConversionResult>;
+    indexPaper?: (paperId: string) => void;
+    onProgress?: (message: string, payload?: Record<string, unknown>) => void;
+  } = {}
+): Promise<PdfProcessingResult> {
+  const options = PdfProcessingOptionsSchema.parse(input);
+  const items: PdfProcessingItem[] = [];
+  for (const [index, paperId] of paperIds.entries()) {
+    const paper = repo.readPaper(paperId);
+    if (!paper) continue;
+    const start = performance.now();
+    hooks.onProgress?.(`Processing paper ${index + 1}/${paperIds.length}: ${paper.title}`, {
+      paperId,
+      index: index + 1,
+      total: paperIds.length
+    });
+
+    let item: PdfProcessingItem;
+    if (!options.force && paper.filePaths.markdown && repo.readMarkdown(paper.id)) {
+      hooks.indexPaper?.(paper.id);
+      item = {
+        sourcePath: paper.filePaths.pdf ? repo.resolve(paper.filePaths.pdf) : "",
+        relativePath: paper.filePaths.pdf ?? paper.id,
+        paperId: paper.id,
+        title: paper.title,
+        importStatus: "updated",
+        conversionStatus: "skipped",
+        markdownPath: paper.filePaths.markdown,
+        passageCount: repo.readPassages(paper.id).length,
+        message: "Markdown already exists; skipped conversion.",
+        seconds: roundSeconds(performance.now() - start)
+      };
+    } else {
+      const convert = hooks.convertPaper ?? ((repository, id) =>
+        convertPaperWithMarkerAsync(repository, id, hooks.onProgress ? { onProgress: hooks.onProgress } : {}));
+      const conversion = await convert(repo, paper.id);
+      hooks.indexPaper?.(paper.id);
+      item = {
+        sourcePath: paper.filePaths.pdf ? repo.resolve(paper.filePaths.pdf) : "",
+        relativePath: paper.filePaths.pdf ?? paper.id,
+        paperId: paper.id,
+        title: paper.title,
+        importStatus: "updated",
+        conversionStatus: conversion.status,
+        markdownPath: conversion.markdownPath,
+        passageCount: conversion.passageCount,
+        message: conversion.message,
+        seconds: roundSeconds(performance.now() - start)
+      };
+    }
+    items.push(item);
+    hooks.onProgress?.(`${item.conversionStatus === "failed" ? "Failed" : "Finished"} ${paper.title}: ${item.message}`, {
+      paperId: item.paperId,
+      status: item.conversionStatus,
+      markdownPath: item.markdownPath,
+      passageCount: item.passageCount,
+      seconds: item.seconds
+    });
+    if (options.pauseSeconds > 0 && index < paperIds.length - 1) await wait(options.pauseSeconds * 1000);
+  }
+
+  const failed = items.filter((item) => item.conversionStatus === "failed").length;
+  const baseResult = {
+    status: paperIds.length === 0 ? "empty" as const : failed > 0 ? "partial" as const : "ok" as const,
+    sourceDir: "selected-papers",
+    discovered: paperIds.length,
+    imported: 0,
+    converted: items.filter((item) => item.conversionStatus === "ok" || item.conversionStatus === "placeholder").length,
+    skipped: items.filter((item) => item.conversionStatus === "skipped").length,
+    failed,
+    items
+  };
+  const summaryPath = writePdfProcessingSummary(repo, input.runId ?? null, baseResult);
+  return { ...baseResult, summaryPath };
 }
 
 export class WorkflowEngine {
@@ -301,7 +1047,8 @@ export class WorkflowEngine {
       scope: {
         paperIds: parsed.paperIds,
         collectionIds: parsed.collectionIds,
-        query: parsed.query
+        query: parsed.query,
+        options: parsed.options
       },
       providerId: parsed.providerId,
       model: parsed.model,
@@ -322,8 +1069,13 @@ export class WorkflowEngine {
       })
     );
 
-    if (this.isProviderBackedRun(parsed.providerId)) {
+    if (parsed.type !== "pdf-markdown-processing" && this.isProviderBackedRun(parsed.providerId)) {
       this.startProviderBackedWorkflow(parsed, run, absoluteEventsPath);
+      return run;
+    }
+
+    if (parsed.type === "pdf-markdown-processing") {
+      this.startLocalBackgroundWorkflow(parsed, run, absoluteEventsPath);
       return run;
     }
 
@@ -364,6 +1116,62 @@ export class WorkflowEngine {
     );
     this.writeRun(run);
     return run;
+  }
+
+  private startLocalBackgroundWorkflow(
+    request: WorkflowStartRequest,
+    run: WorkflowRun,
+    absoluteEventsPath: string
+  ): void {
+    void this.executeWorkflowAsync(request, run.id, absoluteEventsPath)
+      .then((payload) => {
+        const paperIdsFromPayload = Array.isArray(payload.items)
+          ? payload.items
+              .map((item) => (item && typeof item === "object" && "paperId" in item ? item.paperId : null))
+              .filter((paperId): paperId is string => typeof paperId === "string")
+          : [];
+        const completedRun = WorkflowRunSchema.parse({
+          ...run,
+          scope: {
+            ...run.scope,
+            paperIds: run.scope.paperIds.length ? run.scope.paperIds : paperIdsFromPayload
+          },
+          status: "completed",
+          updatedAt: nowIso()
+        });
+        appendEvent(
+          absoluteEventsPath,
+          event({
+            runId: run.id,
+            providerId: request.providerId,
+            type: "artifact.written",
+            message: "Workflow artifact written",
+            payload
+          })
+        );
+        appendEvent(
+          absoluteEventsPath,
+          event({
+            runId: run.id,
+            providerId: request.providerId,
+            type: "run.completed",
+            message: "Workflow completed"
+          })
+        );
+        this.writeRun(completedRun);
+      })
+      .catch((error: unknown) => {
+        appendEvent(
+          absoluteEventsPath,
+          event({
+            runId: run.id,
+            providerId: request.providerId,
+            type: "run.failed",
+            message: error instanceof Error ? error.message : String(error)
+          })
+        );
+        this.writeRun(WorkflowRunSchema.parse({ ...run, status: "failed", updatedAt: nowIso() }));
+      });
   }
 
   cancelRun(runId: string): WorkflowRun {
@@ -514,6 +1322,24 @@ export class WorkflowEngine {
     const project = request.projectId ? this.repo.readProject(request.projectId) : null;
     const researchQuestions = project?.researchQuestions.map((question) => question.text) ?? [];
     const paperContext = papers.map((paper) => this.formatPaperForPrompt(paper)).join("\n\n");
+    if (request.type === "markdown-refinement") {
+      return [
+        "You are LitAgent, a local-first literature review assistant.",
+        "Refine converted Markdown only where it is clearly malformed.",
+        "Do not rewrite a whole paper. Prefer targeted patch proposals with line ranges, reasons, and before/after snippets.",
+        "Preserve citations, tables, equations, figure links, and section order.",
+        "",
+        `Workflow run id: ${runId}`,
+        `Project: ${project?.name ?? "global library"}`,
+        `Provider: ${request.providerId}`,
+        `Model: ${request.model ?? "CLI default"}`,
+        "",
+        "Selected Markdown context:",
+        paperContext || "No papers are selected.",
+        "",
+        "Return Markdown with sections: Summary, Proposed cleanup patches, Evidence/locations, Risks."
+      ].join("\n");
+    }
     return [
       "You are LitAgent, a local-first agentic literature review assistant.",
       "Work only with the supplied project/library context unless the workflow explicitly asks you to find related papers.",
@@ -527,6 +1353,7 @@ export class WorkflowEngine {
       `Model: ${request.model ?? "CLI default"}`,
       `Project: ${project?.name ?? "global library"}`,
       `Question/query: ${request.query ?? researchQuestions[0] ?? "none supplied"}`,
+      `Options: ${JSON.stringify(request.options)}`,
       "",
       "Research questions:",
       ...(researchQuestions.length ? researchQuestions.map((question) => `- ${question}`) : ["- none supplied"]),
@@ -540,6 +1367,8 @@ export class WorkflowEngine {
 
   private formatPaperForPrompt(paper: Paper): string {
     const passages = this.repo.readPassages(paper.id).slice(0, 5);
+    const markdown = this.repo.readMarkdown(paper.id);
+    const markdownExcerpt = markdown ? markdown.split("\n").slice(0, 80).join("\n") : "";
     return [
       `## ${paper.title}`,
       `paperId: ${paper.id}`,
@@ -548,12 +1377,14 @@ export class WorkflowEngine {
       `doi: ${paper.doi ?? "none"}`,
       `arxivId: ${paper.arxivId ?? "none"}`,
       `tags: ${paper.tags.join(", ") || "none"}`,
+      `markdownPath: ${paper.filePaths.markdown ?? "none"}`,
       "passages:",
       ...(
         passages.length
           ? passages.map((passage) => `- ${passage.id} p.${passage.page ?? "?"} ${passage.section}: ${passage.quote}`)
           : ["- no indexed passages"]
-      )
+      ),
+      markdownExcerpt ? "\nmarkdown excerpt:\n```markdown\n" + markdownExcerpt + "\n```" : ""
     ].join("\n");
   }
 
@@ -564,6 +1395,61 @@ export class WorkflowEngine {
   ): Record<string, unknown> {
     const papers = collectPapers(this.repo, request);
     switch (request.type) {
+      case "pdf-markdown-processing": {
+        const options = PdfProcessingOptionsSchema.parse(request.options);
+        const commonHooks = {
+          convertPaper: convertPaperWithMarker,
+          indexPaper: (paperId: string) => {
+            const paper = this.repo.readPaper(paperId);
+            if (paper) this.index.indexPaper(paper, this.repo.readPassages(paperId));
+          },
+          onProgress: (message: string, payload?: Record<string, unknown>) =>
+            appendEvent(
+              absoluteEventsPath,
+              event({
+                runId,
+                providerId: request.providerId,
+                type: "tool.result",
+                message,
+                ...(payload ? { payload } : {})
+              })
+            )
+        };
+        const result = request.paperIds.length > 0
+          ? processPaperSetWithMarker(
+              this.repo,
+              request.paperIds,
+              {
+                ...options,
+                runId
+              },
+              commonHooks
+            )
+          : processPdfInbox(
+              this.repo,
+              {
+                ...options,
+                projectId: request.projectId,
+                runId
+              },
+              commonHooks
+            );
+        return { ...result };
+      }
+      case "markdown-refinement": {
+        const lines = [
+          "# Markdown Refinement",
+          "",
+          "Select a CLI provider/model to run agentic Markdown cleanup. Local heuristic mode records the papers that are ready for refinement.",
+          "",
+          ...papers.map((paper) => {
+            const markdown = this.repo.readMarkdown(paper.id);
+            return `- ${paper.title}: ${markdown ? "Markdown available" : "Markdown missing"}`;
+          })
+        ];
+        const outputPath = this.writeProjectOutput(request.projectId, `markdown-refinement-${slugify(runId)}.md`, lines.join("\n"));
+        return { outputPath, paperCount: papers.length };
+      }
       case "relevance-tagging": {
         const project = request.projectId ? this.repo.readProject(request.projectId) : null;
         const question = request.query ?? project?.researchQuestions[0]?.text ?? "";
@@ -661,6 +1547,54 @@ export class WorkflowEngine {
       default:
         return { status: "unsupported" };
     }
+  }
+
+  private async executeWorkflowAsync(
+    request: WorkflowStartRequest,
+    runId: string,
+    absoluteEventsPath: string
+  ): Promise<Record<string, unknown>> {
+    if (request.type !== "pdf-markdown-processing") return this.executeWorkflow(request, runId, absoluteEventsPath);
+
+    const options = PdfProcessingOptionsSchema.parse(request.options);
+    const commonHooks = {
+      indexPaper: (paperId: string) => {
+        const paper = this.repo.readPaper(paperId);
+        if (paper) this.index.indexPaper(paper, this.repo.readPassages(paperId));
+      },
+      onProgress: (message: string, payload?: Record<string, unknown>) =>
+        appendEvent(
+          absoluteEventsPath,
+          event({
+            runId,
+            providerId: request.providerId,
+            type: "tool.result",
+            message,
+            ...(payload ? { payload } : {})
+          })
+        )
+    };
+
+    const result = request.paperIds.length > 0
+      ? await processPaperSetWithMarkerAsync(
+          this.repo,
+          request.paperIds,
+          {
+            ...options,
+            runId
+          },
+          commonHooks
+        )
+      : await processPdfInboxAsync(
+          this.repo,
+          {
+            ...options,
+            projectId: request.projectId,
+            runId
+          },
+          commonHooks
+        );
+    return { ...result };
   }
 
   private writeProjectOutput(projectId: string | null, filename: string, content: string): string {

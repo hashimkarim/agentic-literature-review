@@ -6,6 +6,13 @@
 - For rendered UI changes, run the web app and verify the first screen plus one interaction.
 - Prefer correctness and recoverable failure modes over optimistic shortcuts.
 
+## Git Workflow
+
+- Make local commits once a feature, fix, or coherent unit of progress is complete and verified.
+- Keep commits small and incremental; avoid large dump commits that mix unrelated work.
+- Each commit should leave the app in a working state and should not knowingly break typecheck, tests, or core workflows.
+- Stage changes intentionally so unrelated user work or generated artifacts are not swept into a commit.
+
 ## Project Snapshot
 
 LitAgent is a local-first, project-centered literature review workspace. It uses

@@ -24,6 +24,8 @@ export const appTokens = {
 } as const;
 
 export const workflowLabels = {
+  "pdf-markdown-processing": "PDF to Markdown",
+  "markdown-refinement": "Markdown refinement",
   "relevance-tagging": "Relevance tagging",
   "metadata-extraction": "Metadata extraction",
   "key-findings": "Key findings",

@@ -33,7 +33,16 @@ bun run test
 bun run --filter @litagent/web build
 bun run dev:server
 bun run dev:web
+bun run prepare:marker-runtime
 ```
+
+`prepare:marker-runtime` creates an ignored local Marker runtime under
+`resources/converters/marker` using `uv`, or copies a prebuilt runtime when
+`LITAGENT_MARKER_RUNTIME_SOURCE=/path/to/runtime` is set. Packaged Electron
+builds should include `resources/converters` as app resources so PDF-to-Markdown
+works without a user-global `uvx`/Marker install. In development, LitAgent still
+falls back to `uvx --from marker-pdf marker_single` when no bundled runtime is
+present.
 
 ## Repository Model
 

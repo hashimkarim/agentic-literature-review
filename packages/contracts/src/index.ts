@@ -132,6 +132,8 @@ export const NoteWithContentSchema = NoteSchema.extend({
 export type NoteWithContent = z.infer<typeof NoteWithContentSchema>;
 
 export const WorkflowTypeSchema = z.enum([
+  "pdf-markdown-processing",
+  "markdown-refinement",
   "relevance-tagging",
   "metadata-extraction",
   "key-findings",
@@ -164,7 +166,8 @@ export const WorkflowRunSchema = z.object({
   scope: z.object({
     paperIds: z.array(z.string()).default([]),
     collectionIds: z.array(z.string()).default([]),
-    query: z.string().nullable().default(null)
+    query: z.string().nullable().default(null),
+    options: z.record(z.string(), z.unknown()).default({})
   }),
   providerId: z.string().default("local-heuristic"),
   model: z.string().nullable().default(null),

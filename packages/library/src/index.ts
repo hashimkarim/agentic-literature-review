@@ -187,6 +187,7 @@ export class LitAgentRepository {
       "projects",
       "workflows",
       "exports",
+      "pdfs",
       ".litagent/cache",
       ".litagent/thumbnails"
     ]) {
@@ -220,8 +221,10 @@ export class LitAgentRepository {
       ".litagent/index.sqlite",
       ".litagent/*.sqlite",
       ".litagent/provider-settings.json",
+      ".litagent/workflow-automations.json",
       ".litagent/cache/",
       ".litagent/thumbnails/",
+      "pdfs/",
       "*.tmp"
     ].join("\n");
     fs.writeFileSync(this.resolve(".gitattributes"), `${attributes}\n`, "utf8");

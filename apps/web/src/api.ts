@@ -40,6 +40,38 @@ export interface AppStatus {
   providers: AgentProvider[];
 }
 
+export interface PdfInboxItem {
+  sourcePath: string;
+  relativePath: string;
+  size: number;
+  modifiedAt: string;
+}
+
+export interface PdfInboxAutomationRule {
+  id: "pdf-inbox";
+  enabled: boolean;
+  eventTriggerEnabled: boolean;
+  timerTriggerEnabled: boolean;
+  intervalMinutes: number;
+  sourceDir: string;
+  force: boolean;
+  projectId: string | null;
+  knownKeys: string[];
+  lastCheckedAt: string | null;
+  lastRunAt: string | null;
+  updatedAt: string;
+}
+
+export interface ConverterStatus {
+  marker: {
+    available: boolean;
+    source: "env" | "bundled" | "uvx";
+    command: string;
+    displayCommand: string;
+    message: string;
+  };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
@@ -80,12 +112,26 @@ export const api = {
       body: JSON.stringify(body)
     }),
   workflows: () => request<WorkflowRun[]>("/api/workflows"),
+  pdfInbox: (sourceDir = "pdfs") =>
+    request<PdfInboxItem[]>(`/api/pdf-inbox?sourceDir=${encodeURIComponent(sourceDir)}`),
+  pdfInboxAutomation: () => request<PdfInboxAutomationRule>("/api/workflow-automations/pdf-inbox"),
+  updatePdfInboxAutomation: (body: Partial<Pick<PdfInboxAutomationRule, "enabled" | "eventTriggerEnabled" | "timerTriggerEnabled" | "intervalMinutes" | "sourceDir" | "force" | "projectId">>) =>
+    request<PdfInboxAutomationRule>("/api/workflow-automations/pdf-inbox", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }),
+  runPdfInboxAutomation: () =>
+    request<{ runId: string | null; matched: number; reason: string }>("/api/workflow-automations/pdf-inbox/run", {
+      method: "POST"
+    }),
   startWorkflow: (body: {
     type: WorkflowType;
     projectId: string | null;
     paperIds?: string[];
     collectionIds?: string[];
     query?: string | null;
+    options?: Record<string, unknown>;
     providerId?: string;
     model?: string | null;
   }) =>
@@ -118,6 +164,7 @@ export const api = {
   },
   exportBibUrl: (projectId: string) => `${API_BASE}/api/exports/${projectId}/bib`,
   providerStatus: () => request<AgentProvider[]>("/api/provider-status"),
+  converterStatus: () => request<ConverterStatus>("/api/converter-status"),
   providerSettings: () => request<AgentProvider[]>("/api/settings/providers"),
   updateProviderSettings: (
     providerId: string,

@@ -7,12 +7,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
 let serverProcess: ChildProcess | null = null;
 
+function converterDir() {
+  if (process.env.LITAGENT_CONVERTER_DIR) return process.env.LITAGENT_CONVERTER_DIR;
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "converters")
+    : path.join(repoRoot, "resources", "converters");
+}
+
 function startBackend() {
   if (process.env.LITAGENT_SERVER_EXTERNAL === "1") return;
   serverProcess = spawn("bun", ["run", "--filter", "@litagent/server", "start"], {
     cwd: repoRoot,
     stdio: "inherit",
-    env: process.env
+    env: {
+      ...process.env,
+      LITAGENT_CONVERTER_DIR: converterDir()
+    }
   });
 }
 

@@ -21,5 +21,10 @@ litagent-workspace/
 # Users provide these files themselves; do not commit copyrighted PDFs.
 tests/fixtures/pdfs/**/*.pdf
 
+# Locally prepared converter runtimes are large and platform-specific.
+resources/converters/**
+!resources/converters/
+!resources/converters/README.md
+
 # OS/editor
 .DS_Store
