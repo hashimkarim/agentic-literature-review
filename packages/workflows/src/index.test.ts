@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
 
-import { discoverPdfInputs, markerRuntimeStatus, processPdfInbox, processPdfInboxAsync, processPaperSetWithMarker, type ConversionResult } from "./index";
+import { WorkflowEngine, discoverPdfInputs, markerRuntimeStatus, processPdfInbox, processPdfInboxAsync, processPaperSetWithMarker, type ConversionResult } from "./index";
 
 function makeRepo(): LitAgentRepository {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-workflow-test-"));
@@ -181,5 +181,109 @@ describe("PDF inbox processing", () => {
     expect(result.summaryPath).toBe("workflows/run_async.pdf-processing-summary.json");
     expect(progress.some((message) => message.includes("Discovered 1 PDF"))).toBe(true);
     expect(progress.some((message) => message.includes("Finished a.pdf"))).toBe(true);
+  });
+});
+
+describe("RAG question answering", () => {
+  it("answers with scoped evidence refs and diagnostics", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "QA Project" });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Real-time Systems", authors: ["Tester"], year: 2026 }
+    });
+    repo.writeMarkdown(
+      imported.paper.id,
+      [
+        "# Findings",
+        "",
+        "Low latency streaming inference makes real-time music analysis reliable on mobile devices.",
+        "",
+        "Batch-only models are less appropriate for interactive listening workflows."
+      ].join("\n")
+    );
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+
+    const answer = engine.answerQuestion({
+      question: "What makes real-time music analysis reliable?",
+      projectId: project.id,
+      providerId: "local-heuristic"
+    });
+
+    expect(answer.status).toBe("answered");
+    expect(answer.scope.type).toBe("project");
+    expect(answer.scope.paperCount).toBe(1);
+    expect(answer.diagnostics.retrievedCount).toBeGreaterThan(0);
+    expect(answer.evidence[0]).toMatchObject({
+      paperId: imported.paper.id,
+      paperTitle: "Real-time Systems",
+      section: "Findings"
+    });
+    expect(answer.answer).toContain("[1]");
+    expect(answer.answer).toContain("real-time music analysis");
+    index.close();
+  });
+
+  it("returns not found when selected paper scope has no supporting passage", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Selected QA" });
+    const relevant = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Relevant Paper" }
+    });
+    const unrelated = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Unrelated Paper" }
+    });
+    repo.writeMarkdown(relevant.paper.id, "# Findings\n\nSymbolic retrieval supports cited answers.");
+    repo.writeMarkdown(unrelated.paper.id, "# Findings\n\nThis paper only discusses metadata cleanup.");
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+
+    const answer = engine.answerQuestion({
+      question: "What supports cited answers?",
+      projectId: project.id,
+      paperId: unrelated.paper.id
+    });
+
+    expect(answer.status).toBe("not_found");
+    expect(answer.evidence).toHaveLength(0);
+    expect(answer.scope.type).toBe("paper");
+    expect(answer.scope.paperIds).toEqual([unrelated.paper.id]);
+    expect(answer.answer).toContain("Not found in the selected sources");
+    index.close();
+  });
+
+  it("ask-with-citations workflow honors selected paper ids", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Workflow QA" });
+    const first = repo.importPaper({ projectId: project.id, metadata: { title: "First Paper" } });
+    const second = repo.importPaper({ projectId: project.id, metadata: { title: "Second Paper" } });
+    repo.writeMarkdown(first.paper.id, "# Findings\n\nCited answers use passage evidence from the first paper.");
+    repo.writeMarkdown(second.paper.id, "# Findings\n\nThis second paper discusses unrelated exports.");
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+
+    const run = engine.startWorkflow({
+      type: "ask-with-citations",
+      projectId: project.id,
+      paperIds: [first.paper.id],
+      collectionIds: [],
+      query: "How do cited answers work?",
+      options: {},
+      providerId: "local-heuristic",
+      model: null
+    });
+    const { events } = engine.readRun(run.id);
+    const evidenceEvent = events.find((event) => event.type === "evidence.found");
+
+    expect(engine.readRun(run.id).run.status).toBe("completed");
+    expect(evidenceEvent?.payload.paperId).toBe(first.paper.id);
+    expect(evidenceEvent?.payload.paperId).not.toBe(second.paper.id);
+    index.close();
   });
 });

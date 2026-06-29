@@ -12,13 +12,17 @@ import {
   NormalizedRunEventSchema,
   QaRequestSchema,
   QaResponseSchema,
+  QaScopeSchema,
   WorkflowRunSchema,
   WorkflowTypeSchema,
   type EvidenceRef,
   type NormalizedRunEvent,
   type Paper,
+  type QaRequest,
   type QaRequestInput,
   type QaResponse,
+  type QaScope,
+  type SearchResult,
   type WorkflowRun,
   type WorkflowType
 } from "@litagent/contracts";
@@ -143,6 +147,109 @@ function scoreRelevance(paper: Paper, query: string): number {
   if (terms.length === 0) return 0.5;
   const hits = terms.filter((term) => haystack.includes(term)).length;
   return hits / terms.length;
+}
+
+function resolveQaScope(repo: LitAgentRepository, input: QaRequest): QaScope {
+  const explicitIds = new Set<string>();
+  if (input.paperId) explicitIds.add(input.paperId);
+  for (const paperId of input.paperIds) explicitIds.add(paperId);
+
+  let paperIds: string[];
+  let scopeType: QaScope["type"] = "global";
+
+  if (input.projectId) {
+    const links = repo.listPaperLinks(input.projectId);
+    let projectPaperIds = links.map((link) => link.paperId);
+    scopeType = "project";
+    if (input.collectionId) {
+      const collection = repo.readCollection(input.projectId, input.collectionId);
+      const collectionPaperIds = new Set(collection?.paperIds ?? []);
+      for (const link of links) {
+        if (link.subcollectionIds.includes(input.collectionId)) collectionPaperIds.add(link.paperId);
+      }
+      projectPaperIds = [...collectionPaperIds];
+      scopeType = "collection";
+    }
+    paperIds = explicitIds.size ? projectPaperIds.filter((paperId) => explicitIds.has(paperId)) : projectPaperIds;
+  } else if (input.collectionId) {
+    paperIds = [];
+    scopeType = "collection";
+  } else if (explicitIds.size) {
+    paperIds = [...explicitIds];
+    scopeType = input.paperId && explicitIds.size === 1 ? "paper" : "selection";
+  } else {
+    paperIds = repo.listGlobalPapers().map((paper) => paper.id);
+  }
+
+  paperIds = paperIds.filter((paperId, index, all) => all.indexOf(paperId) === index && Boolean(repo.readPaper(paperId)));
+  if (input.paperId && paperIds.length === 1) scopeType = "paper";
+  else if (explicitIds.size > 0 && paperIds.length > 1) scopeType = "selection";
+
+  return QaScopeSchema.parse({
+    type: scopeType,
+    projectId: input.projectId,
+    collectionId: input.collectionId,
+    paperId: input.paperId,
+    paperIds,
+    paperCount: paperIds.length,
+    passageCount: paperIds.reduce((count, paperId) => count + repo.readPassages(paperId).length, 0)
+  });
+}
+
+function buildEvidence(results: SearchResult[], limit: number): EvidenceRef[] {
+  return results
+    .filter((result) => result.passage)
+    .slice(0, limit)
+    .map((result, index) =>
+      EvidenceRefSchema.parse({
+        paperId: result.paper.id,
+        passageId: result.passage?.id,
+        page: result.passage?.page ?? null,
+        paperTitle: result.paper.title,
+        section: result.passage?.section ?? "",
+        quote: result.passage?.quote ?? "",
+        confidence: Math.max(0.4, 0.92 - index * 0.1)
+      })
+    );
+}
+
+function buildExtractiveAnswer(question: string, evidence: EvidenceRef[]): string {
+  const terms = questionTerms(question);
+  const lines = evidence.map((item, index) => {
+    const sentence = bestEvidenceSentence(item.quote, terms);
+    const location = [item.paperTitle || item.paperId, item.section || null, item.page ? `p.${item.page}` : null]
+      .filter(Boolean)
+      .join(", ");
+    return `[${index + 1}] ${location}: ${sentence}`;
+  });
+  return [
+    `Found evidence in the selected sources for: "${question}".`,
+    "",
+    ...lines
+  ].join("\n");
+}
+
+function questionTerms(question: string): string[] {
+  return question
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((term) => term.length > 3);
+}
+
+function bestEvidenceSentence(quote: string, terms: string[]): string {
+  const sentences = quote
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  if (sentences.length <= 1 || terms.length === 0) return quote.trim();
+  return sentences
+    .map((sentence) => ({
+      sentence,
+      score: terms.filter((term) => sentence.toLowerCase().includes(term)).length
+    }))
+    .sort((left, right) => right.score - left.score)[0]?.sentence ?? quote.trim();
 }
 
 function metadataPatchFor(paper: Paper): Record<string, unknown> {
@@ -996,42 +1103,49 @@ export class WorkflowEngine {
 
   answerQuestion(input: QaRequestInput): QaResponse {
     const parsed = QaRequestSchema.parse(input);
+    const scope = resolveQaScope(this.repo, parsed);
     const results = this.index.search(this.repo, {
       query: parsed.question,
       projectId: parsed.projectId,
       paperId: parsed.paperId,
-      limit: 5
+      paperIds: parsed.paperIds,
+      collectionId: parsed.collectionId,
+      limit: 8
     });
-    const evidence: EvidenceRef[] = results
-      .filter((result) => result.passage)
-      .slice(0, 3)
-      .map((result, index) =>
-        EvidenceRefSchema.parse({
-          paperId: result.paper.id,
-          passageId: result.passage?.id,
-          page: result.passage?.page ?? null,
-          quote: result.passage?.quote ?? "",
-          confidence: Math.max(0.45, 0.95 - index * 0.12)
-        })
-      );
+    const evidence = buildEvidence(results, 5);
+    const diagnostics = {
+      retrievedCount: results.length,
+      evidenceCount: evidence.length,
+      providerId: parsed.providerId,
+      model: parsed.model,
+      message: evidence.length
+        ? `Retrieved ${evidence.length} cited passage${evidence.length === 1 ? "" : "s"} from ${scope.paperCount} scoped paper${scope.paperCount === 1 ? "" : "s"}.`
+        : scope.passageCount === 0
+          ? "No indexed passages exist in the selected scope. Run PDF-to-Markdown conversion first."
+          : "No retrieved passages were relevant enough for this question in the selected scope."
+    };
 
     if (evidence.length === 0) {
       return QaResponseSchema.parse({
         answer: "Not found in the selected sources. Try broadening the scope or running Markdown conversion/indexing first.",
         evidence,
-        runId: null
+        runId: null,
+        question: parsed.question,
+        status: "not_found",
+        scope,
+        diagnostics
       });
     }
 
-    const answer = [
-      `The selected sources contain relevant evidence for: "${parsed.question}".`,
-      "",
-      ...evidence.map((item, index) => {
-        const paper = this.repo.readPaper(item.paperId);
-        return `${index + 1}. ${paper?.title ?? item.paperId}, p.${item.page ?? "?"}: ${item.quote}`;
-      })
-    ].join("\n");
-    return QaResponseSchema.parse({ answer, evidence, runId: null });
+    return QaResponseSchema.parse({
+      answer: buildExtractiveAnswer(parsed.question, evidence),
+      evidence,
+      runId: null,
+      question: parsed.question,
+      status: "answered",
+      scope,
+      diagnostics
+    });
   }
 
   startWorkflow(input: WorkflowStartRequest): WorkflowRun {
@@ -1486,7 +1600,10 @@ export class WorkflowEngine {
         const qa = this.answerQuestion({
           question: request.query ?? "What does the selected literature say?",
           projectId: request.projectId,
-          providerId: request.providerId
+          paperIds: request.paperIds,
+          collectionId: request.collectionIds[0] ?? null,
+          providerId: request.providerId,
+          model: request.model
         });
         for (const evidence of qa.evidence) {
           appendEvent(

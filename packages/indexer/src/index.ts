@@ -5,23 +5,61 @@ import {
   SearchRequestSchema,
   type Paper,
   type Passage,
+  type SearchRequest,
   type SearchRequestInput,
   type SearchResult
 } from "@litagent/contracts";
 import { LitAgentRepository } from "@litagent/library";
 
 function cleanQuery(query: string): string {
-  const terms = query
+  const terms = queryTerms(query).slice(0, 8);
+  return terms.map((term) => `${term}*`).join(" OR ");
+}
+
+function queryTerms(query: string): string[] {
+  return query
     .replace(/[^\p{Letter}\p{Number}\s]/gu, " ")
     .split(/\s+/)
     .map((term) => term.trim().toLowerCase())
-    .filter((term) => term.length > 2)
-    .slice(0, 8);
-  return terms.map((term) => `${term}*`).join(" OR ");
+    .filter((term) => term.length > 2);
 }
 
 function rowString(row: Record<string, unknown>, key: string): string {
   return typeof row[key] === "string" ? row[key] : "";
+}
+
+function scopedPaperIds(repo: LitAgentRepository, request: SearchRequest): Set<string> | null {
+  const explicit = new Set<string>();
+  if (request.paperId) explicit.add(request.paperId);
+  for (const paperId of request.paperIds) explicit.add(paperId);
+
+  let scoped: Set<string> | null = explicit.size > 0 ? explicit : null;
+
+  if (request.projectId) {
+    const links = repo.listPaperLinks(request.projectId);
+    let projectPaperIds = new Set(links.map((link) => link.paperId));
+    if (request.collectionId) {
+      const collection = repo.readCollection(request.projectId, request.collectionId);
+      const collectionPaperIds = new Set(collection?.paperIds ?? []);
+      for (const link of links) {
+        if (link.subcollectionIds.includes(request.collectionId)) collectionPaperIds.add(link.paperId);
+      }
+      projectPaperIds = collectionPaperIds;
+    }
+    scoped = scoped ? intersectSets(scoped, projectPaperIds) : projectPaperIds;
+  } else if (request.collectionId) {
+    scoped = new Set();
+  }
+
+  return scoped;
+}
+
+function intersectSets(left: Set<string>, right: Set<string>): Set<string> {
+  const next = new Set<string>();
+  for (const value of left) {
+    if (right.has(value)) next.add(value);
+  }
+  return next;
 }
 
 export class SearchIndex {
@@ -106,13 +144,14 @@ export class SearchIndex {
     const parsed = SearchRequestSchema.parse(request);
     this.open();
     const db = this.requireDb();
-    const allowedPaperIds = parsed.projectId
-      ? new Set(repo.listPaperLinks(parsed.projectId).map((link) => link.paperId))
-      : null;
+    const allowedPaperIds = scopedPaperIds(repo, parsed);
     const linkByPaper = parsed.projectId
       ? new Map(repo.listPaperLinks(parsed.projectId).map((link) => [link.paperId, link]))
       : new Map();
     const query = cleanQuery(parsed.query);
+    const rowLimit = parsed.projectId || parsed.paperId || parsed.paperIds.length || parsed.collectionId
+      ? Math.min(Math.max(parsed.limit * 20, 100), 500)
+      : parsed.limit * 4;
     const rows = query
       ? db
           .prepare(
@@ -122,7 +161,7 @@ export class SearchIndex {
              ORDER BY rank
              LIMIT ?`
           )
-          .all(query, parsed.limit * 4)
+          .all(query, rowLimit)
       : db
           .prepare(
             `SELECT p.paper_id, ip.passage_id, 0 AS rank
@@ -131,7 +170,7 @@ export class SearchIndex {
              ORDER BY p.title
              LIMIT ?`
           )
-          .all(parsed.limit * 4);
+          .all(rowLimit);
 
     const results: SearchResult[] = [];
     const seen = new Set<string>();
@@ -139,7 +178,6 @@ export class SearchIndex {
       const paperId = rowString(row, "paper_id");
       const passageId = rowString(row, "passage_id");
       if (!paperId || seen.has(`${paperId}:${passageId}`)) continue;
-      if (parsed.paperId && paperId !== parsed.paperId) continue;
       if (allowedPaperIds && !allowedPaperIds.has(paperId)) continue;
       const paper = repo.readPaper(paperId);
       if (!paper) continue;
@@ -153,11 +191,59 @@ export class SearchIndex {
       seen.add(`${paperId}:${passageId}`);
       if (results.length >= parsed.limit) break;
     }
+    if (results.length < parsed.limit && parsed.query.trim()) {
+      for (const result of this.lexicalFallback(repo, parsed, allowedPaperIds, linkByPaper, seen)) {
+        results.push(result);
+        if (results.length >= parsed.limit) break;
+      }
+    }
     return results;
+  }
+
+  private lexicalFallback(
+    repo: LitAgentRepository,
+    request: SearchRequest,
+    allowedPaperIds: Set<string> | null,
+    linkByPaper: Map<string, SearchResult["link"]>,
+    seen: Set<string>
+  ): SearchResult[] {
+    const terms = queryTerms(request.query);
+    if (!terms.length) return [];
+    const candidates: SearchResult[] = [];
+    const papers = allowedPaperIds
+      ? [...allowedPaperIds].map((paperId) => repo.readPaper(paperId)).filter((paper): paper is Paper => Boolean(paper))
+      : repo.listGlobalPapers();
+
+    for (const paper of papers) {
+      const paperText = `${paper.title} ${paper.authors.join(" ")} ${paper.tags.join(" ")}`.toLowerCase();
+      const paperBoost = scoreText(paperText, terms) * 0.25;
+      for (const passage of repo.readPassages(paper.id)) {
+        const key = `${paper.id}:${passage.id}`;
+        if (seen.has(key)) continue;
+        const score = scoreText(`${passage.section} ${passage.quote}`.toLowerCase(), terms) + paperBoost;
+        if (score <= 0) continue;
+        candidates.push({
+          paper,
+          passage,
+          link: linkByPaper.get(paper.id) ?? null,
+          score
+        });
+      }
+    }
+
+    return candidates.sort((left, right) => right.score - left.score);
   }
 
   private requireDb(): DatabaseSync {
     if (!this.db) throw new Error(`Search index is not open: ${path.basename(this.sqlitePath)}`);
     return this.db;
   }
+}
+
+function scoreText(text: string, terms: string[]): number {
+  let score = 0;
+  for (const term of terms) {
+    if (text.includes(term)) score += 1;
+  }
+  return score;
 }

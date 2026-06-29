@@ -182,6 +182,8 @@ export const EvidenceRefSchema = z.object({
   paperId: z.string(),
   passageId: z.string(),
   page: z.number().int().positive().nullable().default(null),
+  paperTitle: z.string().default(""),
+  section: z.string().default(""),
   quote: z.string(),
   confidence: z.number().min(0).max(1)
 });
@@ -292,6 +294,8 @@ export const SearchRequestSchema = z.object({
   query: z.string().default(""),
   projectId: z.string().nullable().default(null),
   paperId: z.string().nullable().default(null),
+  paperIds: z.array(z.string()).default([]),
+  collectionId: z.string().nullable().default(null),
   limit: z.number().int().positive().max(50).default(12)
 });
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
@@ -309,6 +313,7 @@ export const QaRequestSchema = z.object({
   question: z.string().min(1),
   projectId: z.string().nullable().default(null),
   paperId: z.string().nullable().default(null),
+  paperIds: z.array(z.string()).default([]),
   collectionId: z.string().nullable().default(null),
   providerId: z.string().default("local-heuristic"),
   model: z.string().nullable().default(null)
@@ -316,10 +321,51 @@ export const QaRequestSchema = z.object({
 export type QaRequest = z.infer<typeof QaRequestSchema>;
 export type QaRequestInput = z.input<typeof QaRequestSchema>;
 
+export const QaStatusSchema = z.enum(["answered", "not_found"]);
+export type QaStatus = z.infer<typeof QaStatusSchema>;
+
+export const QaScopeSchema = z.object({
+  type: z.enum(["global", "project", "collection", "paper", "selection"]).default("global"),
+  projectId: z.string().nullable().default(null),
+  collectionId: z.string().nullable().default(null),
+  paperId: z.string().nullable().default(null),
+  paperIds: z.array(z.string()).default([]),
+  paperCount: z.number().int().nonnegative().default(0),
+  passageCount: z.number().int().nonnegative().default(0)
+});
+export type QaScope = z.infer<typeof QaScopeSchema>;
+
+export const QaDiagnosticsSchema = z.object({
+  retrievedCount: z.number().int().nonnegative().default(0),
+  evidenceCount: z.number().int().nonnegative().default(0),
+  providerId: z.string().default("local-heuristic"),
+  model: z.string().nullable().default(null),
+  message: z.string().default("")
+});
+export type QaDiagnostics = z.infer<typeof QaDiagnosticsSchema>;
+
 export const QaResponseSchema = z.object({
   answer: z.string(),
   evidence: z.array(EvidenceRefSchema),
-  runId: z.string().nullable().default(null)
+  runId: z.string().nullable().default(null),
+  question: z.string().default(""),
+  status: QaStatusSchema.default("answered"),
+  scope: QaScopeSchema.default({
+    type: "global",
+    projectId: null,
+    collectionId: null,
+    paperId: null,
+    paperIds: [],
+    paperCount: 0,
+    passageCount: 0
+  }),
+  diagnostics: QaDiagnosticsSchema.default({
+    retrievedCount: 0,
+    evidenceCount: 0,
+    providerId: "local-heuristic",
+    model: null,
+    message: ""
+  })
 });
 export type QaResponse = z.infer<typeof QaResponseSchema>;
 

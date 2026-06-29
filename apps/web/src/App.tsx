@@ -2003,7 +2003,17 @@ function AgentPanel({
   const [input, setInput] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
-  const evidence: EvidenceRef[] = qa?.evidence.length ? qa.evidence : passages.slice(0, 5).map((passage) => ({ passageId: passage.id, paperId: passage.paperId, page: passage.page, quote: passage.quote, confidence: 0.75 }));
+  const evidence: EvidenceRef[] = qa?.evidence.length
+    ? qa.evidence
+    : passages.slice(0, 5).map((passage) => ({
+        passageId: passage.id,
+        paperId: passage.paperId,
+        paperTitle: selectedPaper?.title ?? passage.paperId,
+        section: passage.section,
+        page: passage.page,
+        quote: passage.quote,
+        confidence: 0.75
+      }));
   const queueWorkflows = workflows.filter((run) => workflowMatchesContext(run, selectedPaper, scopeProjectId));
   const queueRunning = queueWorkflows.filter((run) => run.status === "running" || run.status === "queued").length;
   const renderTab = (
