@@ -27,7 +27,8 @@ export function SettingsPage({
     }
   ) => void;
 }) {
-  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? null;
+  const selectableProviders = providers.filter((provider) => provider.id !== "local-heuristic");
+  const selectedProvider = selectableProviders.find((provider) => provider.id === selectedProviderId) ?? null;
   return (
     <section className="settings-page">
       <header className="settings-header">
@@ -37,8 +38,7 @@ export function SettingsPage({
         </span>
         <div className="settings-inline-picker">
           <select value={selectedProviderId} onChange={(event) => onProviderChange(event.currentTarget.value)}>
-            <option value="local-heuristic">Local heuristic</option>
-            {providers.map((provider) => (
+            {selectableProviders.map((provider) => (
               <option key={provider.id} value={provider.id}>
                 {provider.label}
               </option>

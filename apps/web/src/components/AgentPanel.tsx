@@ -57,7 +57,8 @@ export function AgentPanel({
 }) {
   const [question, setQuestion] = useState("");
   const enabledProviders = providers.filter((provider) => provider.installed && provider.enabled);
-  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId) ?? null;
+  const selectableProviders = providers.filter((provider) => provider.id !== "local-heuristic");
+  const selectedProvider = selectableProviders.find((provider) => provider.id === selectedProviderId) ?? null;
   return (
     <aside className="agent-panel">
       <div className="agent-tabs">
@@ -71,8 +72,7 @@ export function AgentPanel({
         <h2>Provider</h2>
         <div className="agent-provider-controls">
           <select value={selectedProviderId} onChange={(event) => onProviderChange(event.currentTarget.value)}>
-            <option value="local-heuristic">Local heuristic</option>
-            {providers.map((provider) => (
+            {selectableProviders.map((provider) => (
               <option key={provider.id} value={provider.id} disabled={!provider.installed || !provider.enabled}>
                 {provider.label}
                 {!provider.installed ? " (missing)" : !provider.enabled ? " (disabled)" : ""}

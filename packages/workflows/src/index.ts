@@ -1554,7 +1554,7 @@ export class WorkflowEngine {
         const lines = [
           "# Markdown Refinement",
           "",
-          "Select a CLI provider/model to run agentic Markdown cleanup. Local heuristic mode records the papers that are ready for refinement.",
+          "Select a connected CLI provider/model to run agentic Markdown cleanup. This artifact records the papers that are ready for refinement.",
           "",
           ...papers.map((paper) => {
             const markdown = this.repo.readMarkdown(paper.id);

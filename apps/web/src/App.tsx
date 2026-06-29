@@ -215,6 +215,15 @@ function ConfBar({ value }: { value: number }) {
   );
 }
 
+function selectableAgentProviders(providers: AgentProvider[]) {
+  return providers.filter((provider) => provider.id !== "local-heuristic");
+}
+
+function fallbackProvider(providers: AgentProvider[]) {
+  const candidates = selectableAgentProviders(providers);
+  return candidates.find((provider) => provider.installed && provider.enabled) ?? candidates.find((provider) => provider.installed) ?? candidates[0] ?? null;
+}
+
 function ModelPicker({
   providers,
   providerId,
@@ -228,13 +237,15 @@ function ModelPicker({
   onProviderChange: (providerId: string) => void;
   onModelChange: (model: string | null) => void;
 }) {
-  const provider = providers.find((candidate) => candidate.id === providerId) ?? null;
+  const candidates = selectableAgentProviders(providers);
+  const resolvedProviderId = candidates.some((candidate) => candidate.id === providerId) ? providerId : candidates[0]?.id ?? "codex";
+  const provider = candidates.find((candidate) => candidate.id === resolvedProviderId) ?? null;
   return (
     <div className="la-modelpick" title="Provider and model">
       <Icon name="cpu" size={13} />
-      <select value={providerId} onChange={(event) => onProviderChange(event.currentTarget.value)} style={nativeSelectStyle}>
-        <option value="local-heuristic">Local heuristic</option>
-        {providers.map((candidate) => (
+      <select value={resolvedProviderId} onChange={(event) => onProviderChange(event.currentTarget.value)} style={nativeSelectStyle} disabled={candidates.length === 0}>
+        {candidates.length === 0 ? <option value="codex">No CLI providers found</option> : null}
+        {candidates.map((candidate) => (
           <option key={candidate.id} value={candidate.id} disabled={!candidate.installed || !candidate.enabled}>
             {candidate.label}
             {!candidate.installed ? " (missing)" : !candidate.enabled ? " (disabled)" : ""}
@@ -408,7 +419,7 @@ function App() {
   const [projectEntries, setProjectEntries] = useState<PaperEntry[]>([]);
   const [providers, setProviders] = useState<AgentProvider[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowRun[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState("local-heuristic");
+  const [selectedProviderId, setSelectedProviderId] = useState("codex");
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [libraryPaperId, setLibraryPaperId] = useState<string | null>(null);
   const [projectPaperId, setProjectPaperId] = useState<string | null>(null);
@@ -530,14 +541,26 @@ function App() {
   }, [workflows]);
 
   useEffect(() => {
-    const provider = providers.find((candidate) => candidate.id === selectedProviderId);
-    if (selectedProviderId !== "local-heuristic" && (!provider || !provider.installed || !provider.enabled)) {
-      const fallback = providers.find((candidate) => candidate.installed && candidate.enabled);
-      setSelectedProviderId(fallback?.id ?? "local-heuristic");
+    const candidates = selectableAgentProviders(providers);
+    const provider = candidates.find((candidate) => candidate.id === selectedProviderId);
+    if (!provider && candidates.length > 0) {
+      const fallback = fallbackProvider(providers);
+      setSelectedProviderId(fallback?.id ?? "codex");
       setSelectedModel(fallback?.defaultModel ?? null);
       return;
     }
-    if (provider && selectedModel === null && provider.defaultModel) setSelectedModel(provider.defaultModel);
+    if (provider && (!provider.installed || !provider.enabled)) {
+      const fallback = fallbackProvider(providers);
+      if (fallback && fallback.id !== provider.id) {
+        setSelectedProviderId(fallback.id);
+        setSelectedModel(fallback.defaultModel ?? null);
+        return;
+      }
+    }
+    if (provider && selectedModel === null && provider.defaultModel) {
+      setSelectedModel(provider.defaultModel);
+      return;
+    }
   }, [providers, selectedModel, selectedProviderId]);
 
   const libraryPapers = useMemo(() => libraryEntries.map((entry) => makeUiPaper(entry, projects)), [libraryEntries, projects]);
@@ -569,15 +592,17 @@ function App() {
       return;
     }
     setMarkdownNotice(null);
-    setCitationTarget(null);
-    setCitationActivation(0);
+    if (citationTarget && citationTarget.paperId !== selectedPaperId) {
+      setCitationTarget(null);
+      setCitationActivation(0);
+    }
     setPdfAnnotations([]);
     setActivePdfAnnotation(null);
     void loadPaperArtifacts(selectedPaperId).then(({ markdown: nextMarkdown, passages: nextPassages }) => {
       setMarkdown(nextMarkdown);
       setPassages(nextPassages);
     });
-  }, [loadPaperArtifacts, selectedPaperId]);
+  }, [citationTarget?.paperId, loadPaperArtifacts, selectedPaperId]);
 
   useEffect(() => {
     if (!selectedPaperId) return;
@@ -639,7 +664,7 @@ function App() {
             query,
             options,
             providerId: selectedProviderId,
-            model: selectedProviderId === "local-heuristic" ? null : selectedModel
+            model: selectedModel
           })
           .then(async () => {
             const [nextWorkflows, nextLibrary, nextProject] = await Promise.all([
@@ -665,13 +690,14 @@ function App() {
   const askQuestion = useCallback(
     (question: string, scopeProjectId: string | null, paperId: string | null) => {
       startTransition(() => {
+        setQa(null);
         void api
           .qa({
             question,
             projectId: scopeProjectId,
             paperId,
             providerId: selectedProviderId,
-            model: selectedProviderId === "local-heuristic" ? null : selectedModel
+            model: selectedModel
           })
           .then(setQa);
       });
@@ -2001,8 +2027,16 @@ function AgentPanel({
 }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
   const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
   const [input, setInput] = useState("");
+  const [qaScope, setQaScope] = useState<"paper" | "context">("paper");
   const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    setQaScope(selectedPaper ? "paper" : "context");
+  }, [selectedPaper?.id]);
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
+  const effectiveQaScope = selectedPaper ? qaScope : "context";
+  const askPaperId = effectiveQaScope === "paper" ? selectedPaper?.id ?? null : null;
+  const contextScopeLabel = scopeProjectId ? "Project" : "Global";
+  const qaScopeLabel = effectiveQaScope === "paper" && selectedPaper ? "Current paper" : contextScopeLabel;
   const evidence: EvidenceRef[] = qa?.evidence.length
     ? qa.evidence
     : passages.slice(0, 5).map((passage) => ({
@@ -2069,11 +2103,18 @@ function AgentPanel({
             <div className="la-sectionlabel">Cited Q&A · {contextLabel}</div>
             <div className="la-qa">
               {qa ? (
-                <div className="la-amsg">
-                  {qa.answer}
+                <div className={`la-amsg${qa.status === "not_found" ? " notfound" : ""}`}>
+                  <div className="la-qameta">
+                    <span className={`qa-status ${qa.status}`}>{qa.status === "not_found" ? "Not found" : "Answered"}</span>
+                    <span>{qa.scope.type}</span>
+                    <span>{qa.diagnostics.evidenceCount} evidence</span>
+                    <span>{qa.diagnostics.retrievedCount} retrieved</span>
+                  </div>
+                  <div className="la-qaanswer">{qa.answer}</div>
                   {qa.evidence.map((item, index) => (
-                    <span key={item.passageId} className="cite" onClick={() => { setTab("evidence"); onOpenCitation(item, scopeProjectId); }}>{index + 1}</span>
+                    <span key={`${item.paperId}-${item.passageId}`} className="cite" onClick={() => { setTab("evidence"); onOpenCitation(item, scopeProjectId); }}>{index + 1}</span>
                   ))}
+                  <div className="la-qadiag">{qa.diagnostics.message}</div>
                 </div>
               ) : (
                 <div className="la-amsg notfound">Ask a question. Answers must cite indexed passages and will say not found when retrieval has no evidence.</div>
@@ -2081,6 +2122,27 @@ function AgentPanel({
             </div>
           </div>
           <div className="la-qabar">
+            <div className="la-qascope" aria-label="Question scope">
+              <button
+                type="button"
+                className={effectiveQaScope === "paper" ? "on" : ""}
+                disabled={!selectedPaper}
+                onClick={() => setQaScope("paper")}
+                title={selectedPaper ? "Ask only the selected paper" : "Select a paper to use paper scope"}
+              >
+                <Icon name="file-text" size={12} />
+                Paper
+              </button>
+              <button
+                type="button"
+                className={effectiveQaScope === "context" ? "on" : ""}
+                onClick={() => setQaScope("context")}
+                title={`Ask across the current ${contextScopeLabel.toLowerCase()} scope`}
+              >
+                <Icon name={scopeProjectId ? "folder-kanban" : "library-big"} size={12} />
+                {contextScopeLabel}
+              </button>
+            </div>
             <div className="la-field">
               <Icon name="message-square" size={15} />
               <input
@@ -2088,18 +2150,18 @@ function AgentPanel({
                 onChange={(event) => setInput(event.currentTarget.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && input.trim()) {
-                    onAsk(input.trim(), selectedPaper?.id ?? null);
+                    onAsk(input.trim(), askPaperId);
                     setInput("");
                   }
                 }}
                 placeholder="Ask a question - answers are cited..."
               />
-              <button type="button" className="la-iconbtn" onClick={() => { if (input.trim()) { onAsk(input.trim(), selectedPaper?.id ?? null); setInput(""); } }} style={{ color: "var(--accent-bright)" }}>
+              <button type="button" className="la-iconbtn" onClick={() => { if (input.trim()) { onAsk(input.trim(), askPaperId); setInput(""); } }} style={{ color: "var(--accent-bright)" }}>
                 <Icon name="send" size={15} />
               </button>
             </div>
             <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 6, display: "flex", alignItems: "center", gap: 5 }}>
-              <Icon name="shield-check" size={11} /> Answers cite passages · scope {scopeProjectId ? "project" : "global"}
+              <Icon name="shield-check" size={11} /> Answers cite passages · scope {qaScopeLabel}
             </div>
           </div>
         </>
@@ -2111,11 +2173,12 @@ function AgentPanel({
             <Btn variant="ghost" sm icon="download">Export</Btn>
           </div>
           {evidence.length ? evidence.map((item, index) => (
-            <div key={item.passageId} className="la-evcard" onClick={() => onOpenCitation(item, scopeProjectId)} title="Open citation target">
+            <div key={`${item.paperId}-${item.passageId}`} className="la-evcard" onClick={() => onOpenCitation(item, scopeProjectId)} title="Open citation target">
               <div className="quote">"{item.quote}"</div>
+              <div className="src-title">{item.paperTitle || item.paperId}</div>
               <div className="src">
                 <span className="cite">{index + 1}</span>
-                <span>{item.paperId}</span>
+                <span>{item.section || "Passage"}</span>
                 <span className="pg">p.{item.page ?? "?"}</span>
                 <span className="spacer" />
                 <ConfBar value={Math.round(item.confidence * 100)} />

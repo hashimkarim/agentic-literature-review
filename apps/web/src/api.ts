@@ -105,7 +105,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }),
-  qa: (body: { question: string; projectId: string | null; paperId?: string | null; providerId?: string; model?: string | null }) =>
+  qa: (body: {
+    question: string;
+    projectId: string | null;
+    paperId?: string | null;
+    paperIds?: string[];
+    collectionId?: string | null;
+    providerId?: string;
+    model?: string | null;
+  }) =>
     request<QaResponse>("/api/qa", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
