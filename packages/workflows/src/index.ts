@@ -383,14 +383,34 @@ function bestEvidenceSentence(quote: string, terms: string[]): string {
     .sort((left, right) => right.score - left.score)[0]?.sentence ?? quote.trim();
 }
 
-function buildProviderQaPrompt(question: string, context: QaMarkdownContext): string {
+function qaConversationContext(thread: QaThread): string {
+  const maxMessages = 8;
+  const maxChars = 12_000;
+  const messages = thread.messages.slice(-maxMessages);
+  const lines: string[] = [];
+  let usedChars = 0;
+  for (const message of messages.reverse()) {
+    const label = message.role === "user" ? "User" : "Assistant";
+    const line = `${label}: ${message.content.trim()}`;
+    if (usedChars + line.length > maxChars && lines.length > 0) break;
+    lines.unshift(line.slice(0, Math.max(0, maxChars - usedChars)));
+    usedChars += line.length;
+  }
+  return lines.join("\n\n");
+}
+
+function buildProviderQaPrompt(question: string, context: QaMarkdownContext, thread: QaThread): string {
+  const conversation = qaConversationContext(thread);
   return [
     "You are LitAgent answering a literature-review question from converted Markdown papers.",
     "Use only the Markdown context below. Do not inspect files, run tools, or write files.",
+    "Use the prior conversation only to understand follow-up wording. It is not a factual source and must not be cited.",
     "If the Markdown context does not answer the question, say: Not found in the selected sources.",
     "Answer from the whole paper context, not from a preselected evidence snippet list.",
     "Keep the answer concise and avoid adding outside knowledge.",
     "After you answer, LitAgent will attach supporting evidence by linking your claims back to source passages.",
+    "",
+    conversation ? `Prior conversation:\n${conversation}` : "Prior conversation: none",
     "",
     `Question: ${question}`,
     "",
@@ -1472,6 +1492,20 @@ export class WorkflowEngine {
     });
   }
 
+  clearQaThread(input: QaThreadRequestInput): QaThread {
+    const parsed = qaThreadScope(input);
+    const id = qaThreadId(parsed);
+    const filePath = this.qaThreadPath(id);
+    if (fs.existsSync(filePath)) {
+      const archiveDir = this.repo.resolve(".litagent/chat-threads/archive");
+      const archiveTimestamp = nowIso().replace(/[:.]/g, "-");
+      fs.mkdirSync(archiveDir, { recursive: true });
+      fs.copyFileSync(filePath, path.join(archiveDir, `${id}-${archiveTimestamp}.json`));
+      fs.rmSync(filePath);
+    }
+    return this.readQaThread(parsed);
+  }
+
   recordQaExchange(input: QaThreadRequestInput, response: QaResponse): { thread: QaThread; response: QaResponse } {
     const thread = this.readQaThread(input);
     const timestamp = nowIso();
@@ -1512,6 +1546,7 @@ export class WorkflowEngine {
     const parsed = QaRequestSchema.parse(input);
     const scope = resolveQaScope(this.repo, parsed);
     const context = buildQaMarkdownContext(this.repo, scope);
+    const thread = this.readQaThread(parsed);
     if (!this.isProviderBackedRun(parsed.providerId)) {
       return this.buildLocalQaResponse(parsed);
     }
@@ -1568,7 +1603,7 @@ export class WorkflowEngine {
         runId,
         providerId: parsed.providerId,
         cwd: this.repo.root,
-        prompt: buildProviderQaPrompt(parsed.question, context),
+        prompt: buildProviderQaPrompt(parsed.question, context, thread),
         model: parsed.model,
         eventsPath: absoluteEventsPath,
         outputPath,

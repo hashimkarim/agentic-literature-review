@@ -136,6 +136,15 @@ export const api = {
     const query = params.toString();
     return request<QaThread>(`/api/qa/thread${query ? `?${query}` : ""}`);
   },
+  clearQaThread: (body: { projectId: string | null; paperId?: string | null; paperIds?: string[]; collectionId?: string | null }) => {
+    const params = new URLSearchParams();
+    if (body.projectId) params.set("projectId", body.projectId);
+    if (body.paperId) params.set("paperId", body.paperId);
+    if (body.collectionId) params.set("collectionId", body.collectionId);
+    if (body.paperIds?.length) params.set("paperIds", body.paperIds.join(","));
+    const query = params.toString();
+    return request<QaThread>(`/api/qa/thread${query ? `?${query}` : ""}`, { method: "DELETE" });
+  },
   relevanceProposals: (projectId: string, paperId?: string | null) =>
     request<RelevanceProposal[]>(
       `/api/projects/${encodeURIComponent(projectId)}/relevance-proposals${paperId ? `?paperId=${encodeURIComponent(paperId)}` : ""}`

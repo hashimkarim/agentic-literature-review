@@ -668,6 +668,13 @@ app.get(
   })
 );
 
+app.delete(
+  "/api/qa/thread",
+  asyncHandler((req, res) => {
+    res.json(workflows.clearQaThread(qaThreadScopeFromQuery(req)));
+  })
+);
+
 app.post(
   "/api/qa",
   asyncHandler(async (req, res) => {

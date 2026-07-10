@@ -677,4 +677,74 @@ describe("RAG question answering", () => {
     expect(loaded.messages[1]?.response?.threadId).toBe(loaded.id);
     index.close();
   });
+
+  it("includes recent thread messages when answering a follow-up question", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Follow-up QA" });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Follow-up Paper" }
+    });
+    repo.writeMarkdown(
+      imported.paper.id,
+      "# Findings\n\nConversation context enables precise follow-up questions while paper passages remain the evidence source."
+    );
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-follow-up",
+      label: "Fake Follow-up Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => [
+        "-e",
+        "let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('What context is described?')?'Conversation context enables precise follow-up questions [1].':'Not found in the selected sources.'))"
+      ],
+      promptDelivery: "stdin"
+    };
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+    const first = engine.answerQuestion({
+      question: "What context is described?",
+      projectId: project.id,
+      paperId: imported.paper.id
+    });
+    engine.recordQaExchange({ projectId: project.id, paperId: imported.paper.id }, first);
+
+    const followUp = await engine.answerQuestionWithProvider({
+      question: "What does that enable?",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      providerId: "fake-follow-up"
+    });
+
+    expect(followUp.status).toBe("answered");
+    expect(followUp.answer).toContain("precise follow-up questions");
+    expect(followUp.evidence).toHaveLength(1);
+    index.close();
+  });
+
+  it("archives a Q&A thread before starting a new chat", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Archived QA" });
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    const engine = new WorkflowEngine(repo, index);
+    const response = engine.answerQuestion({
+      question: "Will this thread be archived?",
+      projectId: project.id
+    });
+    const recorded = engine.recordQaExchange({ projectId: project.id }, response);
+
+    const fresh = engine.clearQaThread({ projectId: project.id });
+    const archiveDir = repo.resolve(".litagent/chat-threads/archive");
+
+    expect(fresh.id).toBe(recorded.thread.id);
+    expect(fresh.messages).toEqual([]);
+    expect(fs.readdirSync(archiveDir).some((file) => file.startsWith(`${recorded.thread.id}-`))).toBe(true);
+    index.close();
+  });
 });
