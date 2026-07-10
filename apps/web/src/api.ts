@@ -7,6 +7,8 @@ import type {
   Project,
   QaResponse,
   QaThread,
+  RelevanceProposal,
+  ReviewRelevanceProposalRequest,
   CitationTarget,
   SearchResult,
   WorkflowRun,
@@ -129,6 +131,19 @@ export const api = {
     const query = params.toString();
     return request<QaThread>(`/api/qa/thread${query ? `?${query}` : ""}`);
   },
+  relevanceProposals: (projectId: string, paperId?: string | null) =>
+    request<RelevanceProposal[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/relevance-proposals${paperId ? `?paperId=${encodeURIComponent(paperId)}` : ""}`
+    ),
+  reviewRelevanceProposal: (projectId: string, proposalId: string, body: ReviewRelevanceProposalRequest) =>
+    request<RelevanceProposal>(
+      `/api/projects/${encodeURIComponent(projectId)}/relevance-proposals/${encodeURIComponent(proposalId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }
+    ),
   workflows: () => request<WorkflowRun[]>("/api/workflows"),
   pdfInbox: (sourceDir = "pdfs") =>
     request<PdfInboxItem[]>(`/api/pdf-inbox?sourceDir=${encodeURIComponent(sourceDir)}`),

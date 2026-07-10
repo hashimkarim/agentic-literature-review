@@ -7,7 +7,19 @@ import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
-import type { AgentProvider, CitationTarget, EvidenceRef, Passage, Project, QaResponse, QaThread, WorkflowRun, WorkflowType } from "@litagent/contracts";
+import type {
+  AgentProvider,
+  CitationTarget,
+  EvidenceRef,
+  Passage,
+  Project,
+  QaResponse,
+  QaThread,
+  RelevanceProposal,
+  ReviewRelevanceProposalRequest,
+  WorkflowRun,
+  WorkflowType
+} from "@litagent/contracts";
 import { PdfReader, PdfUnavailable } from "@litagent/pdf";
 import type { PdfAnnotation } from "@litagent/pdf";
 import { workflowLabels } from "@litagent/ui";
@@ -428,6 +440,7 @@ function App() {
   const [passages, setPassages] = useState<Passage[]>([]);
   const [qa, setQa] = useState<QaResponse | null>(null);
   const [qaThread, setQaThread] = useState<QaThread | null>(null);
+  const [relevanceProposals, setRelevanceProposals] = useState<RelevanceProposal[]>([]);
   const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
   const [citationActivation, setCitationActivation] = useState(0);
   const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([]);
@@ -533,6 +546,22 @@ function App() {
     void loadProject(activeProjectId);
   }, [activeProjectId, loadProject]);
 
+  const loadRelevanceProposals = useCallback((projectId: string | null, paperId: string | null) => {
+    if (!projectId || !paperId) {
+      setRelevanceProposals([]);
+      return;
+    }
+    void api.relevanceProposals(projectId, paperId).then(setRelevanceProposals).catch(() => setRelevanceProposals([]));
+  }, []);
+
+  useEffect(() => {
+    if (screen !== "projects") {
+      setRelevanceProposals([]);
+      return;
+    }
+    loadRelevanceProposals(activeProjectId, projectPaperId);
+  }, [activeProjectId, loadRelevanceProposals, projectPaperId, screen]);
+
   useEffect(() => {
     if (!workflows.some((run) => run.status === "running" || run.status === "queued")) return;
     const timer = window.setInterval(() => {
@@ -613,6 +642,10 @@ function App() {
     );
     if (!terminalRuns.length) return;
     for (const run of terminalRuns) seenTerminalWorkflowIdsRef.current.add(run.id);
+    const relevanceRun = terminalRuns.find(
+      (run) => run.type === "relevance-tagging" && run.projectId === activeProjectId && workflowMatchesPaper(run, selectedPaperId)
+    );
+    if (relevanceRun) loadRelevanceProposals(activeProjectId, selectedPaperId);
     const markdownRun = terminalRuns.find((run) => run.type === "pdf-markdown-processing" && workflowMatchesPaper(run, selectedPaperId));
     if (!markdownRun) return;
     if (markdownRun.status !== "completed") {
@@ -629,7 +662,26 @@ function App() {
       setProjectEntries(nextProject);
       setMarkdownNotice(nextMarkdown ? "Markdown updated from the completed conversion." : "Conversion completed, but no Markdown file was found for this paper.");
     })();
-  }, [activeProjectId, loadPaperArtifacts, projectEntries, selectedPaperId, workflows]);
+  }, [activeProjectId, loadPaperArtifacts, loadRelevanceProposals, projectEntries, selectedPaperId, workflows]);
+
+  const reviewRelevanceProposal = useCallback(
+    (proposalId: string, review: ReviewRelevanceProposalRequest) => {
+      if (!activeProjectId) return;
+      startTransition(() => {
+        void api.reviewRelevanceProposal(activeProjectId, proposalId, review).then(async (proposal) => {
+          const [nextProposals, nextProjectEntries, nextDetails] = await Promise.all([
+            api.relevanceProposals(activeProjectId, proposal.paperId),
+            api.papers(activeProjectId),
+            api.project(activeProjectId)
+          ]);
+          setRelevanceProposals(nextProposals);
+          setProjectEntries(nextProjectEntries);
+          setProjectDetails(nextDetails);
+        });
+      });
+    },
+    [activeProjectId]
+  );
 
   const jumpToPdfAnnotation = useCallback((id: string) => {
     setActivePdfAnnotation((current) => ({ id, version: (current?.version ?? 0) + 1 }));
@@ -872,6 +924,8 @@ function App() {
             passages={passages}
             qa={qa}
             qaThread={qaThread}
+            relevanceProposals={[]}
+            onReviewRelevanceProposal={reviewRelevanceProposal}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -912,6 +966,8 @@ function App() {
             passages={passages}
             qa={qa}
             qaThread={qaThread}
+            relevanceProposals={relevanceProposals}
+            onReviewRelevanceProposal={reviewRelevanceProposal}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -1066,6 +1122,8 @@ interface WorkspaceProps {
   passages: Passage[];
   qa: QaResponse | null;
   qaThread: QaThread | null;
+  relevanceProposals: RelevanceProposal[];
+  onReviewRelevanceProposal: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
   providers: AgentProvider[];
   selectedProviderId: string;
   selectedModel: string | null;
@@ -1980,9 +2038,37 @@ function NotesView({ paper }: { paper: UiPaper }) {
   );
 }
 
-function PaperInspector({ paper }: { paper: UiPaper }) {
-  const [accepted, setAccepted] = useState(false);
-  useEffect(() => setAccepted(false), [paper.id]);
+function PaperInspector({
+  paper,
+  proposals,
+  onReview,
+  onOpenCitation
+}: {
+  paper: UiPaper;
+  proposals: RelevanceProposal[];
+  onReview: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
+  onOpenCitation: (item: EvidenceRef) => void;
+}) {
+  const proposal = proposals.find((candidate) => candidate.status === "pending") ?? proposals[0] ?? null;
+  const [editing, setEditing] = useState(false);
+  const [proposedState, setProposedState] = useState<RelevanceProposal["proposedState"]>("maybe");
+  const [rationale, setRationale] = useState("");
+  const [projectTags, setProjectTags] = useState("");
+  useEffect(() => {
+    setEditing(false);
+    setProposedState(proposal?.proposedState ?? "maybe");
+    setRationale(proposal?.rationale ?? "");
+    setProjectTags(proposal?.projectTags.join(", ") ?? "");
+  }, [paper.id, proposal?.id, proposal?.updatedAt]);
+  const review = (decision: "accepted" | "rejected") => {
+    if (!proposal) return;
+    onReview(proposal.id, {
+      decision,
+      proposedState,
+      rationale: rationale.trim() || proposal.rationale,
+      projectTags: projectTags.split(",").map((tag) => tag.trim()).filter(Boolean)
+    });
+  };
   return (
     <div className="scroll" style={{ flex: 1 }}>
       <div className="la-meta">
@@ -2010,24 +2096,75 @@ function PaperInspector({ paper }: { paper: UiPaper }) {
         {paper.methods.length ? paper.methods.map((method) => <span key={method} className="la-tag"><Icon name="function-square" size={11} />{method}</span>) : <span className="la-tag">extract methods</span>}
       </div>
 
-      {!accepted ? (
+      {proposal ? (
         <div style={{ padding: "4px 12px 16px" }}>
-          <div className="la-proposal">
-            <div className="ph"><Icon name="sparkles" size={13} />Proposed by agent</div>
-            <div className="pbody">Agent-generated tags and metadata are staged as proposals before they update canonical records.</div>
-            <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginBottom: 9, display: "flex", alignItems: "center", gap: 6 }}>
-              <Icon name="link" size={11} /> evidence-backed changes appear here
+          <div className={`la-proposal ${proposal.status}`}>
+            <div className="ph">
+              <Icon name={proposal.status === "pending" ? "sparkles" : proposal.status === "accepted" ? "check-circle-2" : "x-circle"} size={13} />
+              {proposal.status === "pending" ? "Relevance proposal" : `Proposal ${proposal.status}`}
+              <Badge variant={proposal.proposedState === "included" ? "success" : proposal.proposedState === "excluded" ? "danger" : "accent"}>
+                {proposal.proposedState.replace("_", " ")}
+              </Badge>
             </div>
-            <div className="pactions">
-              <Btn variant="primary" sm icon="check" onClick={() => setAccepted(true)}>Accept</Btn>
-              <Btn variant="ghost" sm icon="pencil">Edit</Btn>
-              <Btn variant="ghost" sm icon="x">Reject</Btn>
+            <div className="la-proposal-meta">
+              <span>{Math.round(proposal.confidence * 100)}% confidence</span>
+              <span>{proposal.providerId}{proposal.model ? ` / ${proposal.model}` : ""}</span>
             </div>
+            <div className="la-proposal-question">{proposal.question}</div>
+            {editing ? (
+              <div className="la-proposal-edit">
+                <label>
+                  <span>Decision</span>
+                  <select value={proposedState} onChange={(event) => setProposedState(event.currentTarget.value as RelevanceProposal["proposedState"])}>
+                    <option value="included">Include</option>
+                    <option value="maybe">Maybe</option>
+                    <option value="excluded">Exclude</option>
+                    <option value="not_found">Not found</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Rationale</span>
+                  <textarea value={rationale} onChange={(event) => setRationale(event.currentTarget.value)} rows={4} />
+                </label>
+                <label>
+                  <span>Project tags</span>
+                  <input value={projectTags} onChange={(event) => setProjectTags(event.currentTarget.value)} placeholder="comma, separated" />
+                </label>
+              </div>
+            ) : (
+              <div className="pbody">{proposal.rationale}</div>
+            )}
+            <div className="la-proposal-evidence">
+              <div className="label"><Icon name="link" size={11} /> {proposal.evidence.length} supporting passage{proposal.evidence.length === 1 ? "" : "s"}</div>
+              {proposal.evidence.slice(0, 3).map((item) => (
+                <button key={item.passageId} type="button" onClick={() => onOpenCitation(item)} title="Open supporting passage">
+                  <span>{item.section || "Passage"} · p.{item.page ?? "?"}</span>
+                  <span>{item.quote}</span>
+                </button>
+              ))}
+            </div>
+            {proposal.status === "pending" ? (
+              <div className="pactions">
+                <Btn variant="primary" sm icon="check" onClick={() => review("accepted")}>Accept</Btn>
+                <Btn variant="ghost" sm icon={editing ? "undo-2" : "pencil"} onClick={() => setEditing((current) => !current)}>{editing ? "Cancel edit" : "Edit"}</Btn>
+                <Btn variant="ghost" sm icon="x" onClick={() => review("rejected")}>Reject</Btn>
+              </div>
+            ) : (
+              <div className="la-proposal-reviewed">
+                Reviewed {proposal.reviewedAt ? new Date(proposal.reviewedAt).toLocaleString() : ""}
+              </div>
+            )}
           </div>
         </div>
       ) : (
-        <div style={{ padding: "4px 12px 16px", color: "var(--state-success)", font: "var(--text-caption)", display: "flex", alignItems: "center", gap: 7 }}>
-          <Icon name="check-circle-2" size={13} /> Proposal accepted
+        <div style={{ padding: "4px 12px 16px" }}>
+          <div className="la-proposal empty">
+            <div className="ph"><Icon name="sparkles" size={13} />No relevance proposal</div>
+            <div className="pbody">Run relevance tagging from Workflows or the Ask tab to stage an evidence-backed screening decision for this paper.</div>
+            <div className="la-proposal-reviewed">
+              Current project state: {paper.screen === "unscreened" ? "unreviewed" : paper.screen}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -2047,6 +2184,8 @@ function AgentPanel({
   passages,
   qa,
   qaThread,
+  relevanceProposals,
+  onReviewRelevanceProposal,
   pdfAnnotations,
   activePdfAnnotationId,
   onJumpPdfAnnotation,
@@ -2125,11 +2264,17 @@ function AgentPanel({
         <div className="la-agentbody fade-in" style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderBottom: "1px solid var(--border-light)" }}>
             <span style={{ font: "var(--text-caption)", color: "var(--text-muted)", flex: 1 }}>Screening</span>
-            <button type="button" className="la-iconbtn" title="Include" style={{ color: "var(--state-success)" }}><Icon name="check" size={15} /></button>
-            <button type="button" className="la-iconbtn" title="Maybe" style={{ color: "var(--state-warning)" }}><Icon name="help-circle" size={15} /></button>
-            <button type="button" className="la-iconbtn" title="Exclude" style={{ color: "var(--state-error)" }}><Icon name="x" size={15} /></button>
+            <Badge variant={selectedPaper.screen === "include" ? "success" : selectedPaper.screen === "exclude" ? "danger" : "accent"}>
+              {selectedPaper.screen === "unscreened" ? "unreviewed" : selectedPaper.screen}
+            </Badge>
+            {relevanceProposals.some((proposal) => proposal.status === "pending") ? <Badge>review pending</Badge> : null}
           </div>
-          <PaperInspector paper={selectedPaper} />
+          <PaperInspector
+            paper={selectedPaper}
+            proposals={relevanceProposals}
+            onReview={onReviewRelevanceProposal}
+            onOpenCitation={(item) => onOpenCitation(item, scopeProjectId)}
+          />
         </div>
       ) : null}
       {tab === "ask" ? (

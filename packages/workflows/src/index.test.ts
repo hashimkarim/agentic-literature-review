@@ -185,6 +185,115 @@ describe("PDF inbox processing", () => {
   });
 });
 
+describe("relevance proposals", () => {
+  it("stages evidence-backed relevance without changing screening state", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({
+      name: "Relevance Project",
+      researchQuestion: "Does the method support reliable real-time analysis?"
+    });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Reliable Real-time Analysis" }
+    });
+    repo.writeMarkdown(imported.paper.id, "# Findings\n\nThe proposed method supports reliable real-time analysis on mobile devices.");
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+
+    const run = engine.startWorkflow({
+      type: "relevance-tagging",
+      projectId: project.id,
+      paperIds: [imported.paper.id],
+      collectionIds: [],
+      query: project.researchQuestions[0]?.text ?? null,
+      options: {},
+      providerId: "local-heuristic",
+      model: null
+    });
+    const proposals = repo.listRelevanceProposals(project.id, { paperId: imported.paper.id });
+
+    expect(run.status).toBe("completed");
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({ status: "pending", paperId: imported.paper.id });
+    expect(proposals[0]?.evidence.length).toBeGreaterThan(0);
+    expect(repo.listPaperLinks(project.id)[0]?.relevanceState).toBe("unreviewed");
+    expect(engine.readRun(run.id).events.some((item) => item.type === "evidence.found")).toBe(true);
+    index.close();
+  });
+
+  it("turns structured provider output into reviewable relevance proposals", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({
+      name: "Provider Screening",
+      researchQuestion: "Does the paper improve cited research workflows?"
+    });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Cited Research Workflows" }
+    });
+    const { passages } = repo.writeMarkdown(
+      imported.paper.id,
+      "# Findings\n\nThe workflow links generated claims to exact supporting passages."
+    );
+    const providerOutput = JSON.stringify({
+      proposals: [{
+        paperId: imported.paper.id,
+        proposedState: "included",
+        relevanceScore: 0.92,
+        confidence: 0.88,
+        rationale: "The paper directly improves cited research workflows.",
+        projectTags: ["cited-workflows"],
+        evidencePassageIds: [passages[0]?.id]
+      }]
+    });
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-relevance",
+      label: "Fake Relevance Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
+      promptDelivery: "stdin"
+    };
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+    const run = engine.startWorkflow({
+      type: "relevance-tagging",
+      projectId: project.id,
+      paperIds: [imported.paper.id],
+      collectionIds: [],
+      query: project.researchQuestions[0]?.text ?? null,
+      options: {},
+      providerId: fakeProvider.id,
+      model: null
+    });
+
+    let completed = engine.readRun(run.id).run;
+    for (let attempt = 0; attempt < 100 && completed.status === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      completed = engine.readRun(run.id).run;
+    }
+    const proposals = repo.listRelevanceProposals(project.id, { paperId: imported.paper.id });
+
+    expect(completed.status).toBe("completed");
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      providerId: fakeProvider.id,
+      proposedState: "included",
+      status: "pending"
+    });
+    expect(proposals[0]?.evidence[0]?.passageId).toBe(passages[0]?.id);
+    expect(repo.listPaperLinks(project.id)[0]?.relevanceState).toBe("unreviewed");
+    index.close();
+  });
+});
+
 describe("RAG question answering", () => {
   it("answers with scoped evidence refs and diagnostics", () => {
     const repo = makeRepo();

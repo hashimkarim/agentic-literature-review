@@ -189,6 +189,43 @@ export const EvidenceRefSchema = z.object({
 });
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
 
+export const ProposalReviewStatusSchema = z.enum(["pending", "accepted", "rejected"]);
+export type ProposalReviewStatus = z.infer<typeof ProposalReviewStatusSchema>;
+
+export const ProposedRelevanceStateSchema = z.enum(["included", "excluded", "maybe", "not_found"]);
+export type ProposedRelevanceState = z.infer<typeof ProposedRelevanceStateSchema>;
+
+export const RelevanceProposalSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  projectId: z.string(),
+  paperId: z.string(),
+  researchQuestionId: z.string().nullable().default(null),
+  question: z.string().min(1),
+  proposedState: ProposedRelevanceStateSchema,
+  relevanceScore: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().min(1),
+  projectTags: z.array(z.string()).default([]),
+  evidence: z.array(EvidenceRefSchema).default([]),
+  providerId: z.string(),
+  model: z.string().nullable().default(null),
+  status: ProposalReviewStatusSchema.default("pending"),
+  reviewedAt: isoDateSchema.nullable().default(null),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type RelevanceProposal = z.infer<typeof RelevanceProposalSchema>;
+
+export const ReviewRelevanceProposalRequestSchema = z.object({
+  decision: z.enum(["accepted", "rejected"]),
+  proposedState: ProposedRelevanceStateSchema.optional(),
+  rationale: z.string().min(1).optional(),
+  projectTags: z.array(z.string()).optional()
+});
+export type ReviewRelevanceProposalRequest = z.infer<typeof ReviewRelevanceProposalRequestSchema>;
+export type ReviewRelevanceProposalRequestInput = z.input<typeof ReviewRelevanceProposalRequestSchema>;
+
 export const CitationRectSourceSchema = z.enum(["passage", "annotation", "none"]);
 export type CitationRectSource = z.infer<typeof CitationRectSourceSchema>;
 

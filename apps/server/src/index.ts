@@ -15,8 +15,10 @@ import {
   CreateNoteRequestSchema,
   ImportPaperRequestSchema,
   LinkPaperRequestSchema,
+  ProposalReviewStatusSchema,
   QaRequestSchema,
   QaThreadRequestSchema,
+  ReviewRelevanceProposalRequestSchema,
   SearchRequestSchema,
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema
@@ -319,6 +321,29 @@ app.delete(
   "/api/projects/:id/notes/:noteId",
   asyncHandler((req, res) => {
     res.json(repo.deleteNote(routeParam(req, "id"), routeParam(req, "noteId")));
+  })
+);
+
+app.get(
+  "/api/projects/:id/relevance-proposals",
+  asyncHandler((req, res) => {
+    const paperId = queryString(req, "paperId");
+    const statusValue = queryString(req, "status");
+    const status = statusValue ? ProposalReviewStatusSchema.parse(statusValue) : null;
+    res.json(repo.listRelevanceProposals(routeParam(req, "id"), { paperId, status }));
+  })
+);
+
+app.patch(
+  "/api/projects/:id/relevance-proposals/:proposalId",
+  asyncHandler((req, res) => {
+    res.json(
+      repo.reviewRelevanceProposal(
+        routeParam(req, "id"),
+        routeParam(req, "proposalId"),
+        ReviewRelevanceProposalRequestSchema.parse(req.body)
+      )
+    );
   })
 );
 

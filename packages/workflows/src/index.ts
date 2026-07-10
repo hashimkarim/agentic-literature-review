@@ -45,6 +45,36 @@ export const WorkflowStartRequestSchema = z.object({
 });
 export type WorkflowStartRequest = z.infer<typeof WorkflowStartRequestSchema>;
 
+const ProviderRelevanceProposalSchema = z.object({
+  paperId: z.string(),
+  proposedState: z.enum(["included", "excluded", "maybe", "not_found"]),
+  relevanceScore: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().min(1),
+  projectTags: z.array(z.string()).default([]),
+  evidencePassageIds: z.array(z.string()).default([])
+});
+
+const ProviderRelevanceResultSchema = z.object({
+  proposals: z.array(ProviderRelevanceProposalSchema).min(1)
+});
+
+function parseProviderJson(text: string): unknown {
+  const candidates = [
+    ...[...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((match) => match[1]?.trim() ?? ""),
+    text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1).trim(),
+    text.trim()
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Provider output can include commentary around the structured result.
+    }
+  }
+  throw new Error("Provider did not return a valid JSON relevance result.");
+}
+
 export const PdfProcessingOptionsSchema = z.object({
   sourceDir: z.string().trim().min(1).default("pdfs"),
   force: z.boolean().default(false),
@@ -142,15 +172,23 @@ function collectPapers(repo: LitAgentRepository, request: WorkflowStartRequest):
   return repo.listGlobalPapers();
 }
 
-function scoreRelevance(paper: Paper, query: string): number {
-  const haystack = `${paper.title} ${paper.authors.join(" ")} ${paper.tags.join(" ")}`.toLowerCase();
+function scoreRelevance(paper: Paper, query: string, markdown = ""): number {
+  const metadata = `${paper.title} ${paper.authors.join(" ")} ${paper.tags.join(" ")}`.toLowerCase();
+  const content = markdown.toLowerCase();
   const terms = query
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((term) => term.length > 3);
   if (terms.length === 0) return 0.5;
-  const hits = terms.filter((term) => haystack.includes(term)).length;
-  return hits / terms.length;
+  const metadataHits = terms.filter((term) => metadata.includes(term)).length;
+  const contentHits = terms.filter((term) => content.includes(term)).length;
+  return Math.min(1, (metadataHits * 2 + contentHits) / (terms.length * 3));
+}
+
+function proposedRelevanceState(score: number): "included" | "excluded" | "maybe" {
+  if (score >= 0.45) return "included";
+  if (score >= 0.15) return "maybe";
+  return "excluded";
 }
 
 function resolveQaScope(repo: LitAgentRepository, input: QaRequest): QaScope {
@@ -1805,6 +1843,24 @@ export class WorkflowEngine {
         result.artifacts
           .map((artifactPath) => (fs.existsSync(artifactPath) ? fs.readFileSync(artifactPath, "utf8") : ""))
           .find((content) => content.trim().length > 0) ?? result.transcript;
+      let proposalIds: string[] = [];
+      if (request.type === "relevance-tagging") {
+        try {
+          proposalIds = this.createProviderRelevanceProposals(request, run.id, finalText, absoluteEventsPath);
+        } catch (error) {
+          status = "failed";
+          appendEvent(
+            absoluteEventsPath,
+            event({
+              runId: run.id,
+              providerId: request.providerId,
+              type: "run.failed",
+              message: error instanceof Error ? error.message : String(error),
+              payload: { failureClass: "invalid_workflow_output" }
+            })
+          );
+        }
+      }
       const outputPath = this.writeProjectOutput(
         request.projectId,
         `${slugify(request.type)}-${slugify(run.id)}.md`,
@@ -1825,11 +1881,99 @@ export class WorkflowEngine {
           providerId: request.providerId,
           type: "artifact.written",
           message: "Provider transcript artifact written",
-          payload: { outputPath, sessionId: result.sessionId }
+          payload: { outputPath, sessionId: result.sessionId, proposalIds }
         })
       );
     }
     this.writeRun(WorkflowRunSchema.parse({ ...run, status, updatedAt: nowIso() }));
+  }
+
+  private createProviderRelevanceProposals(
+    request: WorkflowStartRequest,
+    runId: string,
+    providerText: string,
+    absoluteEventsPath: string
+  ): string[] {
+    if (!request.projectId) throw new Error("Relevance tagging requires a project scope.");
+    const projectId = request.projectId;
+    const project = this.repo.readProject(projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+    const researchQuestion = request.query
+      ? project.researchQuestions.find((candidate) => candidate.text === request.query) ?? null
+      : project.researchQuestions[0] ?? null;
+    const question = request.query ?? researchQuestion?.text ?? "";
+    if (!question.trim()) throw new Error("Relevance tagging requires a research question or query.");
+
+    const papers = collectPapers(this.repo, request);
+    const paperById = new Map(papers.map((paper) => [paper.id, paper]));
+    const parsed = ProviderRelevanceResultSchema.parse(parseProviderJson(providerText));
+    const proposalByPaper = new Map(parsed.proposals.map((proposal) => [proposal.paperId, proposal]));
+    const missingPaperIds = papers.filter((paper) => !proposalByPaper.has(paper.id)).map((paper) => paper.id);
+    if (missingPaperIds.length > 0) {
+      throw new Error(`Provider omitted relevance proposals for: ${missingPaperIds.join(", ")}`);
+    }
+    for (const proposal of parsed.proposals) {
+      if (!paperById.has(proposal.paperId)) {
+        throw new Error(`Provider returned an out-of-scope paper id: ${proposal.paperId}`);
+      }
+    }
+
+    return parsed.proposals.map((candidate) => {
+      const paper = paperById.get(candidate.paperId);
+      if (!paper) throw new Error(`Paper not found in workflow scope: ${candidate.paperId}`);
+      const passageById = new Map(this.repo.readPassages(paper.id).map((passage) => [passage.id, passage]));
+      let evidence = candidate.evidencePassageIds.flatMap((passageId) => {
+        const passage = passageById.get(passageId);
+        return passage ? [{
+          paperId: paper.id,
+          passageId: passage.id,
+          page: passage.page,
+          paperTitle: paper.title,
+          section: passage.section,
+          quote: passage.quote,
+          confidence: candidate.confidence
+        }] : [];
+      });
+      if (evidence.length === 0) {
+        evidence = buildEvidence(
+          this.index.search(this.repo, {
+            query: `${question} ${candidate.rationale}`,
+            projectId,
+            paperId: paper.id,
+            limit: 3
+          }),
+          3
+        );
+      }
+      const proposal = this.repo.createRelevanceProposal({
+        runId,
+        projectId,
+        paperId: paper.id,
+        researchQuestionId: researchQuestion?.id ?? null,
+        question,
+        proposedState: evidence.length === 0 && candidate.proposedState !== "not_found" ? "not_found" : candidate.proposedState,
+        relevanceScore: candidate.relevanceScore,
+        confidence: evidence.length ? candidate.confidence : Math.min(candidate.confidence, 0.25),
+        rationale: evidence.length ? candidate.rationale : "The provider did not identify a valid supporting passage in the selected sources.",
+        projectTags: candidate.projectTags,
+        evidence,
+        providerId: request.providerId,
+        model: request.model
+      });
+      for (const item of proposal.evidence) {
+        appendEvent(
+          absoluteEventsPath,
+          event({
+            runId,
+            providerId: request.providerId,
+            type: "evidence.found",
+            message: item.quote,
+            payload: item
+          })
+        );
+      }
+      return proposal.id;
+    });
   }
 
   private buildAgentPrompt(request: WorkflowStartRequest, runId: string): string {
@@ -1853,6 +1997,26 @@ export class WorkflowEngine {
         paperContext || "No papers are selected.",
         "",
         "Return Markdown with sections: Summary, Proposed cleanup patches, Evidence/locations, Risks."
+      ].join("\n");
+    }
+    if (request.type === "relevance-tagging") {
+      return [
+        "You are LitAgent screening research papers against a research question.",
+        "Use only the supplied paper metadata, passages, and Markdown excerpts.",
+        "Return one proposal for every selected paper. Do not modify files.",
+        "A substantive relevance rationale must cite one or more supplied passage ids when passages exist.",
+        "Use not_found when the supplied content is insufficient to make a relevance judgment.",
+        "Return only JSON with no Markdown fence or commentary.",
+        "Schema: {\"proposals\":[{\"paperId\":\"...\",\"proposedState\":\"included|excluded|maybe|not_found\",\"relevanceScore\":0.0,\"confidence\":0.0,\"rationale\":\"...\",\"projectTags\":[\"...\"],\"evidencePassageIds\":[\"...\"]}]}",
+        "relevanceScore measures topical relevance from 0 to 1. confidence measures confidence in the classification from 0 to 1.",
+        "Project tags must be short factual topic tags, not workflow status labels.",
+        "",
+        `Workflow run id: ${runId}`,
+        `Project: ${project?.name ?? "global library"}`,
+        `Research question: ${request.query ?? researchQuestions[0] ?? "none supplied"}`,
+        "",
+        "Selected paper context:",
+        paperContext || "No papers are selected."
       ].join("\n");
     }
     return [
@@ -1966,27 +2130,89 @@ export class WorkflowEngine {
         return { outputPath, paperCount: papers.length };
       }
       case "relevance-tagging": {
-        const project = request.projectId ? this.repo.readProject(request.projectId) : null;
-        const question = request.query ?? project?.researchQuestions[0]?.text ?? "";
-        const decisions = papers.map((paper) => {
-          const score = scoreRelevance(paper, question);
-          const relevanceState = score >= 0.35 ? "maybe" : "excluded";
-          if (request.projectId) {
-            this.repo.updateProjectLink({
-              projectId: request.projectId,
+        if (!request.projectId) throw new Error("Relevance tagging requires a project scope.");
+        const projectId = request.projectId;
+        const project = this.repo.readProject(projectId);
+        if (!project) throw new Error(`Project not found: ${projectId}`);
+        const researchQuestion = request.query
+          ? project.researchQuestions.find((candidate) => candidate.text === request.query) ?? null
+          : project.researchQuestions[0] ?? null;
+        const question = request.query ?? researchQuestion?.text ?? "";
+        if (!question.trim()) throw new Error("Relevance tagging requires a research question or query.");
+        const proposals = papers.map((paper) => {
+          const score = scoreRelevance(paper, question, this.repo.readMarkdown(paper.id) ?? "");
+          const proposedState = proposedRelevanceState(score);
+          let evidence = buildEvidence(
+            this.index.search(this.repo, {
+              query: question,
+              projectId,
               paperId: paper.id,
-              relevanceState,
-              projectTags: [`relevance:${relevanceState}`]
-            });
+              limit: 3
+            }),
+            3
+          );
+          if (evidence.length === 0) {
+            evidence = this.repo.readPassages(paper.id).slice(0, 2).map((passage) => ({
+              paperId: paper.id,
+              passageId: passage.id,
+              page: passage.page,
+              paperTitle: paper.title,
+              section: passage.section,
+              quote: passage.quote,
+              confidence: 0.35
+            }));
           }
-          return { paperId: paper.id, title: paper.title, score, relevanceState };
+          const rationale = proposedState === "included"
+            ? "The paper directly overlaps the research question in its metadata and converted text."
+            : proposedState === "maybe"
+              ? "The paper has partial topical overlap; review the linked passages before inclusion."
+              : "The available metadata and converted text have little overlap with the research question.";
+          const proposal = this.repo.createRelevanceProposal({
+            runId,
+            projectId,
+            paperId: paper.id,
+            researchQuestionId: researchQuestion?.id ?? null,
+            question,
+            proposedState,
+            relevanceScore: score,
+            confidence: evidence.length ? Math.max(0.4, Math.min(0.85, 0.5 + Math.abs(score - 0.3))) : 0.25,
+            rationale,
+            projectTags: [`rq:${slugify(researchQuestion?.id ?? question)}`],
+            evidence,
+            providerId: request.providerId,
+            model: request.model
+          });
+          for (const item of proposal.evidence) {
+            appendEvent(
+              absoluteEventsPath,
+              event({
+                runId,
+                providerId: request.providerId,
+                type: "evidence.found",
+                message: item.quote,
+                payload: item
+              })
+            );
+          }
+          return proposal;
         });
         const outputPath = this.writeProjectOutput(
           request.projectId,
           `relevance-${slugify(runId)}.md`,
-          ["# Relevance Tagging", "", ...decisions.map((d) => `- ${d.relevanceState}: ${d.title} (${d.score.toFixed(2)})`)].join("\n")
+          [
+            "# Relevance Proposals",
+            "",
+            `Research question: ${question}`,
+            "",
+            "These proposals do not change project screening state until they are accepted.",
+            "",
+            ...proposals.map((proposal) => {
+              const paper = this.repo.readPaper(proposal.paperId);
+              return `- **${proposal.proposedState}**: ${paper?.title ?? proposal.paperId} (${proposal.relevanceScore.toFixed(2)}) - ${proposal.rationale}`;
+            })
+          ].join("\n")
         );
-        return { outputPath, decisions };
+        return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
       }
       case "metadata-extraction": {
         const patches = papers.map(metadataPatchFor);

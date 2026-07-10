@@ -20,7 +20,9 @@ import {
   PaperSchema,
   PassageSchema,
   ProjectSchema,
+  RelevanceProposalSchema,
   ResearchQuestionSchema,
+  ReviewRelevanceProposalRequestSchema,
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema,
   type Annotation,
@@ -37,7 +39,12 @@ import {
   type PaperProjectLink,
   type Passage,
   type Project,
+  type ProposalReviewStatus,
+  type ProposedRelevanceState,
+  type RelevanceProposal,
   type RelevanceState,
+  type ReviewRelevanceProposalRequestInput,
+  type EvidenceRef,
   type UpdateAnnotationRequestInput,
   type UpdateNoteRequestInput
 } from "@litagent/contracts";
@@ -520,6 +527,105 @@ export class LitAgentRepository {
 
   writePaperLinks(projectId: string, links: PaperProjectLink[]): void {
     writeJson(this.resolve(`projects/${projectId}/paper-links.json`), links);
+  }
+
+  listRelevanceProposals(
+    projectId: string,
+    filters: { paperId?: string | null; status?: ProposalReviewStatus | null } = {}
+  ): RelevanceProposal[] {
+    if (!this.readProject(projectId)) throw new Error(`Project not found: ${projectId}`);
+    const dir = this.resolve(`projects/${projectId}/proposals/relevance`);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => RelevanceProposalSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"))))
+      .filter((proposal) => !filters.paperId || proposal.paperId === filters.paperId)
+      .filter((proposal) => !filters.status || proposal.status === filters.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  readRelevanceProposal(projectId: string, proposalId: string): RelevanceProposal | null {
+    const filePath = this.resolve(`projects/${projectId}/proposals/relevance/${proposalId}.json`);
+    if (!fs.existsSync(filePath)) return null;
+    const proposal = RelevanceProposalSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    return proposal.projectId === projectId ? proposal : null;
+  }
+
+  createRelevanceProposal(input: {
+    runId: string;
+    projectId: string;
+    paperId: string;
+    researchQuestionId?: string | null;
+    question: string;
+    proposedState: ProposedRelevanceState;
+    relevanceScore: number;
+    confidence: number;
+    rationale: string;
+    projectTags?: string[];
+    evidence?: EvidenceRef[];
+    providerId: string;
+    model?: string | null;
+  }): RelevanceProposal {
+    const project = this.readProject(input.projectId);
+    if (!project) throw new Error(`Project not found: ${input.projectId}`);
+    if (!this.readPaper(input.paperId)) throw new Error(`Paper not found: ${input.paperId}`);
+    if (!this.listPaperLinks(input.projectId).some((link) => link.paperId === input.paperId)) {
+      throw new Error(`Paper is not linked to project: ${input.projectId}/${input.paperId}`);
+    }
+    if (input.researchQuestionId && !project.researchQuestions.some((question) => question.id === input.researchQuestionId)) {
+      throw new Error(`Research question not found: ${input.researchQuestionId}`);
+    }
+    const timestamp = nowIso();
+    const proposal = RelevanceProposalSchema.parse({
+      ...input,
+      id: createId("proposal"),
+      researchQuestionId: input.researchQuestionId ?? null,
+      projectTags: input.projectTags ?? [],
+      evidence: input.evidence ?? [],
+      model: input.model ?? null,
+      status: "pending",
+      reviewedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    writeJson(this.resolve(`projects/${input.projectId}/proposals/relevance/${proposal.id}.json`), proposal);
+    return proposal;
+  }
+
+  reviewRelevanceProposal(
+    projectId: string,
+    proposalId: string,
+    input: ReviewRelevanceProposalRequestInput
+  ): RelevanceProposal {
+    const request = ReviewRelevanceProposalRequestSchema.parse(input);
+    const current = this.readRelevanceProposal(projectId, proposalId);
+    if (!current) throw new Error(`Relevance proposal not found: ${proposalId}`);
+    if (current.status !== "pending") {
+      if (current.status === request.decision) return current;
+      throw new Error(`Relevance proposal has already been ${current.status}.`);
+    }
+
+    const reviewedAt = nowIso();
+    const reviewed = RelevanceProposalSchema.parse({
+      ...current,
+      proposedState: request.proposedState ?? current.proposedState,
+      rationale: request.rationale ?? current.rationale,
+      projectTags: request.projectTags ?? current.projectTags,
+      status: request.decision,
+      reviewedAt,
+      updatedAt: reviewedAt
+    });
+    if (reviewed.status === "accepted") {
+      this.updateProjectLink({
+        projectId,
+        paperId: reviewed.paperId,
+        relevanceState: reviewed.proposedState,
+        projectTags: reviewed.projectTags
+      });
+    }
+    writeJson(this.resolve(`projects/${projectId}/proposals/relevance/${proposalId}.json`), reviewed);
+    return reviewed;
   }
 
   listNotes(projectId: string): Note[] {

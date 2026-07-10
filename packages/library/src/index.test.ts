@@ -161,6 +161,60 @@ describe("LitAgentRepository", () => {
     expect(repo.readNote(project.id, note.id)?.tags).toContain("updated");
   });
 
+  it("reviews relevance proposals before changing project screening state", () => {
+    const repo = tempRepo();
+    const project = repo.createProject({
+      name: "Screening Project",
+      researchQuestion: "Does the method support reliable real-time analysis?"
+    });
+    const imported = repo.importPaper({
+      sourcePath: fixturePdf(0),
+      projectId: project.id,
+      metadata: { title: "Real-time Analysis" }
+    });
+    const { passages } = repo.writeMarkdown(imported.paper.id, "# Findings\n\nThe method supports reliable real-time analysis.");
+    const evidence = [{
+      paperId: imported.paper.id,
+      passageId: passages[0]?.id ?? "missing",
+      page: passages[0]?.page ?? null,
+      paperTitle: imported.paper.title,
+      section: passages[0]?.section ?? "Findings",
+      quote: passages[0]?.quote ?? "The method supports reliable real-time analysis.",
+      confidence: 0.9
+    }];
+    const proposalInput = {
+      runId: "run_relevance",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      researchQuestionId: project.researchQuestions[0]?.id ?? null,
+      question: project.researchQuestions[0]?.text ?? "relevance",
+      proposedState: "included" as const,
+      relevanceScore: 0.9,
+      confidence: 0.8,
+      rationale: "The findings directly address the research question.",
+      projectTags: ["rq:real-time-analysis"],
+      evidence,
+      providerId: "codex",
+      model: null
+    };
+
+    const rejected = repo.createRelevanceProposal(proposalInput);
+    repo.reviewRelevanceProposal(project.id, rejected.id, { decision: "rejected" });
+    expect(repo.listPaperLinks(project.id)[0]?.relevanceState).toBe("unreviewed");
+
+    const accepted = repo.createRelevanceProposal(proposalInput);
+    const reviewed = repo.reviewRelevanceProposal(project.id, accepted.id, {
+      decision: "accepted",
+      proposedState: "maybe",
+      rationale: "Relevant, but the evaluation evidence is incomplete."
+    });
+    const link = repo.listPaperLinks(project.id)[0];
+    expect(reviewed).toMatchObject({ status: "accepted", proposedState: "maybe" });
+    expect(link?.relevanceState).toBe("maybe");
+    expect(link?.projectTags).toContain("rq:real-time-analysis");
+    expect(repo.listRelevanceProposals(project.id, { paperId: imported.paper.id })).toHaveLength(2);
+  });
+
   it("stores annotations and keeps note backlinks in sync", () => {
     const repo = tempRepo();
     const project = repo.createProject({ name: "Annotation Project" });
