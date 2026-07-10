@@ -491,6 +491,8 @@ export const QaDiagnosticsSchema = z.object({
   model: z.string().nullable().default(null),
   contextMode: z.enum(["passage-search", "markdown-context"]).default("passage-search"),
   contextChars: z.number().int().nonnegative().default(0),
+  evidenceMode: z.enum(["passage-search", "provider-passages", "claim-match"]).default("passage-search"),
+  evidenceVersion: z.number().int().positive().default(1),
   message: z.string().default("")
 });
 export type QaDiagnostics = z.infer<typeof QaDiagnosticsSchema>;
@@ -519,6 +521,8 @@ export const QaResponseSchema = z.object({
     model: null,
     contextMode: "passage-search",
     contextChars: 0,
+    evidenceMode: "passage-search",
+    evidenceVersion: 1,
     message: ""
   })
 });

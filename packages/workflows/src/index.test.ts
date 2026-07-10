@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AgentHarness, AgentProviderCatalog, type ProviderDefinition } from "@litagent/agents";
+import { QaResponseSchema } from "@litagent/contracts";
 import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
 
@@ -745,6 +746,154 @@ describe("RAG question answering", () => {
     expect(fresh.id).toBe(recorded.thread.id);
     expect(fresh.messages).toEqual([]);
     expect(fs.readdirSync(archiveDir).some((file) => file.startsWith(`${recorded.thread.id}-`))).toBe(true);
+    index.close();
+  });
+
+  it("links different questions to the provider-selected supporting passages", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Addressed evidence" });
+    const imported = repo.importPaper({ projectId: project.id, metadata: { title: "Evidence Paper" } });
+    repo.writeMarkdown(
+      imported.paper.id,
+      [
+        "# Method",
+        "",
+        "The method uses a transformer encoder to classify streaming audio frames.",
+        "",
+        "# Limitations",
+        "",
+        "Battery consumption constrains mobile deployment during continuous inference."
+      ].join("\n")
+    );
+    const passages = repo.readPassages(imported.paper.id);
+    const methodPassage = passages.find((passage) => passage.section === "Method");
+    const limitationPassage = passages.find((passage) => passage.section === "Limitations");
+    expect(methodPassage).toBeTruthy();
+    expect(limitationPassage).toBeTruthy();
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-addressed-evidence",
+      label: "Fake Addressed Evidence Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => [
+        "-e",
+        `let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('limits mobile deployment')?'Battery consumption constrains mobile deployment. [[passage:${limitationPassage?.id}]]':'A transformer encoder classifies streaming audio frames. [[passage:${methodPassage?.id}]]'))`
+      ],
+      promptDelivery: "stdin"
+    };
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+
+    const methodAnswer = await engine.answerQuestionWithProvider({
+      question: "Which encoder classifies the audio frames?",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      providerId: fakeProvider.id
+    });
+    const limitationAnswer = await engine.answerQuestionWithProvider({
+      question: "What limits mobile deployment?",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      providerId: fakeProvider.id
+    });
+
+    expect(methodAnswer.evidence.map((item) => item.passageId)).toEqual([methodPassage?.id]);
+    expect(limitationAnswer.evidence.map((item) => item.passageId)).toEqual([limitationPassage?.id]);
+    expect(methodAnswer.evidence[0]?.passageId).not.toBe(limitationAnswer.evidence[0]?.passageId);
+    expect(methodAnswer.diagnostics.evidenceMode).toBe("provider-passages");
+    expect(limitationAnswer.answer).toContain("[1]");
+    index.close();
+  });
+
+  it("rejects a cited passage that does not support the generated claim", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Unsupported evidence" });
+    const imported = repo.importPaper({ projectId: project.id, metadata: { title: "Unrelated Paper" } });
+    repo.writeMarkdown(imported.paper.id, "# Method\n\nA transformer encoder classifies streaming audio frames.");
+    const passage = repo.readPassages(imported.paper.id)[0];
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-unsupported-evidence",
+      label: "Fake Unsupported Evidence Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => ["-e", `process.stdout.write('Ocean temperature trends determine coastal erosion. [[passage:${passage?.id}]]')`],
+      promptDelivery: "stdin"
+    };
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+
+    const answer = await engine.answerQuestionWithProvider({
+      question: "What determines coastal erosion?",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      providerId: fakeProvider.id
+    });
+
+    expect(answer.status).toBe("not_found");
+    expect(answer.evidence).toEqual([]);
+    expect(answer.answer).toBe("Not found in the selected sources.");
+    index.close();
+  });
+
+  it("revalidates legacy thread evidence against the stored answer claim", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Legacy evidence" });
+    const imported = repo.importPaper({ projectId: project.id, metadata: { title: "Legacy Paper" } });
+    repo.writeMarkdown(
+      imported.paper.id,
+      "# Method\n\nA transformer encoder classifies streaming audio frames.\n\n# Limitations\n\nBattery consumption constrains mobile deployment."
+    );
+    const passages = repo.readPassages(imported.paper.id);
+    const methodPassage = passages.find((passage) => passage.section === "Method");
+    const limitationPassage = passages.find((passage) => passage.section === "Limitations");
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+    const local = engine.answerQuestion({
+      question: "What constrains mobile deployment?",
+      projectId: project.id,
+      paperId: imported.paper.id
+    });
+    const legacy = QaResponseSchema.parse({
+      ...local,
+      answer: "Battery consumption constrains mobile deployment [1].",
+      evidence: [{
+        paperId: imported.paper.id,
+        passageId: methodPassage?.id,
+        page: methodPassage?.page,
+        paperTitle: imported.paper.title,
+        section: methodPassage?.section,
+        quote: methodPassage?.quote,
+        confidence: 0.9
+      }],
+      status: "answered",
+      diagnostics: {
+        ...local.diagnostics,
+        contextMode: "markdown-context",
+        evidenceMode: "claim-match",
+        evidenceVersion: 1
+      }
+    });
+    engine.recordQaExchange({ projectId: project.id, paperId: imported.paper.id }, legacy);
+
+    const migrated = engine.readQaThread({ projectId: project.id, paperId: imported.paper.id });
+    const migratedResponse = migrated.messages.find((message) => message.role === "assistant")?.response;
+
+    expect(migratedResponse?.evidence.map((item) => item.passageId)).toEqual([limitationPassage?.id]);
+    expect(migratedResponse?.diagnostics.evidenceVersion).toBe(2);
+    expect(migratedResponse?.diagnostics.message).toContain("Revalidated");
     index.close();
   });
 });

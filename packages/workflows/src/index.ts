@@ -297,12 +297,18 @@ function buildEvidence(results: SearchResult[], limit: number): EvidenceRef[] {
 
 const markdownContextCharBudget = 180_000;
 const answerEvidenceStopwords = new Set([
+  "answer",
   "about",
   "after",
   "also",
+  "author",
+  "authors",
+  "based",
   "because",
   "between",
   "could",
+  "evidence",
+  "found",
   "from",
   "have",
   "into",
@@ -310,10 +316,20 @@ const answerEvidenceStopwords = new Set([
   "only",
   "paper",
   "papers",
+  "provide",
+  "provides",
   "question",
+  "report",
+  "reported",
+  "reports",
+  "result",
+  "results",
+  "selected",
   "should",
   "source",
   "sources",
+  "study",
+  "studies",
   "that",
   "their",
   "there",
@@ -408,7 +424,9 @@ function buildProviderQaPrompt(question: string, context: QaMarkdownContext, thr
     "If the Markdown context does not answer the question, say: Not found in the selected sources.",
     "Answer from the whole paper context, not from a preselected evidence snippet list.",
     "Keep the answer concise and avoid adding outside knowledge.",
-    "After you answer, LitAgent will attach supporting evidence by linking your claims back to source passages.",
+    "Every factual claim must end with one or more exact passage markers copied from the Markdown, using [[passage:PASSAGE_ID]].",
+    "Do not invent passage IDs and do not emit numeric citations such as [1]. Omit claims that you cannot support with a passage marker.",
+    "LitAgent validates the passage markers and converts them into clickable citations.",
     "",
     conversation ? `Prior conversation:\n${conversation}` : "Prior conversation: none",
     "",
@@ -427,10 +445,24 @@ function providerFinalText(result: ProviderRunResult): string {
   return (artifactText || result.transcript).trim();
 }
 
-function ensureCitedProviderAnswer(answer: string, evidence: EvidenceRef[]): string {
-  const trimmed = answer.trim();
-  if (!trimmed || evidence.length === 0 || /\[\d+\]/.test(trimmed)) return trimmed;
-  return `${trimmed} [1]`;
+function markdownWithPassageMarkers(markdown: string, passages: Passage[]): string {
+  const markersByLine = new Map<number, Passage[]>();
+  for (const passage of passages) {
+    if (passage.markdownStart === null) continue;
+    const existing = markersByLine.get(passage.markdownStart) ?? [];
+    existing.push(passage);
+    markersByLine.set(passage.markdownStart, existing);
+  }
+  return markdown
+    .split(/\r?\n/)
+    .flatMap((line, index) => {
+      const markers = markersByLine.get(index) ?? [];
+      return [
+        ...markers.map((passage) => `<!-- [[passage:${passage.id}]]${passage.page ? ` page:${passage.page}` : ""} -->`),
+        line
+      ];
+    })
+    .join("\n");
 }
 
 function buildQaMarkdownContext(repo: LitAgentRepository, scope: QaScope): QaMarkdownContext {
@@ -470,7 +502,7 @@ function buildQaMarkdownContext(repo: LitAgentRepository, scope: QaScope): QaMar
         item.paper.year ? `year: ${item.paper.year}` : "year: unknown",
         item.truncated ? "note: Markdown was truncated to fit the current model context budget." : "note: Full available Markdown included.",
         "",
-        item.markdown
+        markdownWithPassageMarkers(item.markdown, item.passages)
       ].join("\n")
     )
     .join("\n\n");
@@ -483,48 +515,206 @@ function buildQaMarkdownContext(repo: LitAgentRepository, scope: QaScope): QaMar
   };
 }
 
+const qaEvidenceVersion = 2;
+const passageCitationPattern = /\[\[passage:([^\]\s]+)\]\]/g;
+const numericCitationPattern = /\s+\[(?:\d+(?:\s*[-,]\s*\d+)*)\](?=\s*(?:[.!?]\s*)?(?:$|\n))/gm;
+
+interface QaPassageCandidate {
+  paper: Paper;
+  passage: Passage;
+}
+
+interface AnswerClaimSpan {
+  start: number;
+  end: number;
+  raw: string;
+  text: string;
+}
+
+interface LinkedAnswerEvidence {
+  answer: string;
+  evidence: EvidenceRef[];
+  mode: "provider-passages" | "claim-match";
+}
+
+function normalizeSupportTerm(term: string): string {
+  if (term.length > 6 && term.endsWith("ing")) return term.slice(0, -3).replace(/(.)\1$/, "$1");
+  if (term.length > 5 && term.endsWith("ied")) return `${term.slice(0, -3)}y`;
+  if (term.length > 5 && term.endsWith("ed")) return term.slice(0, -2).replace(/(.)\1$/, "$1");
+  if (term.length > 5 && term.endsWith("ies")) return `${term.slice(0, -3)}y`;
+  if (term.length > 5 && term.endsWith("es")) return term.slice(0, -2);
+  if (term.length > 4 && term.endsWith("s") && !/(?:ss|is|us)$/.test(term)) return term.slice(0, -1);
+  return term;
+}
+
 function supportTerms(text: string): string[] {
   return [
     ...new Set(
       text
+        .replace(passageCitationPattern, " ")
+        .replace(numericCitationPattern, " ")
         .toLowerCase()
         .replace(/[^\p{Letter}\p{Number}\s-]/gu, " ")
         .split(/\s+/)
         .map((term) => term.trim())
         .filter((term) => term.length > 3 && !answerEvidenceStopwords.has(term))
+        .map(normalizeSupportTerm)
+        .filter((term) => term.length > 2)
     )
   ];
 }
 
-function buildEvidenceFromAnswer(question: string, answer: string, context: QaMarkdownContext, limit: number): EvidenceRef[] {
-  if (/not found in the selected sources/i.test(answer)) return [];
-  const answerTerms = supportTerms(answer);
-  const questionTerms = supportTerms(question);
-  if (answerTerms.length === 0) return [];
-  return context.papers
-    .flatMap((item) =>
-      item.passages.map((passage) => {
-        const quote = passage.quote.toLowerCase();
-        const answerHits = answerTerms.filter((term) => quote.includes(term)).length;
-        const questionHits = questionTerms.filter((term) => quote.includes(term)).length;
-        const score = answerHits * 2 + questionHits;
-        return { item, passage, score };
-      })
-    )
-    .filter((candidate) => candidate.score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit)
-    .map((candidate, index) =>
-      EvidenceRefSchema.parse({
-        paperId: candidate.item.paper.id,
-        passageId: candidate.passage.id,
-        page: candidate.passage.page,
-        paperTitle: candidate.item.paper.title,
-        section: candidate.passage.section,
-        quote: candidate.passage.quote,
-        confidence: Math.max(0.45, 0.88 - index * 0.08)
-      })
-    );
+function qaPassageCandidates(context: QaMarkdownContext): QaPassageCandidate[] {
+  return context.papers.flatMap((item) => item.passages.map((passage) => ({ paper: item.paper, passage })));
+}
+
+function answerClaimSpans(answer: string): AnswerClaimSpan[] {
+  const spans: AnswerClaimSpan[] = [];
+  const linePattern = /[^\n]+/g;
+  for (const lineMatch of answer.matchAll(linePattern)) {
+    const line = lineMatch[0];
+    const lineStart = lineMatch.index;
+    const sentencePattern = /[^.!?]+(?:[.!?]+|$)(?:\s*\[\[passage:[^\]\s]+\]\])*/g;
+    for (const sentenceMatch of line.matchAll(sentencePattern)) {
+      const raw = sentenceMatch[0];
+      const text = raw
+        .replace(passageCitationPattern, " ")
+        .replace(numericCitationPattern, " ")
+        .replace(/^\s*(?:[-*+]\s+|#{1,6}\s+)/, "")
+        .replace(/[`*_~]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!text || supportTerms(text).length < 2) continue;
+      const start = lineStart + (sentenceMatch.index ?? 0);
+      spans.push({ start, end: start + raw.length, raw, text });
+    }
+  }
+  if (spans.length === 0) {
+    const text = answer
+      .replace(passageCitationPattern, " ")
+      .replace(numericCitationPattern, " ")
+      .replace(/[`*_~#]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (supportTerms(text).length >= 2) spans.push({ start: 0, end: answer.length, raw: answer, text });
+  }
+  return spans;
+}
+
+function passageDocumentFrequencies(candidates: QaPassageCandidate[]): Map<string, number> {
+  const frequencies = new Map<string, number>();
+  for (const candidate of candidates) {
+    for (const term of supportTerms(candidate.passage.quote)) {
+      frequencies.set(term, (frequencies.get(term) ?? 0) + 1);
+    }
+  }
+  return frequencies;
+}
+
+function passageSupportScore(
+  claim: string,
+  question: string,
+  candidate: QaPassageCandidate,
+  documentFrequencies: Map<string, number>,
+  passageCount: number
+): number {
+  const claimTerms = supportTerms(claim);
+  if (claimTerms.length === 0) return 0;
+  const questionTerms = supportTerms(question).filter((term) => !claimTerms.includes(term));
+  const passageTerms = new Set(supportTerms(candidate.passage.quote));
+  const weight = (term: string) => Math.log((passageCount + 1) / ((documentFrequencies.get(term) ?? 0) + 1)) + 1;
+  const claimWeight = claimTerms.reduce((sum, term) => sum + weight(term), 0);
+  const claimMatches = claimTerms.filter((term) => passageTerms.has(term));
+  if (claimMatches.length === 0) return 0;
+  const claimCoverage = claimMatches.reduce((sum, term) => sum + weight(term), 0) / Math.max(1, claimWeight);
+  if (claimMatches.length === 1 && claimCoverage < 0.24) return 0;
+  const questionWeight = questionTerms.reduce((sum, term) => sum + weight(term), 0);
+  const questionCoverage = questionWeight > 0
+    ? questionTerms.filter((term) => passageTerms.has(term)).reduce((sum, term) => sum + weight(term), 0) / questionWeight
+    : 0;
+  const normalizedClaim = claimTerms.join(" ");
+  const normalizedPassage = [...passageTerms].join(" ");
+  const bigrams = claimTerms.slice(0, -1).map((term, index) => `${term} ${claimTerms[index + 1]}`);
+  const bigramCoverage = bigrams.length > 0 ? bigrams.filter((bigram) => normalizedPassage.includes(bigram)).length / bigrams.length : 0;
+  const exactPhraseBonus = normalizedClaim.length > 12 && normalizedPassage.includes(normalizedClaim) ? 0.08 : 0;
+  return Math.min(1, claimCoverage * 0.76 + questionCoverage * 0.1 + bigramCoverage * 0.06 + Math.min(0.08, claimMatches.length * 0.02) + exactPhraseBonus);
+}
+
+function evidenceFromCandidate(candidate: QaPassageCandidate, confidence: number): EvidenceRef {
+  return EvidenceRefSchema.parse({
+    paperId: candidate.paper.id,
+    passageId: candidate.passage.id,
+    page: candidate.passage.page,
+    paperTitle: candidate.paper.title,
+    section: candidate.passage.section,
+    quote: candidate.passage.quote,
+    confidence: Math.max(0.45, Math.min(0.96, confidence))
+  });
+}
+
+function linkAnswerToEvidence(question: string, answer: string, context: QaMarkdownContext, limit: number): LinkedAnswerEvidence {
+  const withoutNumericCitations = answer.replace(numericCitationPattern, "");
+  if (/not found in the selected sources/i.test(withoutNumericCitations)) {
+    return { answer: "Not found in the selected sources.", evidence: [], mode: "claim-match" };
+  }
+  const candidates = qaPassageCandidates(context);
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.passage.id, candidate]));
+  const documentFrequencies = passageDocumentFrequencies(candidates);
+  const selected: QaPassageCandidate[] = [];
+  const selectedIndexes = new Map<string, number>();
+  const edits: Array<{ start: number; end: number; replacement: string }> = [];
+  let usedProviderPassage = false;
+
+  for (const claim of answerClaimSpans(withoutNumericCitations)) {
+    const requestedIds = [...claim.raw.matchAll(passageCitationPattern)].map((match) => match[1]).filter((id): id is string => Boolean(id));
+    const requestedCandidates = requestedIds.map((id) => candidatesById.get(id)).filter((candidate): candidate is QaPassageCandidate => Boolean(candidate));
+    const scoreCandidate = (candidate: QaPassageCandidate) => ({
+      candidate,
+      score: passageSupportScore(claim.text, question, candidate, documentFrequencies, Math.max(1, candidates.length))
+    });
+    const requestedBest = requestedCandidates.map(scoreCandidate).sort((left, right) => right.score - left.score)[0];
+    const fallbackBest = candidates.map(scoreCandidate).sort((left, right) => right.score - left.score)[0];
+    const best = requestedBest && requestedBest.score >= 0.2 ? requestedBest : fallbackBest;
+    if (!best || best.score < 0.2) {
+      edits.push({ start: claim.start, end: claim.end, replacement: "" });
+      continue;
+    }
+    if (requestedCandidates.some((candidate) => candidate.passage.id === best.candidate.passage.id)) usedProviderPassage = true;
+    let evidenceIndex = selectedIndexes.get(best.candidate.passage.id);
+    if (evidenceIndex === undefined) {
+      if (selected.length >= limit) {
+        edits.push({ start: claim.start, end: claim.end, replacement: "" });
+        continue;
+      }
+      evidenceIndex = selected.length;
+      selected.push(best.candidate);
+      selectedIndexes.set(best.candidate.passage.id, evidenceIndex);
+    }
+    const leading = claim.raw.match(/^\s*/)?.[0] ?? "";
+    const trailing = claim.raw.match(/\s*$/)?.[0] ?? "";
+    const cleanClaim = claim.raw.replace(passageCitationPattern, "").replace(numericCitationPattern, "").trim();
+    edits.push({
+      start: claim.start,
+      end: claim.end,
+      replacement: `${leading}${cleanClaim} [${evidenceIndex + 1}]${trailing}`
+    });
+  }
+
+  let linkedAnswer = withoutNumericCitations.replace(passageCitationPattern, "");
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    linkedAnswer = `${linkedAnswer.slice(0, edit.start)}${edit.replacement}${linkedAnswer.slice(edit.end)}`;
+  }
+  linkedAnswer = linkedAnswer.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return {
+    answer: linkedAnswer,
+    evidence: selected.map((candidate) => {
+      const claimEdit = edits.find((edit) => edit.replacement.includes(`[${(selectedIndexes.get(candidate.passage.id) ?? 0) + 1}]`));
+      const claim = claimEdit ? withoutNumericCitations.slice(claimEdit.start, claimEdit.end) : question;
+      const score = passageSupportScore(claim, question, candidate, documentFrequencies, Math.max(1, candidates.length));
+      return evidenceFromCandidate(candidate, 0.52 + score * 0.44);
+    }),
+    mode: usedProviderPassage ? "provider-passages" : "claim-match"
+  };
 }
 
 function qaThreadScope(input: QaThreadRequestInput) {
@@ -1476,7 +1666,8 @@ export class WorkflowEngine {
     const id = qaThreadId(parsed);
     const filePath = this.qaThreadPath(id);
     if (fs.existsSync(filePath)) {
-      return QaThreadSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+      const thread = QaThreadSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+      return this.revalidateLegacyQaThread(thread, filePath);
     }
     const timestamp = nowIso();
     return QaThreadSchema.parse({
@@ -1557,6 +1748,8 @@ export class WorkflowEngine {
       model: parsed.model,
       contextMode: "markdown-context" as const,
       contextChars: context.contextChars,
+      evidenceMode: "claim-match" as const,
+      evidenceVersion: qaEvidenceVersion,
       message: context.papers.length
         ? `Using Markdown context from ${context.papers.length} paper${context.papers.length === 1 ? "" : "s"}${context.truncated ? " (truncated to fit context budget)" : ""}.`
         : "No converted Markdown exists in the selected scope. Run PDF-to-Markdown conversion first."
@@ -1612,7 +1805,8 @@ export class WorkflowEngine {
       const result = await session.finished;
       const text = providerFinalText(result);
       if (result.status === "completed" && text) {
-        const evidence = buildEvidenceFromAnswer(parsed.question, text, context, 5);
+        const linked = linkAnswerToEvidence(parsed.question, text, context, 5);
+        const evidence = linked.evidence;
         for (const item of evidence) {
           appendEvent(
             absoluteEventsPath,
@@ -1625,10 +1819,10 @@ export class WorkflowEngine {
             })
           );
         }
-        const status = /not found in the selected sources/i.test(text) || evidence.length === 0 ? "not_found" : "answered";
+        const status = /not found in the selected sources/i.test(linked.answer) || evidence.length === 0 ? "not_found" : "answered";
         this.writeRun(WorkflowRunSchema.parse({ ...run, status: "completed", updatedAt: nowIso() }));
         return QaResponseSchema.parse({
-          answer: status === "not_found" ? "Not found in the selected sources." : ensureCitedProviderAnswer(text, evidence),
+          answer: status === "not_found" ? "Not found in the selected sources." : linked.answer,
           evidence,
           runId,
           question: parsed.question,
@@ -1637,6 +1831,8 @@ export class WorkflowEngine {
           diagnostics: {
             ...baseDiagnostics,
             evidenceCount: evidence.length,
+            evidenceMode: linked.mode,
+            evidenceVersion: qaEvidenceVersion,
             message: status === "not_found"
               ? `Generated with ${parsed.providerId}, but no supporting passage could be linked from the Markdown context.`
               : `Generated with ${parsed.providerId}${parsed.model ? `/${parsed.model}` : ""} from Markdown context; attached ${evidence.length} supporting passage${evidence.length === 1 ? "" : "s"}.`
@@ -1695,6 +1891,10 @@ export class WorkflowEngine {
       evidenceCount: evidence.length,
       providerId: parsed.providerId,
       model: parsed.model,
+      contextMode: "passage-search" as const,
+      contextChars: 0,
+      evidenceMode: "passage-search" as const,
+      evidenceVersion: qaEvidenceVersion,
       message: evidence.length
         ? `Retrieved ${evidence.length} cited passage${evidence.length === 1 ? "" : "s"} from ${scope.paperCount} scoped paper${scope.paperCount === 1 ? "" : "s"}.`
         : scope.passageCount === 0
@@ -1912,6 +2112,47 @@ export class WorkflowEngine {
 
   private qaThreadPath(threadId: string): string {
     return this.repo.resolve(`.litagent/chat-threads/${threadId}.json`);
+  }
+
+  private revalidateLegacyQaThread(thread: QaThread, filePath: string): QaThread {
+    let changed = false;
+    const contextCache = new Map<string, QaMarkdownContext>();
+    const messages = thread.messages.map((message) => {
+      const response = message.response;
+      if (!response || response.diagnostics.contextMode !== "markdown-context" || response.diagnostics.evidenceVersion >= qaEvidenceVersion) {
+        return message;
+      }
+      const scopeKey = JSON.stringify(response.scope);
+      let context = contextCache.get(scopeKey);
+      if (!context) {
+        context = buildQaMarkdownContext(this.repo, response.scope);
+        contextCache.set(scopeKey, context);
+      }
+      const linked = linkAnswerToEvidence(response.question, response.answer, context, 5);
+      const supported = linked.evidence.length > 0;
+      const nextResponse = QaResponseSchema.parse({
+        ...response,
+        answer: supported ? linked.answer : "Not found in the selected sources.",
+        evidence: linked.evidence,
+        status: supported ? "answered" : "not_found",
+        diagnostics: {
+          ...response.diagnostics,
+          retrievedCount: context.passageCount,
+          evidenceCount: linked.evidence.length,
+          evidenceMode: linked.mode,
+          evidenceVersion: qaEvidenceVersion,
+          message: supported
+            ? `Revalidated ${linked.evidence.length} claim-linked passage${linked.evidence.length === 1 ? "" : "s"} against the current Markdown context.`
+            : "Removed legacy evidence because no passage directly supported the stored answer."
+        }
+      });
+      changed = true;
+      return { ...message, content: nextResponse.answer, response: nextResponse };
+    });
+    if (!changed) return thread;
+    const migrated = QaThreadSchema.parse({ ...thread, messages });
+    fs.writeFileSync(filePath, `${JSON.stringify(migrated, null, 2)}\n`, "utf8");
+    return migrated;
   }
 
   private qaThreadTitle(input: ReturnType<typeof qaThreadScope>): string {
