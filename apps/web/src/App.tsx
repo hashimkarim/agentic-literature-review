@@ -11,11 +11,13 @@ import type {
   AgentProvider,
   CitationTarget,
   EvidenceRef,
+  MetadataProposal,
   Passage,
   Project,
   QaResponse,
   QaThread,
   RelevanceProposal,
+  ReviewMetadataProposalRequest,
   ReviewRelevanceProposalRequest,
   WorkflowRun,
   WorkflowType
@@ -441,6 +443,7 @@ function App() {
   const [qa, setQa] = useState<QaResponse | null>(null);
   const [qaThread, setQaThread] = useState<QaThread | null>(null);
   const [relevanceProposals, setRelevanceProposals] = useState<RelevanceProposal[]>([]);
+  const [metadataProposals, setMetadataProposals] = useState<MetadataProposal[]>([]);
   const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
   const [citationActivation, setCitationActivation] = useState(0);
   const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([]);
@@ -610,6 +613,18 @@ function App() {
     return { markdown: nextMarkdown, passages: nextPassages };
   }, []);
 
+  const loadMetadataProposals = useCallback((paperId: string | null) => {
+    if (!paperId) {
+      setMetadataProposals([]);
+      return;
+    }
+    void api.metadataProposals(paperId).then(setMetadataProposals).catch(() => setMetadataProposals([]));
+  }, []);
+
+  useEffect(() => {
+    loadMetadataProposals(selectedPaperId);
+  }, [loadMetadataProposals, selectedPaperId]);
+
   useEffect(() => {
     if (!selectedPaperId) {
       setMarkdown(null);
@@ -646,6 +661,8 @@ function App() {
       (run) => run.type === "relevance-tagging" && run.projectId === activeProjectId && workflowMatchesPaper(run, selectedPaperId)
     );
     if (relevanceRun) loadRelevanceProposals(activeProjectId, selectedPaperId);
+    const metadataRun = terminalRuns.find((run) => run.type === "metadata-extraction" && workflowMatchesPaper(run, selectedPaperId));
+    if (metadataRun) loadMetadataProposals(selectedPaperId);
     const markdownRun = terminalRuns.find((run) => run.type === "pdf-markdown-processing" && workflowMatchesPaper(run, selectedPaperId));
     if (!markdownRun) return;
     if (markdownRun.status !== "completed") {
@@ -662,7 +679,7 @@ function App() {
       setProjectEntries(nextProject);
       setMarkdownNotice(nextMarkdown ? "Markdown updated from the completed conversion." : "Conversion completed, but no Markdown file was found for this paper.");
     })();
-  }, [activeProjectId, loadPaperArtifacts, loadRelevanceProposals, projectEntries, selectedPaperId, workflows]);
+  }, [activeProjectId, loadMetadataProposals, loadPaperArtifacts, loadRelevanceProposals, projectEntries, selectedPaperId, workflows]);
 
   const reviewRelevanceProposal = useCallback(
     (proposalId: string, review: ReviewRelevanceProposalRequest) => {
@@ -681,6 +698,25 @@ function App() {
       });
     },
     [activeProjectId]
+  );
+
+  const reviewMetadataProposal = useCallback(
+    (proposalId: string, review: ReviewMetadataProposalRequest) => {
+      if (!selectedPaperId) return;
+      startTransition(() => {
+        void api.reviewMetadataProposal(selectedPaperId, proposalId, review).then(async () => {
+          const [nextProposals, nextLibraryEntries, nextProjectEntries] = await Promise.all([
+            api.metadataProposals(selectedPaperId),
+            api.papers(null),
+            activeProjectId ? api.papers(activeProjectId) : Promise.resolve(projectEntries)
+          ]);
+          setMetadataProposals(nextProposals);
+          setLibraryEntries(nextLibraryEntries);
+          setProjectEntries(nextProjectEntries);
+        });
+      });
+    },
+    [activeProjectId, projectEntries, selectedPaperId]
   );
 
   const jumpToPdfAnnotation = useCallback((id: string) => {
@@ -926,6 +962,8 @@ function App() {
             qaThread={qaThread}
             relevanceProposals={[]}
             onReviewRelevanceProposal={reviewRelevanceProposal}
+            metadataProposals={metadataProposals}
+            onReviewMetadataProposal={reviewMetadataProposal}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -968,6 +1006,8 @@ function App() {
             qaThread={qaThread}
             relevanceProposals={relevanceProposals}
             onReviewRelevanceProposal={reviewRelevanceProposal}
+            metadataProposals={metadataProposals}
+            onReviewMetadataProposal={reviewMetadataProposal}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -1124,6 +1164,8 @@ interface WorkspaceProps {
   qaThread: QaThread | null;
   relevanceProposals: RelevanceProposal[];
   onReviewRelevanceProposal: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
+  metadataProposals: MetadataProposal[];
+  onReviewMetadataProposal: (proposalId: string, review: ReviewMetadataProposalRequest) => void;
   providers: AgentProvider[];
   selectedProviderId: string;
   selectedModel: string | null;
@@ -2038,28 +2080,53 @@ function NotesView({ paper }: { paper: UiPaper }) {
   );
 }
 
+function metadataValueText(value: MetadataProposal["fields"][number]["proposedValue"]): string {
+  return Array.isArray(value) ? value.join(", ") : value == null ? "" : String(value);
+}
+
+function parseMetadataValue(
+  field: MetadataProposal["fields"][number]["field"],
+  value: string
+): MetadataProposal["fields"][number]["proposedValue"] {
+  if (field === "authors" || field === "tags") return value.split(",").map((item) => item.trim()).filter(Boolean);
+  if (field === "year") return value.trim() ? Number(value) : null;
+  if (field === "doi" || field === "arxivId" || field === "zoteroKey") return value.trim() || null;
+  return value.trim();
+}
+
 function PaperInspector({
   paper,
   proposals,
   onReview,
+  metadataProposals,
+  onReviewMetadata,
   onOpenCitation
 }: {
   paper: UiPaper;
   proposals: RelevanceProposal[];
   onReview: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
+  metadataProposals: MetadataProposal[];
+  onReviewMetadata: (proposalId: string, review: ReviewMetadataProposalRequest) => void;
   onOpenCitation: (item: EvidenceRef) => void;
 }) {
   const proposal = proposals.find((candidate) => candidate.status === "pending") ?? proposals[0] ?? null;
+  const metadataProposal = metadataProposals.find((candidate) => candidate.status === "pending") ?? metadataProposals[0] ?? null;
   const [editing, setEditing] = useState(false);
   const [proposedState, setProposedState] = useState<RelevanceProposal["proposedState"]>("maybe");
   const [rationale, setRationale] = useState("");
   const [projectTags, setProjectTags] = useState("");
+  const [selectedMetadataFields, setSelectedMetadataFields] = useState<string[]>([]);
+  const [metadataEdits, setMetadataEdits] = useState<Record<string, string>>({});
   useEffect(() => {
     setEditing(false);
     setProposedState(proposal?.proposedState ?? "maybe");
     setRationale(proposal?.rationale ?? "");
     setProjectTags(proposal?.projectTags.join(", ") ?? "");
   }, [paper.id, proposal?.id, proposal?.updatedAt]);
+  useEffect(() => {
+    setSelectedMetadataFields(metadataProposal?.fields.map((field) => field.field) ?? []);
+    setMetadataEdits(Object.fromEntries(metadataProposal?.fields.map((field) => [field.field, metadataValueText(field.proposedValue)]) ?? []));
+  }, [metadataProposal?.id, metadataProposal?.updatedAt, paper.id]);
   const review = (decision: "accepted" | "rejected") => {
     if (!proposal) return;
     onReview(proposal.id, {
@@ -2067,6 +2134,21 @@ function PaperInspector({
       proposedState,
       rationale: rationale.trim() || proposal.rationale,
       projectTags: projectTags.split(",").map((tag) => tag.trim()).filter(Boolean)
+    });
+  };
+  const reviewMetadata = (decision: "accepted" | "rejected") => {
+    if (!metadataProposal) return;
+    const acceptedFields = metadataProposal.fields
+      .map((field) => field.field)
+      .filter((field) => selectedMetadataFields.includes(field));
+    onReviewMetadata(metadataProposal.id, {
+      decision,
+      acceptedFields,
+      edits: Object.fromEntries(
+        metadataProposal.fields
+          .filter((field) => acceptedFields.includes(field.field))
+          .map((field) => [field.field, parseMetadataValue(field.field, metadataEdits[field.field] ?? "")])
+      )
     });
   };
   return (
@@ -2167,6 +2249,76 @@ function PaperInspector({
           </div>
         </div>
       )}
+
+      <div className="la-sectionlabel">Metadata proposals</div>
+      {metadataProposal ? (
+        <div style={{ padding: "0 12px 16px" }}>
+          <div className={`la-proposal la-metadata-proposal ${metadataProposal.status}`}>
+            <div className="ph">
+              <Icon name={metadataProposal.status === "pending" ? "list" : metadataProposal.status === "accepted" ? "check-circle-2" : "x-circle"} size={13} />
+              {metadataProposal.status === "pending" ? "Metadata review" : `Metadata ${metadataProposal.status}`}
+              <Badge>{metadataProposal.fields.length} field{metadataProposal.fields.length === 1 ? "" : "s"}</Badge>
+            </div>
+            <div className="la-proposal-meta">
+              <span>{metadataProposal.providerId}{metadataProposal.model ? ` / ${metadataProposal.model}` : ""}</span>
+              <span>global record</span>
+            </div>
+            <div className="la-metadata-fields">
+              {metadataProposal.fields.map((field) => {
+                const selected = selectedMetadataFields.includes(field.field);
+                return (
+                  <div key={field.field} className={`la-metadata-field${selected ? " selected" : ""}`}>
+                    <label className="la-metadata-fieldhead">
+                      {metadataProposal.status === "pending" ? (
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => setSelectedMetadataFields((current) => current.includes(field.field) ? current.filter((item) => item !== field.field) : [...current, field.field])}
+                        />
+                      ) : <Icon name={metadataProposal.appliedFields.includes(field.field) ? "check" : "minus"} size={12} />}
+                      <span>{field.field}</span>
+                      <span className="confidence">{Math.round(field.confidence * 100)}%</span>
+                    </label>
+                    <div className="la-metadata-current">Current: {metadataValueText(field.currentValue) || "not recorded"}</div>
+                    {metadataProposal.status === "pending" ? (
+                      <input
+                        value={metadataEdits[field.field] ?? ""}
+                        onChange={(event) => setMetadataEdits((current) => ({ ...current, [field.field]: event.currentTarget.value }))}
+                        aria-label={`Proposed ${field.field}`}
+                      />
+                    ) : (
+                      <div className="la-metadata-value">{metadataValueText(field.proposedValue) || "not recorded"}</div>
+                    )}
+                    <div className="la-metadata-rationale">{field.rationale}</div>
+                    {field.evidence.slice(0, 1).map((item) => (
+                      <button key={item.passageId} type="button" className="la-metadata-source" onClick={() => onOpenCitation(item)}>
+                        <Icon name="link" size={11} /> {item.section || "Passage"} · p.{item.page ?? "?"}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+            {metadataProposal.status === "pending" ? (
+              <div className="pactions">
+                <Btn variant="primary" sm icon="check" onClick={() => reviewMetadata("accepted")} disabled={!selectedMetadataFields.length}>Accept selected</Btn>
+                <Btn variant="ghost" sm icon="x" onClick={() => reviewMetadata("rejected")}>Reject all</Btn>
+              </div>
+            ) : (
+              <div className="la-proposal-reviewed">
+                {metadataProposal.appliedFields.length ? `Applied ${metadataProposal.appliedFields.join(", ")}` : "No fields applied"}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div style={{ padding: "0 12px 16px" }}>
+          <div className="la-proposal empty">
+            <div className="ph"><Icon name="list" size={13} />No metadata proposal</div>
+            <div className="pbody">Run metadata extraction to stage evidence-backed changes to the global paper record.</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2186,6 +2338,8 @@ function AgentPanel({
   qaThread,
   relevanceProposals,
   onReviewRelevanceProposal,
+  metadataProposals,
+  onReviewMetadataProposal,
   pdfAnnotations,
   activePdfAnnotationId,
   onJumpPdfAnnotation,
@@ -2273,6 +2427,8 @@ function AgentPanel({
             paper={selectedPaper}
             proposals={relevanceProposals}
             onReview={onReviewRelevanceProposal}
+            metadataProposals={metadataProposals}
+            onReviewMetadata={onReviewMetadataProposal}
             onOpenCitation={(item) => onOpenCitation(item, scopeProjectId)}
           />
         </div>

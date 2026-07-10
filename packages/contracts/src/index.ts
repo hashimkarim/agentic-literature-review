@@ -226,6 +226,46 @@ export const ReviewRelevanceProposalRequestSchema = z.object({
 export type ReviewRelevanceProposalRequest = z.infer<typeof ReviewRelevanceProposalRequestSchema>;
 export type ReviewRelevanceProposalRequestInput = z.input<typeof ReviewRelevanceProposalRequestSchema>;
 
+export const MetadataFieldNameSchema = z.enum(["title", "authors", "year", "doi", "arxivId", "zoteroKey", "tags"]);
+export type MetadataFieldName = z.infer<typeof MetadataFieldNameSchema>;
+
+export const MetadataFieldValueSchema = z.union([z.string(), z.number().int(), z.array(z.string()), z.null()]);
+export type MetadataFieldValue = z.infer<typeof MetadataFieldValueSchema>;
+
+export const MetadataFieldProposalSchema = z.object({
+  field: MetadataFieldNameSchema,
+  currentValue: MetadataFieldValueSchema,
+  proposedValue: MetadataFieldValueSchema,
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().min(1),
+  evidence: z.array(EvidenceRefSchema).default([])
+});
+export type MetadataFieldProposal = z.infer<typeof MetadataFieldProposalSchema>;
+
+export const MetadataProposalSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  projectId: z.string().nullable().default(null),
+  paperId: z.string(),
+  fields: z.array(MetadataFieldProposalSchema).min(1),
+  providerId: z.string(),
+  model: z.string().nullable().default(null),
+  status: ProposalReviewStatusSchema.default("pending"),
+  appliedFields: z.array(MetadataFieldNameSchema).default([]),
+  reviewedAt: isoDateSchema.nullable().default(null),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type MetadataProposal = z.infer<typeof MetadataProposalSchema>;
+
+export const ReviewMetadataProposalRequestSchema = z.object({
+  decision: z.enum(["accepted", "rejected"]),
+  acceptedFields: z.array(MetadataFieldNameSchema).optional(),
+  edits: z.partialRecord(MetadataFieldNameSchema, MetadataFieldValueSchema).default({})
+});
+export type ReviewMetadataProposalRequest = z.infer<typeof ReviewMetadataProposalRequestSchema>;
+export type ReviewMetadataProposalRequestInput = z.input<typeof ReviewMetadataProposalRequestSchema>;
+
 export const CitationRectSourceSchema = z.enum(["passage", "annotation", "none"]);
 export type CitationRectSource = z.infer<typeof CitationRectSourceSchema>;
 

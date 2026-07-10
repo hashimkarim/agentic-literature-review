@@ -14,6 +14,7 @@ import {
   CreateNoteRequestSchema,
   ImportPaperRequestSchema,
   LinkPaperRequestSchema,
+  MetadataProposalSchema,
   NoteSchema,
   NoteWithContentSchema,
   PaperProjectLinkSchema,
@@ -22,6 +23,7 @@ import {
   ProjectSchema,
   RelevanceProposalSchema,
   ResearchQuestionSchema,
+  ReviewMetadataProposalRequestSchema,
   ReviewRelevanceProposalRequestSchema,
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema,
@@ -33,6 +35,10 @@ import {
   type CreateNoteRequestInput,
   type ImportPaperRequestInput,
   type LinkPaperRequestInput,
+  type MetadataFieldName,
+  type MetadataFieldProposal,
+  type MetadataFieldValue,
+  type MetadataProposal,
   type Note,
   type NoteWithContent,
   type Paper,
@@ -43,6 +49,7 @@ import {
   type ProposedRelevanceState,
   type RelevanceProposal,
   type RelevanceState,
+  type ReviewMetadataProposalRequestInput,
   type ReviewRelevanceProposalRequestInput,
   type EvidenceRef,
   type UpdateAnnotationRequestInput,
@@ -54,6 +61,15 @@ export const DEFAULT_REPO_ROOT = path.join(os.homedir(), ".litagent", "research-
 const linksArraySchema = z.array(PaperProjectLinkSchema);
 const collectionsArraySchema = z.array(CollectionSchema);
 const annotationsArraySchema = z.array(AnnotationSchema);
+const paperMetadataPatchSchema = PaperSchema.pick({
+  title: true,
+  authors: true,
+  year: true,
+  doi: true,
+  arxivId: true,
+  zoteroKey: true,
+  tags: true
+}).partial();
 
 export interface ProjectWithDetails {
   project: Project;
@@ -625,6 +641,134 @@ export class LitAgentRepository {
       });
     }
     writeJson(this.resolve(`projects/${projectId}/proposals/relevance/${proposalId}.json`), reviewed);
+    return reviewed;
+  }
+
+  updatePaperMetadata(paperId: string, input: Record<string, unknown>): Paper {
+    const current = this.readPaper(paperId);
+    if (!current) throw new Error(`Paper not found: ${paperId}`);
+    const patch = paperMetadataPatchSchema.parse(input);
+    const updated = PaperSchema.parse({
+      ...current,
+      ...patch,
+      tags: patch.tags ? mergeUnique(current.tags, patch.tags) : current.tags,
+      id: current.id,
+      filePaths: current.filePaths,
+      createdAt: current.createdAt,
+      updatedAt: nowIso()
+    });
+    writeJson(this.resolve(`library/papers/${paperId}/metadata.json`), updated);
+    if (updated.zoteroKey) {
+      writeJson(this.resolve(`library/papers/${paperId}/zotero.json`), { key: updated.zoteroKey, syncedAt: updated.updatedAt });
+    }
+    return updated;
+  }
+
+  listMetadataProposals(
+    paperId: string,
+    filters: { status?: ProposalReviewStatus | null } = {}
+  ): MetadataProposal[] {
+    if (!this.readPaper(paperId)) throw new Error(`Paper not found: ${paperId}`);
+    const dir = this.resolve(`library/papers/${paperId}/proposals/metadata`);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => MetadataProposalSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"))))
+      .filter((proposal) => !filters.status || proposal.status === filters.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  readMetadataProposal(paperId: string, proposalId: string): MetadataProposal | null {
+    const filePath = this.resolve(`library/papers/${paperId}/proposals/metadata/${proposalId}.json`);
+    if (!fs.existsSync(filePath)) return null;
+    const proposal = MetadataProposalSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    return proposal.paperId === paperId ? proposal : null;
+  }
+
+  createMetadataProposal(input: {
+    runId: string;
+    projectId?: string | null;
+    paperId: string;
+    fields: MetadataFieldProposal[];
+    providerId: string;
+    model?: string | null;
+  }): MetadataProposal {
+    if (!this.readPaper(input.paperId)) throw new Error(`Paper not found: ${input.paperId}`);
+    if (input.projectId && !this.listPaperLinks(input.projectId).some((link) => link.paperId === input.paperId)) {
+      throw new Error(`Paper is not linked to project: ${input.projectId}/${input.paperId}`);
+    }
+    const fieldNames = new Set<MetadataFieldName>();
+    for (const field of input.fields) {
+      if (fieldNames.has(field.field)) throw new Error(`Duplicate metadata field proposal: ${field.field}`);
+      fieldNames.add(field.field);
+      paperMetadataPatchSchema.parse({ [field.field]: field.proposedValue });
+    }
+    const timestamp = nowIso();
+    const proposal = MetadataProposalSchema.parse({
+      ...input,
+      id: createId("proposal"),
+      projectId: input.projectId ?? null,
+      model: input.model ?? null,
+      status: "pending",
+      appliedFields: [],
+      reviewedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    writeJson(this.resolve(`library/papers/${input.paperId}/proposals/metadata/${proposal.id}.json`), proposal);
+    return proposal;
+  }
+
+  reviewMetadataProposal(
+    paperId: string,
+    proposalId: string,
+    input: ReviewMetadataProposalRequestInput
+  ): MetadataProposal {
+    const request = ReviewMetadataProposalRequestSchema.parse(input);
+    const current = this.readMetadataProposal(paperId, proposalId);
+    if (!current) throw new Error(`Metadata proposal not found: ${proposalId}`);
+    if (current.status !== "pending") {
+      if (current.status === request.decision) return current;
+      throw new Error(`Metadata proposal has already been ${current.status}.`);
+    }
+
+    const availableFields = new Set(current.fields.map((field) => field.field));
+    const acceptedFields = request.decision === "accepted"
+      ? request.acceptedFields ?? current.fields.map((field) => field.field)
+      : [];
+    if (acceptedFields.some((field) => !availableFields.has(field))) {
+      throw new Error("Metadata review includes a field that is not part of the proposal.");
+    }
+    if (request.decision === "accepted" && acceptedFields.length === 0) {
+      throw new Error("Accepting a metadata proposal requires at least one field.");
+    }
+
+    const editedFields = current.fields.map((field) => ({
+      ...field,
+      proposedValue: field.field in request.edits
+        ? request.edits[field.field] as MetadataFieldValue
+        : field.proposedValue
+    }));
+    if (request.decision === "accepted") {
+      const patch = Object.fromEntries(
+        editedFields
+          .filter((field) => acceptedFields.includes(field.field))
+          .map((field) => [field.field, field.proposedValue])
+      );
+      this.updatePaperMetadata(paperId, patch);
+    }
+
+    const reviewedAt = nowIso();
+    const reviewed = MetadataProposalSchema.parse({
+      ...current,
+      fields: editedFields,
+      status: request.decision,
+      appliedFields: acceptedFields,
+      reviewedAt,
+      updatedAt: reviewedAt
+    });
+    writeJson(this.resolve(`library/papers/${paperId}/proposals/metadata/${proposalId}.json`), reviewed);
     return reviewed;
   }
 

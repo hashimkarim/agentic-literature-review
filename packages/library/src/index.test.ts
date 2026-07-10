@@ -215,6 +215,57 @@ describe("LitAgentRepository", () => {
     expect(repo.listRelevanceProposals(project.id, { paperId: imported.paper.id })).toHaveLength(2);
   });
 
+  it("applies only accepted metadata proposal fields", () => {
+    const repo = tempRepo();
+    const imported = repo.importPaper({
+      sourcePath: fixturePdf(1),
+      metadata: { title: "Unverified title", authors: [], tags: ["existing"] }
+    });
+    const proposal = repo.createMetadataProposal({
+      runId: "run_metadata",
+      paperId: imported.paper.id,
+      fields: [
+        {
+          field: "title",
+          currentValue: "Unverified title",
+          proposedValue: "Verified Paper Title",
+          confidence: 0.95,
+          rationale: "The title appears in the document heading.",
+          evidence: []
+        },
+        {
+          field: "year",
+          currentValue: null,
+          proposedValue: 2025,
+          confidence: 0.8,
+          rationale: "The publication year appears in the front matter.",
+          evidence: []
+        },
+        {
+          field: "tags",
+          currentValue: ["existing"],
+          proposedValue: ["metadata", "review"],
+          confidence: 0.7,
+          rationale: "These topics are discussed in the paper.",
+          evidence: []
+        }
+      ],
+      providerId: "codex"
+    });
+
+    const reviewed = repo.reviewMetadataProposal(imported.paper.id, proposal.id, {
+      decision: "accepted",
+      acceptedFields: ["title", "tags"],
+      edits: { title: "Edited Verified Title" }
+    });
+    const paper = repo.readPaper(imported.paper.id);
+
+    expect(reviewed).toMatchObject({ status: "accepted", appliedFields: ["title", "tags"] });
+    expect(paper?.title).toBe("Edited Verified Title");
+    expect(paper?.year).toBeNull();
+    expect(paper?.tags).toEqual(expect.arrayContaining(["existing", "metadata", "review"]));
+  });
+
   it("stores annotations and keeps note backlinks in sync", () => {
     const repo = tempRepo();
     const project = repo.createProject({ name: "Annotation Project" });

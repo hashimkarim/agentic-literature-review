@@ -294,6 +294,96 @@ describe("relevance proposals", () => {
   });
 });
 
+describe("metadata proposals", () => {
+  it("stages inferred metadata without changing the canonical paper", () => {
+    const repo = makeRepo();
+    const imported = repo.importPaper({ metadata: { title: "Imported filename" } });
+    repo.writeMarkdown(
+      imported.paper.id,
+      "# Verified Research Title\n\nPublished in 2025. DOI: 10.1234/example.paper\n\n## Abstract\n\nA metadata extraction example."
+    );
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+
+    const run = engine.startWorkflow({
+      type: "metadata-extraction",
+      projectId: null,
+      paperIds: [imported.paper.id],
+      collectionIds: [],
+      query: null,
+      options: {},
+      providerId: "local-heuristic",
+      model: null
+    });
+    const proposals = repo.listMetadataProposals(imported.paper.id);
+
+    expect(run.status).toBe("completed");
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.fields.map((field) => field.field)).toEqual(expect.arrayContaining(["title", "doi", "year"]));
+    expect(repo.readPaper(imported.paper.id)).toMatchObject({ title: "Imported filename", doi: null, year: null });
+    index.close();
+  });
+
+  it("turns structured provider metadata into field-level proposals", async () => {
+    const repo = makeRepo();
+    const imported = repo.importPaper({ metadata: { title: "Provider Metadata Paper" } });
+    const { passages } = repo.writeMarkdown(imported.paper.id, "# Provider Metadata Paper\n\nAda Example authored this paper in 2024.");
+    const providerOutput = JSON.stringify({
+      proposals: [{
+        paperId: imported.paper.id,
+        fields: [{
+          field: "authors",
+          proposedValue: ["Ada Example"],
+          confidence: 0.91,
+          rationale: "The author is named in the front matter.",
+          evidencePassageIds: [passages[0]?.id]
+        }]
+      }]
+    });
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-metadata",
+      label: "Fake Metadata Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
+      promptDelivery: "stdin"
+    };
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+    const run = engine.startWorkflow({
+      type: "metadata-extraction",
+      projectId: null,
+      paperIds: [imported.paper.id],
+      collectionIds: [],
+      query: null,
+      options: {},
+      providerId: fakeProvider.id,
+      model: null
+    });
+
+    let completed = engine.readRun(run.id).run;
+    for (let attempt = 0; attempt < 100 && completed.status === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      completed = engine.readRun(run.id).run;
+    }
+    const proposals = repo.listMetadataProposals(imported.paper.id);
+
+    expect(completed.status).toBe("completed");
+    expect(proposals[0]).toMatchObject({ providerId: fakeProvider.id, status: "pending" });
+    expect(proposals[0]?.fields[0]).toMatchObject({ field: "authors", proposedValue: ["Ada Example"] });
+    expect(proposals[0]?.fields[0]?.evidence[0]?.passageId).toBe(passages[0]?.id);
+    expect(repo.readPaper(imported.paper.id)?.authors).toEqual([]);
+    index.close();
+  });
+});
+
 describe("RAG question answering", () => {
   it("answers with scoped evidence refs and diagnostics", () => {
     const repo = makeRepo();

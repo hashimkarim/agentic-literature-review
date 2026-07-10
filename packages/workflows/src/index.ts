@@ -9,6 +9,8 @@ import { z } from "zod";
 import { AgentHarness, AgentProviderCatalog, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
 import {
   EvidenceRefSchema,
+  MetadataFieldNameSchema,
+  MetadataFieldValueSchema,
   NormalizedRunEventSchema,
   QaRequestSchema,
   QaResponseSchema,
@@ -18,6 +20,8 @@ import {
   WorkflowRunSchema,
   WorkflowTypeSchema,
   type EvidenceRef,
+  type MetadataFieldName,
+  type MetadataFieldProposal,
   type NormalizedRunEvent,
   type Paper,
   type QaRequest,
@@ -57,6 +61,21 @@ const ProviderRelevanceProposalSchema = z.object({
 
 const ProviderRelevanceResultSchema = z.object({
   proposals: z.array(ProviderRelevanceProposalSchema).min(1)
+});
+
+const ProviderMetadataFieldSchema = z.object({
+  field: MetadataFieldNameSchema,
+  proposedValue: MetadataFieldValueSchema,
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().min(1),
+  evidencePassageIds: z.array(z.string()).default([])
+});
+
+const ProviderMetadataResultSchema = z.object({
+  proposals: z.array(z.object({
+    paperId: z.string(),
+    fields: z.array(ProviderMetadataFieldSchema).default([])
+  })).min(1)
 });
 
 function parseProviderJson(text: string): unknown {
@@ -482,22 +501,44 @@ function qaThreadId(input: QaThreadRequestInput): string {
   return `qa_${hash}`;
 }
 
-function metadataPatchFor(paper: Paper): Record<string, unknown> {
-  return {
-    paperId: paper.id,
-    proposed: {
-      title: paper.title,
-      authors: paper.authors,
-      year: paper.year,
-      tags: paper.tags,
-      missing: {
-        doi: !paper.doi,
-        arxivId: !paper.arxivId,
-        zoteroKey: !paper.zoteroKey
-      }
-    },
-    status: "proposal"
-  };
+function paperMetadataValue(paper: Paper, field: MetadataFieldName) {
+  return paper[field];
+}
+
+function metadataValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function inferMetadataFields(paper: Paper, markdown: string): Array<{
+  field: MetadataFieldName;
+  proposedValue: string | number | string[] | null;
+  confidence: number;
+  rationale: string;
+}> {
+  const frontMatter = markdown.slice(0, 6000);
+  const fields: ReturnType<typeof inferMetadataFields> = [];
+  const heading = frontMatter.match(/^#\s+(.+)$/m)?.[1]?.replace(/<[^>]+>/g, "").trim();
+  if (heading && heading.length > 4 && !metadataValuesEqual(heading, paper.title)) {
+    fields.push({
+      field: "title",
+      proposedValue: heading,
+      confidence: 0.72,
+      rationale: "The first level-one Markdown heading differs from the canonical title."
+    });
+  }
+  const doi = frontMatter.match(/\b10\.\d{4,9}\/[-._;()/:a-z0-9]+/i)?.[0]?.replace(/[.,;)]+$/g, "") ?? null;
+  if (doi && doi.toLowerCase() !== paper.doi?.toLowerCase()) {
+    fields.push({ field: "doi", proposedValue: doi, confidence: 0.86, rationale: "A DOI-shaped identifier appears in the document front matter." });
+  }
+  const arxivId = frontMatter.match(/(?:arxiv\s*:\s*)?(\d{4}\.\d{4,5})(?:v\d+)?/i)?.[1] ?? null;
+  if (arxivId && arxivId !== paper.arxivId) {
+    fields.push({ field: "arxivId", proposedValue: arxivId, confidence: 0.82, rationale: "An arXiv identifier appears in the document front matter." });
+  }
+  const year = Number(frontMatter.match(/\b(19|20)\d{2}\b/)?.[0] ?? 0) || null;
+  if (year && year !== paper.year) {
+    fields.push({ field: "year", proposedValue: year, confidence: 0.58, rationale: "A likely publication year appears in the document front matter." });
+  }
+  return fields;
 }
 
 function ensureMarkdownFallback(repo: LitAgentRepository, paper: Paper): string {
@@ -1860,6 +1901,22 @@ export class WorkflowEngine {
             })
           );
         }
+      } else if (request.type === "metadata-extraction") {
+        try {
+          proposalIds = this.createProviderMetadataProposals(request, run.id, finalText, absoluteEventsPath);
+        } catch (error) {
+          status = "failed";
+          appendEvent(
+            absoluteEventsPath,
+            event({
+              runId: run.id,
+              providerId: request.providerId,
+              type: "run.failed",
+              message: error instanceof Error ? error.message : String(error),
+              payload: { failureClass: "invalid_workflow_output" }
+            })
+          );
+        }
       }
       const outputPath = this.writeProjectOutput(
         request.projectId,
@@ -1976,6 +2033,92 @@ export class WorkflowEngine {
     });
   }
 
+  private createProviderMetadataProposals(
+    request: WorkflowStartRequest,
+    runId: string,
+    providerText: string,
+    absoluteEventsPath: string
+  ): string[] {
+    const papers = collectPapers(this.repo, request);
+    const paperById = new Map(papers.map((paper) => [paper.id, paper]));
+    const parsed = ProviderMetadataResultSchema.parse(parseProviderJson(providerText));
+    const proposalByPaper = new Map(parsed.proposals.map((proposal) => [proposal.paperId, proposal]));
+    const missingPaperIds = papers.filter((paper) => !proposalByPaper.has(paper.id)).map((paper) => paper.id);
+    if (missingPaperIds.length > 0) {
+      throw new Error(`Provider omitted metadata proposals for: ${missingPaperIds.join(", ")}`);
+    }
+    for (const proposal of parsed.proposals) {
+      if (!paperById.has(proposal.paperId)) {
+        throw new Error(`Provider returned an out-of-scope paper id: ${proposal.paperId}`);
+      }
+    }
+
+    return parsed.proposals.flatMap((candidate) => {
+      const paper = paperById.get(candidate.paperId);
+      if (!paper) throw new Error(`Paper not found in workflow scope: ${candidate.paperId}`);
+      const passageById = new Map(this.repo.readPassages(paper.id).map((passage) => [passage.id, passage]));
+      const fields: MetadataFieldProposal[] = candidate.fields
+        .filter((field) => !metadataValuesEqual(paperMetadataValue(paper, field.field), field.proposedValue))
+        .map((field) => {
+          let evidence = field.evidencePassageIds.flatMap((passageId) => {
+            const passage = passageById.get(passageId);
+            return passage ? [{
+              paperId: paper.id,
+              passageId: passage.id,
+              page: passage.page,
+              paperTitle: paper.title,
+              section: passage.section,
+              quote: passage.quote,
+              confidence: field.confidence
+            }] : [];
+          });
+          if (evidence.length === 0) {
+            evidence = buildEvidence(
+              this.index.search(this.repo, {
+                query: `${field.field} ${Array.isArray(field.proposedValue) ? field.proposedValue.join(" ") : String(field.proposedValue ?? "")}`,
+                projectId: request.projectId,
+                paperId: paper.id,
+                limit: 2
+              }),
+              2
+            );
+          }
+          return {
+            field: field.field,
+            currentValue: paperMetadataValue(paper, field.field),
+            proposedValue: field.proposedValue,
+            confidence: evidence.length ? field.confidence : Math.min(field.confidence, 0.35),
+            rationale: evidence.length ? field.rationale : `${field.rationale} No exact supporting passage was linked.`,
+            evidence
+          };
+        });
+      if (fields.length === 0) return [];
+      const proposal = this.repo.createMetadataProposal({
+        runId,
+        projectId: request.projectId,
+        paperId: paper.id,
+        fields,
+        providerId: request.providerId,
+        model: request.model
+      });
+      for (const field of proposal.fields) {
+        for (const item of field.evidence) {
+          appendEvent(
+            absoluteEventsPath,
+            event({
+              runId,
+              providerId: request.providerId,
+              type: "evidence.found",
+              message: `${field.field}: ${item.quote}`,
+              payload: { ...item, metadataField: field.field }
+            })
+          );
+        }
+      }
+      return [proposal.id];
+    });
+  }
+
   private buildAgentPrompt(request: WorkflowStartRequest, runId: string): string {
     const papers = collectPapers(this.repo, request);
     const project = request.projectId ? this.repo.readProject(request.projectId) : null;
@@ -2014,6 +2157,24 @@ export class WorkflowEngine {
         `Workflow run id: ${runId}`,
         `Project: ${project?.name ?? "global library"}`,
         `Research question: ${request.query ?? researchQuestions[0] ?? "none supplied"}`,
+        "",
+        "Selected paper context:",
+        paperContext || "No papers are selected."
+      ].join("\n");
+    }
+    if (request.type === "metadata-extraction") {
+      return [
+        "You are LitAgent extracting canonical bibliographic metadata from research papers.",
+        "Use only the supplied paper metadata, passages, and Markdown excerpts.",
+        "Return only fields that should change. Do not invent missing values and do not modify files.",
+        "Every proposed value should cite supplied passage ids when the value appears in a passage.",
+        "Return one proposal object for every selected paper, even when its fields array is empty.",
+        "Return only JSON with no Markdown fence or commentary.",
+        "Schema: {\"proposals\":[{\"paperId\":\"...\",\"fields\":[{\"field\":\"title|authors|year|doi|arxivId|zoteroKey|tags\",\"proposedValue\":\"string, integer, string array, or null\",\"confidence\":0.0,\"rationale\":\"...\",\"evidencePassageIds\":[\"...\"]}]}]}",
+        "authors and tags must be string arrays; year must be an integer; nullable identifiers may be strings or null.",
+        "",
+        `Workflow run id: ${runId}`,
+        `Project: ${project?.name ?? "global library"}`,
         "",
         "Selected paper context:",
         paperContext || "No papers are selected."
@@ -2215,13 +2376,74 @@ export class WorkflowEngine {
         return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
       }
       case "metadata-extraction": {
-        const patches = papers.map(metadataPatchFor);
-        for (const patch of patches) {
-          const paperId = String(patch.paperId);
-          const patchPath = this.repo.resolve(`library/papers/${paperId}/metadata.patch.json`);
-          fs.writeFileSync(patchPath, `${JSON.stringify(patch, null, 2)}\n`, "utf8");
-        }
-        return { patches };
+        const proposals = papers.flatMap((paper) => {
+          const inferred = inferMetadataFields(paper, this.repo.readMarkdown(paper.id) ?? "");
+          const fields: MetadataFieldProposal[] = inferred.map((field) => {
+            const queryValue = Array.isArray(field.proposedValue) ? field.proposedValue.join(" ") : String(field.proposedValue ?? "");
+            const evidence = buildEvidence(
+              this.index.search(this.repo, {
+                query: queryValue,
+                projectId: request.projectId,
+                paperId: paper.id,
+                limit: 2
+              }),
+              2
+            );
+            return {
+              field: field.field,
+              currentValue: paperMetadataValue(paper, field.field),
+              proposedValue: field.proposedValue,
+              confidence: evidence.length ? field.confidence : Math.min(field.confidence, 0.35),
+              rationale: evidence.length ? field.rationale : `${field.rationale} No exact supporting passage was linked.`,
+              evidence
+            };
+          });
+          if (fields.length === 0) return [];
+          const proposal = this.repo.createMetadataProposal({
+            runId,
+            projectId: request.projectId,
+            paperId: paper.id,
+            fields,
+            providerId: request.providerId,
+            model: request.model
+          });
+          for (const field of proposal.fields) {
+            for (const item of field.evidence) {
+              appendEvent(
+                absoluteEventsPath,
+                event({
+                  runId,
+                  providerId: request.providerId,
+                  type: "evidence.found",
+                  message: `${field.field}: ${item.quote}`,
+                  payload: { ...item, metadataField: field.field }
+                })
+              );
+            }
+          }
+          return [proposal];
+        });
+        const outputPath = this.writeProjectOutput(
+          request.projectId,
+          `metadata-${slugify(runId)}.md`,
+          [
+            "# Metadata Proposals",
+            "",
+            "These field changes do not update canonical paper metadata until they are accepted.",
+            "",
+            ...(proposals.length
+              ? proposals.flatMap((proposal) => {
+                  const paper = this.repo.readPaper(proposal.paperId);
+                  return [
+                    `## ${paper?.title ?? proposal.paperId}`,
+                    ...proposal.fields.map((field) => `- **${field.field}**: ${JSON.stringify(field.currentValue)} -> ${JSON.stringify(field.proposedValue)} (${field.confidence.toFixed(2)})`),
+                    ""
+                  ];
+                })
+              : ["No metadata changes were detected in the selected sources."])
+          ].join("\n")
+        );
+        return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
       }
       case "ask-with-citations": {
         const qa = this.answerQuestion({

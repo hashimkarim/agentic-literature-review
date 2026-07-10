@@ -5,9 +5,11 @@ import type {
   PaperProjectLink,
   Passage,
   Project,
+  MetadataProposal,
   QaResponse,
   QaThread,
   RelevanceProposal,
+  ReviewMetadataProposalRequest,
   ReviewRelevanceProposalRequest,
   CitationTarget,
   SearchResult,
@@ -138,6 +140,17 @@ export const api = {
   reviewRelevanceProposal: (projectId: string, proposalId: string, body: ReviewRelevanceProposalRequest) =>
     request<RelevanceProposal>(
       `/api/projects/${encodeURIComponent(projectId)}/relevance-proposals/${encodeURIComponent(proposalId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }
+    ),
+  metadataProposals: (paperId: string) =>
+    request<MetadataProposal[]>(`/api/papers/${encodeURIComponent(paperId)}/metadata-proposals`),
+  reviewMetadataProposal: (paperId: string, proposalId: string, body: ReviewMetadataProposalRequest) =>
+    request<MetadataProposal>(
+      `/api/papers/${encodeURIComponent(paperId)}/metadata-proposals/${encodeURIComponent(proposalId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

@@ -18,6 +18,7 @@ import {
   ProposalReviewStatusSchema,
   QaRequestSchema,
   QaThreadRequestSchema,
+  ReviewMetadataProposalRequestSchema,
   ReviewRelevanceProposalRequestSchema,
   SearchRequestSchema,
   UpdateAnnotationRequestSchema,
@@ -421,6 +422,28 @@ app.post(
   asyncHandler((req, res) => {
     const link = repo.linkPaperToProject(routeParam(req, "id"), LinkPaperRequestSchema.parse(req.body));
     res.status(201).json(link);
+  })
+);
+
+app.get(
+  "/api/papers/:id/metadata-proposals",
+  asyncHandler((req, res) => {
+    const statusValue = queryString(req, "status");
+    const status = statusValue ? ProposalReviewStatusSchema.parse(statusValue) : null;
+    res.json(repo.listMetadataProposals(routeParam(req, "id"), { status }));
+  })
+);
+
+app.patch(
+  "/api/papers/:id/metadata-proposals/:proposalId",
+  asyncHandler((req, res) => {
+    res.json(
+      repo.reviewMetadataProposal(
+        routeParam(req, "id"),
+        routeParam(req, "proposalId"),
+        ReviewMetadataProposalRequestSchema.parse(req.body)
+      )
+    );
   })
 );
 
