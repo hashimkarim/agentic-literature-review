@@ -70,6 +70,16 @@ interface UiProject {
   raw: Project | null;
 }
 
+interface QaRequestState {
+  question: string;
+  projectId: string | null;
+  paperId: string | null;
+}
+
+interface QaErrorState extends QaRequestState {
+  message: string;
+}
+
 const iconAliases: Record<string, string> = {
   "library-big": "LibraryBig",
   "folder-kanban": "FolderKanban",
@@ -425,6 +435,12 @@ function formatBytes(bytes: number): string {
   return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
+function formatChatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>(() => (localStorage.getItem("la-screen") as Screen | null) ?? "projects");
   const [theme, setThemeState] = useState(() => localStorage.getItem("la-theme") || "comfy");
@@ -445,6 +461,8 @@ function App() {
   const [passages, setPassages] = useState<Passage[]>([]);
   const [qa, setQa] = useState<QaResponse | null>(null);
   const [qaThread, setQaThread] = useState<QaThread | null>(null);
+  const [qaPending, setQaPending] = useState<QaRequestState | null>(null);
+  const [qaError, setQaError] = useState<QaErrorState | null>(null);
   const [relevanceProposals, setRelevanceProposals] = useState<RelevanceProposal[]>([]);
   const [metadataProposals, setMetadataProposals] = useState<MetadataProposal[]>([]);
   const [researchFindingProposals, setResearchFindingProposals] = useState<ResearchFindingProposal[]>([]);
@@ -846,24 +864,51 @@ function App() {
   }, [activeProjectId, loadQaThread]);
 
   const askQuestion = useCallback(
-    (question: string, scopeProjectId: string | null, paperId: string | null) => {
-      startTransition(() => {
-        void api
-          .qa({
-            question,
-            projectId: scopeProjectId,
-            paperId,
-            providerId: selectedProviderId,
-            model: selectedModel
-          })
-          .then(async (response) => {
-            setQa(response);
-            setQaThread(await api.qaThread({ projectId: scopeProjectId, paperId }));
-          });
-      });
+    async (question: string, scopeProjectId: string | null, paperId: string | null) => {
+      const requestState = { question, projectId: scopeProjectId, paperId };
+      setQaPending(requestState);
+      setQaError(null);
+      try {
+        const response = await api.qa({
+          question,
+          projectId: scopeProjectId,
+          paperId,
+          providerId: selectedProviderId,
+          model: selectedModel
+        });
+        setQa(response);
+        setQaThread(await api.qaThread({ projectId: scopeProjectId, paperId }));
+        return true;
+      } catch (error) {
+        setQaError({
+          ...requestState,
+          message: error instanceof Error ? error.message : "The selected provider could not answer this question."
+        });
+        return false;
+      } finally {
+        setQaPending(null);
+      }
     },
     [selectedModel, selectedProviderId]
   );
+
+  const clearQaThread = useCallback(async (scopeProjectId: string | null, paperId: string | null) => {
+    setQaError(null);
+    try {
+      const thread = await api.clearQaThread({ projectId: scopeProjectId, paperId });
+      setQaThread(thread);
+      setQa(null);
+      return true;
+    } catch (error) {
+      setQaError({
+        question: "",
+        projectId: scopeProjectId,
+        paperId,
+        message: error instanceof Error ? error.message : "The conversation could not be archived."
+      });
+      return false;
+    }
+  }, []);
 
   const updateProvider = useCallback(
     (providerId: string, patch: { enabled?: boolean; command?: string; defaultModel?: string | null; customModels?: string[] }) => {
@@ -1007,6 +1052,8 @@ function App() {
             passages={passages}
             qa={qa}
             qaThread={qaThread}
+            qaPending={qaPending}
+            qaError={qaError}
             relevanceProposals={[]}
             onReviewRelevanceProposal={reviewRelevanceProposal}
             metadataProposals={metadataProposals}
@@ -1025,6 +1072,7 @@ function App() {
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, null, paperId)}
             onLoadQaThread={loadLibraryQaThread}
+            onClearQaThread={(paperId) => clearQaThread(null, paperId)}
             onConvert={convertPaper}
             onImportPapers={openImportPicker}
             onOpenCitation={openCitation}
@@ -1054,6 +1102,8 @@ function App() {
             passages={passages}
             qa={qa}
             qaThread={qaThread}
+            qaPending={qaPending}
+            qaError={qaError}
             relevanceProposals={relevanceProposals}
             onReviewRelevanceProposal={reviewRelevanceProposal}
             metadataProposals={metadataProposals}
@@ -1072,6 +1122,7 @@ function App() {
             onCancelWorkflow={cancelWorkflow}
             onAsk={(question, paperId) => askQuestion(question, activeProjectId, paperId)}
             onLoadQaThread={loadProjectQaThread}
+            onClearQaThread={(paperId) => clearQaThread(activeProjectId, paperId)}
             onConvert={convertPaper}
             onImportPapers={openImportPicker}
             onOpenCitation={openCitation}
@@ -1215,6 +1266,8 @@ interface WorkspaceProps {
   passages: Passage[];
   qa: QaResponse | null;
   qaThread: QaThread | null;
+  qaPending: QaRequestState | null;
+  qaError: QaErrorState | null;
   relevanceProposals: RelevanceProposal[];
   onReviewRelevanceProposal: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
   metadataProposals: MetadataProposal[];
@@ -1231,8 +1284,9 @@ interface WorkspaceProps {
   onRefreshWorkflows: () => void;
   onRunWorkflow: (type: WorkflowType, paperIds?: string[], query?: string | null, options?: Record<string, unknown>) => void;
   onCancelWorkflow: (runId: string) => void;
-  onAsk: (question: string, paperId: string | null) => void;
+  onAsk: (question: string, paperId: string | null) => Promise<boolean>;
   onLoadQaThread: (paperId: string | null) => void;
+  onClearQaThread: (paperId: string | null) => Promise<boolean>;
   onConvert: (paperId: string) => void;
   onImportPapers: (projectId: string | null) => void;
   onOpenCitation: (ref: EvidenceRef, projectId: string | null) => void;
@@ -2501,6 +2555,48 @@ function PaperInspector({
   );
 }
 
+function ChatAnswer({
+  answer,
+  evidence,
+  onOpenEvidence
+}: {
+  answer: string;
+  evidence: EvidenceRef[];
+  onOpenEvidence: (item: EvidenceRef, index: number) => void;
+}) {
+  const linkedAnswer = answer.replace(/\[(\d+)\](?!\()/g, "[$1](#litagent-evidence-$1)");
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a({ href, children }) {
+          const citation = href?.match(/^#litagent-evidence-(\d+)$/);
+          if (citation) {
+            const index = Number(citation[1]) - 1;
+            const item = evidence[index];
+            return item ? (
+              <button
+                type="button"
+                className="la-chatcite"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenEvidence(item, index);
+                }}
+                title={`Open evidence ${index + 1}: ${item.paperTitle || item.paperId}${item.page ? `, page ${item.page}` : ""}`}
+              >
+                {children}
+              </button>
+            ) : <span className="la-chatcite missing">{children}</span>;
+          }
+          return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+        }
+      }}
+    >
+      {linkedAnswer}
+    </ReactMarkdown>
+  );
+}
+
 function AgentPanel({
   selectedPaper,
   contextLabel,
@@ -2514,6 +2610,8 @@ function AgentPanel({
   passages,
   qa,
   qaThread,
+  qaPending,
+  qaError,
   relevanceProposals,
   onReviewRelevanceProposal,
   metadataProposals,
@@ -2526,17 +2624,20 @@ function AgentPanel({
   onJumpPdfAnnotation,
   onDeletePdfAnnotation,
   onClearPdfAnnotations,
-  onRunWorkflow,
   onCancelWorkflow,
   onAsk,
   onLoadQaThread,
+  onClearQaThread,
   onOpenCitation
 }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
   const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
   const [input, setInput] = useState("");
   const [qaScope, setQaScope] = useState<"paper" | "context">("paper");
   const [activeQaMessageId, setActiveQaMessageId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [clearingThread, setClearingThread] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     setQaScope(selectedPaper ? "paper" : "context");
   }, [selectedPaper?.id]);
@@ -2548,10 +2649,57 @@ function AgentPanel({
     onLoadQaThread(askPaperId);
   }, [askPaperId, onLoadQaThread]);
   const assistantMessages = qaThread?.messages.filter((message) => message.role === "assistant" && message.response) ?? [];
+  const qaPendingHere = qaPending?.projectId === scopeProjectId && qaPending.paperId === askPaperId ? qaPending : null;
+  const qaErrorHere = qaError?.projectId === scopeProjectId && qaError.paperId === askPaperId ? qaError : null;
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
+  const providerLabel = selectedProvider?.label ?? selectedProviderId;
+  const promptSuggestions = effectiveQaScope === "paper"
+    ? [
+        "Summarize the paper's main contribution.",
+        "Which methods and datasets are used?",
+        "What limitations do the authors report?"
+      ]
+    : [
+        "Compare the main findings across these papers.",
+        "Where do the selected sources disagree?",
+        "What evidence best answers the research question?"
+      ];
   useEffect(() => {
     const latest = assistantMessages.at(-1);
     setActiveQaMessageId((current) => current && assistantMessages.some((message) => message.id === current) ? current : latest?.id ?? null);
   }, [assistantMessages.map((message) => message.id).join(":")]);
+  const qaMessageSignature = qaThread?.messages.map((message) => message.id).join(":") ?? "";
+  useEffect(() => {
+    const scrollRoot = chatScrollRef.current;
+    if (!scrollRoot) return;
+    const frame = requestAnimationFrame(() => {
+      scrollRoot.scrollTop = scrollRoot.scrollHeight;
+    });
+    const settleTimer = window.setTimeout(() => {
+      scrollRoot.scrollTop = scrollRoot.scrollHeight;
+    }, 80);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(settleTimer);
+    };
+  }, [qaMessageSignature, qaThread?.updatedAt, qaPendingHere?.question, qaErrorHere?.message]);
+  const submitQuestion = async (question = input) => {
+    const trimmed = question.trim();
+    if (!trimmed || qaPendingHere) return;
+    setInput("");
+    const answered = await onAsk(trimmed, askPaperId);
+    if (!answered) setInput((current) => current || trimmed);
+  };
+  const startNewChat = async () => {
+    if (clearingThread || qaPendingHere) return;
+    setClearingThread(true);
+    const cleared = await onClearQaThread(askPaperId);
+    if (cleared) {
+      setActiveQaMessageId(null);
+      setCopiedMessageId(null);
+    }
+    setClearingThread(false);
+  };
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
   const activeQaMessage = assistantMessages.find((message) => message.id === activeQaMessageId) ?? assistantMessages.at(-1) ?? null;
   const activeQa = activeQaMessage?.response ?? qa;
@@ -2619,61 +2767,145 @@ function AgentPanel({
       ) : null}
       {tab === "ask" ? (
         <>
-          <div className="la-agentbody fade-in" style={{ display: "flex", flexDirection: "column" }}>
-            <div className="la-sectionlabel" style={{ paddingBottom: 0 }}>Workflows</div>
-            <div className="la-wfgrid">
-              {workflowRecipes.slice(0, 8).map((recipe) => (
-                <button key={recipe.type} type="button" className="la-wfbtn" onClick={() => onRunWorkflow(recipe.type, selectedPaper ? [selectedPaper.id] : [], null)} title={recipe.desc}>
-                  <Icon name={recipe.icon} size={15} />
-                  <span>{recipe.name}</span>
-                </button>
-              ))}
+          <div className="la-agentbody la-chatbody fade-in" ref={chatScrollRef}>
+            <div className="la-chathead">
+              <div className="la-chathead-copy">
+                <strong>{qaThread?.title ?? `${contextLabel} Q&A`}</strong>
+                <span>{qaThread?.messages.length ? `${assistantMessages.length} answer${assistantMessages.length === 1 ? "" : "s"}` : `Ask across ${qaScopeLabel.toLowerCase()}`}</span>
+              </div>
+              <button
+                type="button"
+                className="la-iconbtn"
+                onClick={() => void startNewChat()}
+                disabled={clearingThread || Boolean(qaPendingHere) || !qaThread?.messages.length}
+                title="Archive this conversation and start a new chat"
+              >
+                <Icon name={clearingThread ? "loader-circle" : "message-square-plus"} size={15} className={clearingThread ? "spin" : ""} />
+              </button>
             </div>
-            <div className="la-sectionlabel">Cited Q&A · {contextLabel}</div>
-            <div className="la-qa">
+            <div className="la-chatthread">
               {qaThread?.messages.length ? (
                 qaThread.messages.map((message) => {
                   if (message.role === "user") {
-                    return <div key={message.id} className="la-qmsg">{message.content}</div>;
+                    return (
+                      <article key={message.id} className="la-chatmessage user">
+                        <div className="la-chatmessage-meta"><span>You</span><time>{formatChatTime(message.createdAt)}</time></div>
+                        <div className="la-qmsg">{message.content}</div>
+                      </article>
+                    );
                   }
                   const response = message.response;
                   if (!response) return null;
                   const isActive = activeQaMessage?.id === message.id;
                   return (
-                    <div
+                    <article
                       key={message.id}
                       className={`la-amsg${response.status === "not_found" ? " notfound" : ""}${isActive ? " active" : ""}`}
                       onClick={() => setActiveQaMessageId(message.id)}
                       title="Use this answer's evidence stack"
                     >
+                      <div className="la-chatmessage-meta assistant">
+                        <span><Icon name="sparkles" size={12} /> LitAgent</span>
+                        <time>{formatChatTime(message.createdAt)}</time>
+                      </div>
                       <div className="la-qameta">
                         <span className={`qa-status ${response.status}`}>{response.status === "not_found" ? "Not found" : "Answered"}</span>
-                        <span>{response.scope.type}</span>
-                        <span>{response.diagnostics.evidenceCount} evidence</span>
-                        <span>{response.diagnostics.contextMode === "markdown-context" ? `${Math.round(response.diagnostics.contextChars / 1000)}k Markdown` : `${response.diagnostics.retrievedCount} retrieved`}</span>
+                        <span>{response.scope.type} scope</span>
                       </div>
-                      <div className="la-qaanswer">{response.answer}</div>
-                      {response.evidence.map((item, index) => (
-                        <span
-                          key={`${message.id}-${item.paperId}-${item.passageId}`}
-                          className="cite"
-                          onClick={(event) => {
-                            event.stopPropagation();
+                      <div className="la-qaanswer">
+                        <ChatAnswer
+                          answer={response.answer}
+                          evidence={response.evidence}
+                          onOpenEvidence={(item) => {
                             setActiveQaMessageId(message.id);
                             setTab("evidence");
                             onOpenCitation(item, scopeProjectId);
                           }}
+                        />
+                      </div>
+                      {response.evidence.length ? (
+                        <div className="la-chat-sources" aria-label={`${response.evidence.length} supporting sources`}>
+                          {response.evidence.map((item, index) => (
+                            <button
+                              key={`${message.id}-${item.paperId}-${item.passageId}`}
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setActiveQaMessageId(message.id);
+                                setTab("evidence");
+                                onOpenCitation(item, scopeProjectId);
+                              }}
+                              title={item.paperTitle || item.paperId}
+                            >
+                              <span>{index + 1}</span>
+                              <span>{item.paperTitle || item.section || "Source passage"}</span>
+                              {item.page ? <span>p.{item.page}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="la-chat-actions">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void navigator.clipboard.writeText(response.answer).then(() => {
+                              setCopiedMessageId(message.id);
+                              window.setTimeout(() => setCopiedMessageId((current) => current === message.id ? null : current), 1600);
+                            });
+                          }}
+                          title="Copy answer"
                         >
-                          {index + 1}
-                        </span>
-                      ))}
-                      <div className="la-qadiag">{response.diagnostics.message}</div>
-                    </div>
+                          <Icon name={copiedMessageId === message.id ? "check" : "copy"} size={12} />
+                          {copiedMessageId === message.id ? "Copied" : "Copy"}
+                        </button>
+                        {response.evidence.length ? (
+                          <button type="button" onClick={(event) => { event.stopPropagation(); setActiveQaMessageId(message.id); setTab("evidence"); }}>
+                            <Icon name="library-big" size={12} /> Evidence {response.evidence.length}
+                          </button>
+                        ) : null}
+                        <details className="la-chat-diagnostics" onClick={(event) => event.stopPropagation()}>
+                          <summary title="Answer details"><Icon name="info" size={12} /></summary>
+                          <div>{response.diagnostics.message}</div>
+                        </details>
+                      </div>
+                    </article>
                   );
                 })
               ) : (
-                <div className="la-amsg notfound">Ask a question. LitAgent uses the scoped Markdown context first, then attaches linked supporting evidence to the answer.</div>
+                <div className="la-chatempty">
+                  <span className="la-chatempty-icon"><Icon name="messages-square" size={20} /></span>
+                  <strong>Ask the literature</strong>
+                  <p>Answers use the selected Markdown sources and link supporting passages back to the paper.</p>
+                  <div className="la-chatprompts">
+                    {promptSuggestions.map((prompt) => (
+                      <button key={prompt} type="button" onClick={() => void submitQuestion(prompt)} disabled={Boolean(qaPendingHere)}>
+                        <span>{prompt}</span><Icon name="arrow-up-right" size={12} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
+              {qaPendingHere ? (
+                <>
+                  <article className="la-chatmessage user pending">
+                    <div className="la-chatmessage-meta"><span>You</span><span>Sending</span></div>
+                    <div className="la-qmsg">{qaPendingHere.question}</div>
+                  </article>
+                  <article className="la-amsg la-chatthinking" aria-live="polite">
+                    <div className="la-chatmessage-meta assistant"><span><Icon name="sparkles" size={12} /> LitAgent</span></div>
+                    <div className="la-thinkingdots"><span /><span /><span /></div>
+                    <p>{providerLabel} is reading the selected Markdown and linking evidence...</p>
+                  </article>
+                </>
+              ) : null}
+              {qaErrorHere ? (
+                <div className="la-chaterror" role="alert">
+                  <Icon name="alert-circle" size={15} />
+                  <div><strong>Answer failed</strong><span>{qaErrorHere.message}</span></div>
+                  {qaErrorHere.question ? <button type="button" onClick={() => void submitQuestion(qaErrorHere.question)}>Retry</button> : null}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="la-qabar">
@@ -2698,25 +2930,28 @@ function AgentPanel({
                 {contextScopeLabel}
               </button>
             </div>
-            <div className="la-field">
-              <Icon name="message-square" size={15} />
-              <input
+            <div className={`la-chatcomposer${qaPendingHere ? " pending" : ""}`}>
+              <textarea
                 value={input}
                 onChange={(event) => setInput(event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && input.trim()) {
-                    onAsk(input.trim(), askPaperId);
-                    setInput("");
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submitQuestion();
                   }
                 }}
-                placeholder="Ask a question - answers are cited..."
+                placeholder={`Ask ${qaScopeLabel.toLowerCase()}...`}
+                rows={Math.min(5, Math.max(1, input.split("\n").length, Math.ceil(input.length / 36)))}
+                disabled={Boolean(qaPendingHere)}
+                aria-label="Question"
               />
-              <button type="button" className="la-iconbtn" onClick={() => { if (input.trim()) { onAsk(input.trim(), askPaperId); setInput(""); } }} style={{ color: "var(--accent-bright)" }}>
-                <Icon name="send" size={15} />
+              <button type="button" className="la-chat-send" onClick={() => void submitQuestion()} disabled={!input.trim() || Boolean(qaPendingHere)} title="Send question">
+                <Icon name={qaPendingHere ? "loader-circle" : "arrow-up"} size={15} className={qaPendingHere ? "spin" : ""} />
               </button>
             </div>
-            <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 6, display: "flex", alignItems: "center", gap: 5 }}>
-              <Icon name="shield-check" size={11} /> Answers cite passages · scope {qaScopeLabel}
+            <div className="la-chatfootnote">
+              <span><Icon name="shield-check" size={11} /> Answers cite source passages</span>
+              <span>Enter to send · Shift+Enter for a new line</span>
             </div>
           </div>
         </>
