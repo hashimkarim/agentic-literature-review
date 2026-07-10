@@ -384,6 +384,119 @@ describe("metadata proposals", () => {
   });
 });
 
+describe("structured research findings", () => {
+  it("stages typed local research items with exact passage evidence", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Research Records" });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Evaluation Paper" }
+    });
+    repo.writeMarkdown(
+      imported.paper.id,
+      [
+        "# Method",
+        "",
+        "The method uses a convolutional model with streaming inference.",
+        "",
+        "## Results",
+        "",
+        "Evaluation accuracy improves by five percentage points on the benchmark dataset.",
+        "",
+        "## Limitations",
+        "",
+        "The evaluation is limited to a single benchmark dataset."
+      ].join("\n")
+    );
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const engine = new WorkflowEngine(repo, index);
+
+    const run = engine.startWorkflow({
+      type: "key-findings",
+      projectId: project.id,
+      paperIds: [imported.paper.id],
+      collectionIds: [],
+      query: null,
+      options: {},
+      providerId: "local-heuristic",
+      model: null
+    });
+    const proposals = repo.listResearchFindingProposals(imported.paper.id);
+
+    expect(run.status).toBe("completed");
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.items.map((item) => item.kind)).toEqual(expect.arrayContaining(["method", "result", "limitation"]));
+    expect(proposals[0]?.items.every((item) => item.evidence.length > 0)).toBe(true);
+    expect(repo.listResearchRecords(imported.paper.id)).toHaveLength(0);
+    index.close();
+  });
+
+  it("validates provider findings and preserves structured attributes", async () => {
+    const repo = makeRepo();
+    const imported = repo.importPaper({ metadata: { title: "Provider Findings" } });
+    const { passages } = repo.writeMarkdown(
+      imported.paper.id,
+      "# Results\n\nThe model reaches 91 percent accuracy on the TestSet benchmark."
+    );
+    const providerOutput = JSON.stringify({
+      proposals: [{
+        paperId: imported.paper.id,
+        items: [{
+          kind: "result",
+          title: "TestSet accuracy",
+          content: "The model reaches 91 percent accuracy on TestSet.",
+          attributes: { metric: "accuracy", value: 91, dataset: "TestSet" },
+          confidence: 0.94,
+          evidencePassageIds: [passages[0]?.id]
+        }]
+      }]
+    });
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-findings",
+      label: "Fake Findings Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
+      promptDelivery: "stdin"
+    };
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+    const run = engine.startWorkflow({
+      type: "key-findings",
+      projectId: null,
+      paperIds: [imported.paper.id],
+      collectionIds: [],
+      query: null,
+      options: {},
+      providerId: fakeProvider.id,
+      model: null
+    });
+
+    let completed = engine.readRun(run.id).run;
+    for (let attempt = 0; attempt < 100 && completed.status === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      completed = engine.readRun(run.id).run;
+    }
+    const proposals = repo.listResearchFindingProposals(imported.paper.id);
+
+    expect(completed.status).toBe("completed");
+    expect(proposals[0]).toMatchObject({ providerId: fakeProvider.id, status: "pending" });
+    expect(proposals[0]?.items[0]).toMatchObject({
+      kind: "result",
+      attributes: { metric: "accuracy", value: 91, dataset: "TestSet" }
+    });
+    expect(proposals[0]?.items[0]?.evidence[0]?.passageId).toBe(passages[0]?.id);
+    index.close();
+  });
+});
+
 describe("RAG question answering", () => {
   it("answers with scoped evidence refs and diagnostics", () => {
     const repo = makeRepo();

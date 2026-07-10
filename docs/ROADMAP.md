@@ -17,7 +17,7 @@ state, tags, collections, notes, questions, and generated research artifacts.
 | Markdown reader | Working | GFM, figures/assets, KaTeX equations, tables, links, algorithm rendering | Editing and side-by-side PDF/Markdown mode |
 | Search and cited Q&A | Working MVP | Scoped FTS, provider-backed Markdown-context answers, persistent chat threads, linked supporting evidence | Anchor-based citation validation and conversation-aware follow-ups |
 | Provider harness | Working MVP | Codex, Claude, Gemini, OpenCode, Copilot and custom CLI discovery/settings, streaming, cancellation, normalized logs | PTY/ACP support, approval prompts, resume and richer model discovery |
-| Agent workflows | Partial | Queue, provider/model selection, conversion, Q&A, workflow artifacts and basic recipes | Structured reviewable outputs for relevance, metadata, findings, comparison and discovery |
+| Agent workflows | Working MVP | Queue, provider/model selection, conversion, Q&A, and reviewable relevance, metadata, findings, methods, datasets, results, limitations, and reproducibility records | Build comparison/synthesis from accepted records and implement discovery |
 | Notes | Backend foundation | Markdown note CRUD and annotation links | Real editor, backlinks, workflow-to-note flow and note search UI |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
@@ -25,20 +25,20 @@ state, tags, collections, notes, questions, and generated research artifacts.
 
 The core reading loop is usable: import a PDF, convert it, read/annotate it,
 ask a provider-backed question, and jump from supporting evidence to the source.
-The app is not feature-complete yet because most research workflows still emit
-generic Markdown transcripts instead of structured, reviewable domain records.
+The app is not feature-complete yet because comparison, synthesis, discovery,
+screening, and note workflows still need to consume the structured records.
 
 ## Ordered Milestones
 
 ### 1. Reviewable Agent Outputs
 
-Status: in progress.
+Status: core record extraction complete; derived artifacts in progress.
 
-- Persist evidence-backed relevance proposals per paper and research question.
-- Accept, edit, or reject a relevance proposal before changing project state.
-- Persist metadata patch proposals with field-level evidence and review actions.
-- Turn findings, methods, datasets, limitations, and reproducibility results into
-  typed records instead of unstructured workflow transcripts.
+- Evidence-backed relevance proposals can be edited, accepted, or rejected before
+  changing project state.
+- Metadata patch proposals support field-level evidence, edits, and partial acceptance.
+- Findings, methods, datasets, results, limitations, and reproducibility details
+  become typed, evidence-backed records only after per-item review.
 - Build comparison and synthesis artifacts from accepted records and evidence.
 
 ### 2. Research Notes And Evidence Ledger

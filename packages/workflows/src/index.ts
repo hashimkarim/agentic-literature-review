@@ -17,6 +17,8 @@ import {
   QaScopeSchema,
   QaThreadRequestSchema,
   QaThreadSchema,
+  ResearchAttributeValueSchema,
+  ResearchRecordKindSchema,
   WorkflowRunSchema,
   WorkflowTypeSchema,
   type EvidenceRef,
@@ -24,12 +26,15 @@ import {
   type MetadataFieldProposal,
   type NormalizedRunEvent,
   type Paper,
+  type Passage,
   type QaRequest,
   type QaRequestInput,
   type QaResponse,
   type QaScope,
   type QaThread,
   type QaThreadRequestInput,
+  type ResearchItem,
+  type ResearchRecordKind,
   type SearchResult,
   type WorkflowRun,
   type WorkflowType
@@ -78,6 +83,22 @@ const ProviderMetadataResultSchema = z.object({
   })).min(1)
 });
 
+const ProviderResearchItemSchema = z.object({
+  kind: ResearchRecordKindSchema,
+  title: z.string().min(1),
+  content: z.string().min(1),
+  attributes: z.record(z.string(), ResearchAttributeValueSchema).default({}),
+  confidence: z.number().min(0).max(1),
+  evidencePassageIds: z.array(z.string()).min(1)
+});
+
+const ProviderResearchFindingsResultSchema = z.object({
+  proposals: z.array(z.object({
+    paperId: z.string(),
+    items: z.array(ProviderResearchItemSchema).default([])
+  })).min(1)
+});
+
 function parseProviderJson(text: string): unknown {
   const candidates = [
     ...[...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((match) => match[1]?.trim() ?? ""),
@@ -91,7 +112,7 @@ function parseProviderJson(text: string): unknown {
       // Provider output can include commentary around the structured result.
     }
   }
-  throw new Error("Provider did not return a valid JSON relevance result.");
+  throw new Error("Provider did not return a valid structured JSON result.");
 }
 
 export const PdfProcessingOptionsSchema = z.object({
@@ -539,6 +560,59 @@ function inferMetadataFields(paper: Paper, markdown: string): Array<{
     fields.push({ field: "year", proposedValue: year, confidence: 0.58, rationale: "A likely publication year appears in the document front matter." });
   }
   return fields;
+}
+
+function localResearchKind(passage: Passage): ResearchRecordKind {
+  const section = passage.section.toLowerCase();
+  if (/limitation|threat|weakness|future work/.test(section)) return "limitation";
+  if (/result|evaluation|finding|conclusion/.test(section)) return "result";
+  if (/method|methodology|approach|architecture|algorithm/.test(section)) return "method";
+  if (/dataset|data|corpus|benchmark/.test(section)) return "dataset";
+  if (/reproduc|implementation|code/.test(section)) return "reproducibility";
+  const text = `${passage.section} ${passage.quote}`.toLowerCase();
+  if (/limitation|threat|weakness|future work|challenge/.test(text)) return "limitation";
+  if (/reproduc|code|implementation|hyperparameter|open source/.test(text)) return "reproducibility";
+  if (/dataset|corpus|benchmark|participants|sample/.test(text)) return "dataset";
+  if (/result|evaluation|accuracy|performance|improv|outperform|significant/.test(text)) return "result";
+  if (/method|methodology|model|architecture|algorithm|approach|procedure/.test(text)) return "method";
+  return "finding";
+}
+
+function localResearchTitle(kind: ResearchRecordKind, passage: Passage): string {
+  const section = passage.section.trim();
+  if (section) return `${kind[0]?.toUpperCase() ?? ""}${kind.slice(1)} from ${section}`;
+  const sentence = passage.quote.split(/(?<=[.!?])\s+/)[0]?.trim() ?? passage.quote.trim();
+  return sentence.length > 88 ? `${sentence.slice(0, 85).trim()}...` : sentence;
+}
+
+function inferLocalResearchItems(repo: LitAgentRepository, paper: Paper): ResearchItem[] {
+  const counts = new Map<ResearchRecordKind, number>();
+  const items: ResearchItem[] = [];
+  for (const passage of repo.readPassages(paper.id)) {
+    const kind = localResearchKind(passage);
+    const count = counts.get(kind) ?? 0;
+    if (count >= 2 || passage.quote.trim().length < 30) continue;
+    counts.set(kind, count + 1);
+    items.push({
+      id: createId("item"),
+      kind,
+      title: localResearchTitle(kind, passage),
+      content: passage.quote.trim().slice(0, 1200),
+      attributes: passage.section ? { section: passage.section } : {},
+      confidence: 0.56,
+      evidence: [{
+        paperId: paper.id,
+        passageId: passage.id,
+        page: passage.page,
+        paperTitle: paper.title,
+        section: passage.section,
+        quote: passage.quote,
+        confidence: 0.7
+      }]
+    });
+    if (items.length >= 10) break;
+  }
+  return items;
 }
 
 function ensureMarkdownFallback(repo: LitAgentRepository, paper: Paper): string {
@@ -1917,6 +1991,22 @@ export class WorkflowEngine {
             })
           );
         }
+      } else if (request.type === "key-findings") {
+        try {
+          proposalIds = this.createProviderResearchFindingProposals(request, run.id, finalText, absoluteEventsPath);
+        } catch (error) {
+          status = "failed";
+          appendEvent(
+            absoluteEventsPath,
+            event({
+              runId: run.id,
+              providerId: request.providerId,
+              type: "run.failed",
+              message: error instanceof Error ? error.message : String(error),
+              payload: { failureClass: "invalid_workflow_output" }
+            })
+          );
+        }
       }
       const outputPath = this.writeProjectOutput(
         request.projectId,
@@ -2119,6 +2209,83 @@ export class WorkflowEngine {
     });
   }
 
+  private createProviderResearchFindingProposals(
+    request: WorkflowStartRequest,
+    runId: string,
+    providerText: string,
+    absoluteEventsPath: string
+  ): string[] {
+    const papers = collectPapers(this.repo, request);
+    const paperById = new Map(papers.map((paper) => [paper.id, paper]));
+    const parsed = ProviderResearchFindingsResultSchema.parse(parseProviderJson(providerText));
+    const proposalByPaper = new Map(parsed.proposals.map((proposal) => [proposal.paperId, proposal]));
+    const missingPaperIds = papers.filter((paper) => !proposalByPaper.has(paper.id)).map((paper) => paper.id);
+    if (missingPaperIds.length > 0) {
+      throw new Error(`Provider omitted research findings for: ${missingPaperIds.join(", ")}`);
+    }
+    for (const proposal of parsed.proposals) {
+      if (!paperById.has(proposal.paperId)) {
+        throw new Error(`Provider returned an out-of-scope paper id: ${proposal.paperId}`);
+      }
+    }
+
+    return parsed.proposals.flatMap((candidate) => {
+      const paper = paperById.get(candidate.paperId);
+      if (!paper) throw new Error(`Paper not found in workflow scope: ${candidate.paperId}`);
+      const passageById = new Map(this.repo.readPassages(paper.id).map((passage) => [passage.id, passage]));
+      const items: ResearchItem[] = candidate.items.map((item) => {
+        const evidence = item.evidencePassageIds.flatMap((passageId) => {
+          const passage = passageById.get(passageId);
+          return passage ? [{
+            paperId: paper.id,
+            passageId: passage.id,
+            page: passage.page,
+            paperTitle: paper.title,
+            section: passage.section,
+            quote: passage.quote,
+            confidence: item.confidence
+          }] : [];
+        });
+        if (evidence.length === 0) {
+          throw new Error(`Provider research item has no valid evidence passage: ${item.title}`);
+        }
+        return {
+          id: createId("item"),
+          kind: item.kind,
+          title: item.title,
+          content: item.content,
+          attributes: item.attributes,
+          confidence: item.confidence,
+          evidence
+        };
+      });
+      if (items.length === 0) return [];
+      const proposal = this.repo.createResearchFindingProposal({
+        runId,
+        projectId: request.projectId,
+        paperId: paper.id,
+        items,
+        providerId: request.providerId,
+        model: request.model
+      });
+      for (const item of proposal.items) {
+        for (const evidence of item.evidence) {
+          appendEvent(
+            absoluteEventsPath,
+            event({
+              runId,
+              providerId: request.providerId,
+              type: "evidence.found",
+              message: `${item.kind}: ${evidence.quote}`,
+              payload: { ...evidence, researchItemId: item.id, researchKind: item.kind }
+            })
+          );
+        }
+      }
+      return [proposal.id];
+    });
+  }
+
   private buildAgentPrompt(request: WorkflowStartRequest, runId: string): string {
     const papers = collectPapers(this.repo, request);
     const project = request.projectId ? this.repo.readProject(request.projectId) : null;
@@ -2180,6 +2347,30 @@ export class WorkflowEngine {
         paperContext || "No papers are selected."
       ].join("\n");
     }
+    if (request.type === "key-findings") {
+      const markdownBudgetPerPaper = Math.max(20_000, Math.floor(160_000 / Math.max(1, papers.length)));
+      const findingsContext = papers
+        .map((paper) => this.formatPaperForPrompt(paper, { passageLimit: 160, markdownChars: markdownBudgetPerPaper }))
+        .join("\n\n");
+      return [
+        "You are LitAgent extracting structured research records from converted papers.",
+        "Use only the supplied paper metadata, passages, and Markdown context. Do not modify files.",
+        "Extract concise, non-duplicative items of these kinds: finding, method, dataset, result, limitation, reproducibility.",
+        "Every item must cite one or more supplied passage ids that directly support its content.",
+        "Keep measured values, dataset names, metrics, sample sizes, model names, and implementation details in attributes when available.",
+        "Do not infer absent limitations or reproducibility claims. Omit unsupported items.",
+        "Return one proposal object for every selected paper, even when its items array is empty.",
+        "Return only JSON with no Markdown fence or commentary.",
+        "Schema: {\"proposals\":[{\"paperId\":\"...\",\"items\":[{\"kind\":\"finding|method|dataset|result|limitation|reproducibility\",\"title\":\"...\",\"content\":\"...\",\"attributes\":{\"key\":\"value\"},\"confidence\":0.0,\"evidencePassageIds\":[\"...\"]}]}]}",
+        "",
+        `Workflow run id: ${runId}`,
+        `Project: ${project?.name ?? "global library"}`,
+        `Research question context: ${request.query ?? researchQuestions[0] ?? "none supplied"}`,
+        "",
+        "Selected paper context:",
+        findingsContext || "No papers are selected."
+      ].join("\n");
+    }
     return [
       "You are LitAgent, a local-first agentic literature review assistant.",
       "Work only with the supplied project/library context unless the workflow explicitly asks you to find related papers.",
@@ -2205,10 +2396,17 @@ export class WorkflowEngine {
     ].join("\n");
   }
 
-  private formatPaperForPrompt(paper: Paper): string {
-    const passages = this.repo.readPassages(paper.id).slice(0, 5);
+  private formatPaperForPrompt(
+    paper: Paper,
+    options: { passageLimit?: number; markdownChars?: number } = {}
+  ): string {
+    const passages = this.repo.readPassages(paper.id).slice(0, options.passageLimit ?? 5);
     const markdown = this.repo.readMarkdown(paper.id);
-    const markdownExcerpt = markdown ? markdown.split("\n").slice(0, 80).join("\n") : "";
+    const markdownExcerpt = markdown
+      ? options.markdownChars
+        ? markdown.slice(0, options.markdownChars)
+        : markdown.split("\n").slice(0, 80).join("\n")
+      : "";
     return [
       `## ${paper.title}`,
       `paperId: ${paper.id}`,
@@ -2478,6 +2676,56 @@ export class WorkflowEngine {
         const bibtex = this.repo.exportBibTeX(request.projectId);
         return { outputPath: `exports/${request.projectId}.bib`, bytes: Buffer.byteLength(bibtex) };
       }
+      case "key-findings": {
+        const proposals = papers.flatMap((paper) => {
+          const items = inferLocalResearchItems(this.repo, paper);
+          if (items.length === 0) return [];
+          const proposal = this.repo.createResearchFindingProposal({
+            runId,
+            projectId: request.projectId,
+            paperId: paper.id,
+            items,
+            providerId: request.providerId,
+            model: request.model
+          });
+          for (const item of proposal.items) {
+            for (const evidence of item.evidence) {
+              appendEvent(
+                absoluteEventsPath,
+                event({
+                  runId,
+                  providerId: request.providerId,
+                  type: "evidence.found",
+                  message: `${item.kind}: ${evidence.quote}`,
+                  payload: { ...evidence, researchItemId: item.id, researchKind: item.kind }
+                })
+              );
+            }
+          }
+          return [proposal];
+        });
+        const outputPath = this.writeProjectOutput(
+          request.projectId,
+          `key-findings-${slugify(runId)}.md`,
+          [
+            "# Research Record Proposals",
+            "",
+            "These findings do not become canonical research records until they are accepted.",
+            "",
+            ...(proposals.length
+              ? proposals.flatMap((proposal) => {
+                  const paper = this.repo.readPaper(proposal.paperId);
+                  return [
+                    `## ${paper?.title ?? proposal.paperId}`,
+                    ...proposal.items.map((item) => `- **${item.kind} - ${item.title}:** ${item.content}`),
+                    ""
+                  ];
+                })
+              : ["No evidence-backed research items were found in the selected sources."])
+          ].join("\n")
+        );
+        return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
+      }
       case "compare-papers": {
         const lines = [
           "# Paper Comparison",
@@ -2492,7 +2740,6 @@ export class WorkflowEngine {
         const outputPath = this.writeProjectOutput(request.projectId, `comparison-${slugify(runId)}.md`, lines.join("\n"));
         return { outputPath, compared: papers.map((paper) => paper.id) };
       }
-      case "key-findings":
       case "synthesis-note":
       case "contradiction-finder":
       case "screening":

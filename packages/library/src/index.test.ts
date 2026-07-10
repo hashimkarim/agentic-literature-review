@@ -266,6 +266,71 @@ describe("LitAgentRepository", () => {
     expect(paper?.tags).toEqual(expect.arrayContaining(["existing", "metadata", "review"]));
   });
 
+  it("creates canonical research records only from accepted finding items", () => {
+    const repo = tempRepo();
+    const project = repo.createProject({ name: "Findings Project" });
+    const imported = repo.importPaper({
+      sourcePath: fixturePdf(2),
+      projectId: project.id,
+      metadata: { title: "Structured Findings" }
+    });
+    const { passages } = repo.writeMarkdown(
+      imported.paper.id,
+      "# Results\n\nThe proposed method improves accuracy by five points.\n\n## Limitations\n\nThe evaluation uses only one dataset."
+    );
+    const evidence = (index: number) => [{
+      paperId: imported.paper.id,
+      passageId: passages[index]?.id ?? "missing",
+      page: passages[index]?.page ?? null,
+      paperTitle: imported.paper.title,
+      section: passages[index]?.section ?? "",
+      quote: passages[index]?.quote ?? "Missing evidence",
+      confidence: 0.9
+    }];
+    const proposal = repo.createResearchFindingProposal({
+      runId: "run_findings",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      providerId: "codex",
+      items: [
+        {
+          id: "item_result",
+          kind: "result",
+          title: "Accuracy improvement",
+          content: "The proposed method improves accuracy by five points.",
+          attributes: { improvement: "5 points" },
+          confidence: 0.9,
+          evidence: evidence(0)
+        },
+        {
+          id: "item_limit",
+          kind: "limitation",
+          title: "Single-dataset evaluation",
+          content: "The evaluation uses only one dataset.",
+          attributes: {},
+          confidence: 0.85,
+          evidence: evidence(1)
+        }
+      ]
+    });
+
+    const reviewed = repo.reviewResearchFindingProposal(imported.paper.id, proposal.id, {
+      decision: "accepted",
+      acceptedItemIds: ["item_result"],
+      edits: { item_result: { title: "Reviewed accuracy improvement" } }
+    });
+    const records = repo.listResearchRecords(imported.paper.id, project.id);
+
+    expect(reviewed).toMatchObject({ status: "accepted", acceptedItemIds: ["item_result"] });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: "result",
+      title: "Reviewed accuracy improvement",
+      sourceProposalId: proposal.id,
+      sourceItemId: "item_result"
+    });
+  });
+
   it("stores annotations and keeps note backlinks in sync", () => {
     const repo = tempRepo();
     const project = repo.createProject({ name: "Annotation Project" });

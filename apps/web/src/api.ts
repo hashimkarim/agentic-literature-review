@@ -9,7 +9,10 @@ import type {
   QaResponse,
   QaThread,
   RelevanceProposal,
+  ResearchFindingProposal,
+  ResearchRecord,
   ReviewMetadataProposalRequest,
+  ReviewResearchFindingProposalRequest,
   ReviewRelevanceProposalRequest,
   CitationTarget,
   SearchResult,
@@ -151,6 +154,23 @@ export const api = {
   reviewMetadataProposal: (paperId: string, proposalId: string, body: ReviewMetadataProposalRequest) =>
     request<MetadataProposal>(
       `/api/papers/${encodeURIComponent(paperId)}/metadata-proposals/${encodeURIComponent(proposalId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }
+    ),
+  researchFindingProposals: (paperId: string, projectId?: string | null) =>
+    request<ResearchFindingProposal[]>(
+      `/api/papers/${encodeURIComponent(paperId)}/finding-proposals${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`
+    ),
+  researchRecords: (paperId: string, projectId?: string | null) =>
+    request<ResearchRecord[]>(
+      `/api/papers/${encodeURIComponent(paperId)}/findings${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`
+    ),
+  reviewResearchFindingProposal: (paperId: string, proposalId: string, body: ReviewResearchFindingProposalRequest) =>
+    request<ResearchFindingProposal>(
+      `/api/papers/${encodeURIComponent(paperId)}/finding-proposals/${encodeURIComponent(proposalId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

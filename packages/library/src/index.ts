@@ -22,8 +22,12 @@ import {
   PassageSchema,
   ProjectSchema,
   RelevanceProposalSchema,
+  ResearchFindingProposalSchema,
+  ResearchItemSchema,
   ResearchQuestionSchema,
+  ResearchRecordSchema,
   ReviewMetadataProposalRequestSchema,
+  ReviewResearchFindingProposalRequestSchema,
   ReviewRelevanceProposalRequestSchema,
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema,
@@ -49,7 +53,11 @@ import {
   type ProposedRelevanceState,
   type RelevanceProposal,
   type RelevanceState,
+  type ResearchFindingProposal,
+  type ResearchItem,
+  type ResearchRecord,
   type ReviewMetadataProposalRequestInput,
+  type ReviewResearchFindingProposalRequestInput,
   type ReviewRelevanceProposalRequestInput,
   type EvidenceRef,
   type UpdateAnnotationRequestInput,
@@ -61,6 +69,7 @@ export const DEFAULT_REPO_ROOT = path.join(os.homedir(), ".litagent", "research-
 const linksArraySchema = z.array(PaperProjectLinkSchema);
 const collectionsArraySchema = z.array(CollectionSchema);
 const annotationsArraySchema = z.array(AnnotationSchema);
+const researchRecordsArraySchema = z.array(ResearchRecordSchema);
 const paperMetadataPatchSchema = PaperSchema.pick({
   title: true,
   authors: true,
@@ -769,6 +778,144 @@ export class LitAgentRepository {
       updatedAt: reviewedAt
     });
     writeJson(this.resolve(`library/papers/${paperId}/proposals/metadata/${proposalId}.json`), reviewed);
+    return reviewed;
+  }
+
+  listResearchFindingProposals(
+    paperId: string,
+    filters: { projectId?: string | null; status?: ProposalReviewStatus | null } = {}
+  ): ResearchFindingProposal[] {
+    if (!this.readPaper(paperId)) throw new Error(`Paper not found: ${paperId}`);
+    const dir = this.resolve(`library/papers/${paperId}/proposals/findings`);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => ResearchFindingProposalSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"))))
+      .filter((proposal) => filters.projectId === undefined || proposal.projectId === filters.projectId)
+      .filter((proposal) => !filters.status || proposal.status === filters.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  readResearchFindingProposal(paperId: string, proposalId: string): ResearchFindingProposal | null {
+    const filePath = this.resolve(`library/papers/${paperId}/proposals/findings/${proposalId}.json`);
+    if (!fs.existsSync(filePath)) return null;
+    const proposal = ResearchFindingProposalSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    return proposal.paperId === paperId ? proposal : null;
+  }
+
+  createResearchFindingProposal(input: {
+    runId: string;
+    projectId?: string | null;
+    paperId: string;
+    items: ResearchItem[];
+    providerId: string;
+    model?: string | null;
+  }): ResearchFindingProposal {
+    if (!this.readPaper(input.paperId)) throw new Error(`Paper not found: ${input.paperId}`);
+    if (input.projectId && !this.listPaperLinks(input.projectId).some((link) => link.paperId === input.paperId)) {
+      throw new Error(`Paper is not linked to project: ${input.projectId}/${input.paperId}`);
+    }
+    const passages = new Set(this.readPassages(input.paperId).map((passage) => passage.id));
+    const itemIds = new Set<string>();
+    for (const item of input.items) {
+      if (itemIds.has(item.id)) throw new Error(`Duplicate research item id: ${item.id}`);
+      itemIds.add(item.id);
+      if (item.evidence.some((evidence) => evidence.paperId !== input.paperId || !passages.has(evidence.passageId))) {
+        throw new Error(`Research item evidence is outside paper scope: ${item.id}`);
+      }
+    }
+    const timestamp = nowIso();
+    const proposal = ResearchFindingProposalSchema.parse({
+      ...input,
+      id: createId("proposal"),
+      projectId: input.projectId ?? null,
+      model: input.model ?? null,
+      status: "pending",
+      acceptedItemIds: [],
+      reviewedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+    writeJson(this.resolve(`library/papers/${input.paperId}/proposals/findings/${proposal.id}.json`), proposal);
+    return proposal;
+  }
+
+  listResearchRecords(paperId: string, projectId?: string | null): ResearchRecord[] {
+    if (!this.readPaper(paperId)) throw new Error(`Paper not found: ${paperId}`);
+    const records = readJson(
+      this.resolve(`library/papers/${paperId}/findings.json`),
+      researchRecordsArraySchema,
+      []
+    );
+    return records
+      .filter((record) => projectId === undefined || record.projectId === null || record.projectId === projectId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  reviewResearchFindingProposal(
+    paperId: string,
+    proposalId: string,
+    input: ReviewResearchFindingProposalRequestInput
+  ): ResearchFindingProposal {
+    const request = ReviewResearchFindingProposalRequestSchema.parse(input);
+    const current = this.readResearchFindingProposal(paperId, proposalId);
+    if (!current) throw new Error(`Research findings proposal not found: ${proposalId}`);
+    if (current.status !== "pending") {
+      if (current.status === request.decision) return current;
+      throw new Error(`Research findings proposal has already been ${current.status}.`);
+    }
+
+    const availableItemIds = new Set(current.items.map((item) => item.id));
+    const acceptedItemIds = request.decision === "accepted"
+      ? request.acceptedItemIds ?? current.items.map((item) => item.id)
+      : [];
+    if (acceptedItemIds.some((itemId) => !availableItemIds.has(itemId))) {
+      throw new Error("Research findings review includes an item that is not part of the proposal.");
+    }
+    if (request.decision === "accepted" && acceptedItemIds.length === 0) {
+      throw new Error("Accepting research findings requires at least one item.");
+    }
+
+    const editedItems = current.items.map((item) => ResearchItemSchema.parse({
+      ...item,
+      ...(request.edits[item.id] ?? {})
+    }));
+    if (request.decision === "accepted") {
+      const timestamp = nowIso();
+      const existing = this.listResearchRecords(paperId);
+      const records = [...existing];
+      for (const item of editedItems.filter((candidate) => acceptedItemIds.includes(candidate.id))) {
+        const duplicateIndex = records.findIndex(
+          (record) => record.sourceProposalId === current.id && record.sourceItemId === item.id
+        );
+        const record = ResearchRecordSchema.parse({
+          ...item,
+          id: duplicateIndex >= 0 ? records[duplicateIndex]?.id : createId("record"),
+          paperId,
+          projectId: current.projectId,
+          sourceRunId: current.runId,
+          sourceProposalId: current.id,
+          sourceItemId: item.id,
+          createdAt: duplicateIndex >= 0 ? records[duplicateIndex]?.createdAt : timestamp,
+          updatedAt: timestamp
+        });
+        if (duplicateIndex >= 0) records[duplicateIndex] = record;
+        else records.push(record);
+      }
+      writeJson(this.resolve(`library/papers/${paperId}/findings.json`), records);
+    }
+
+    const reviewedAt = nowIso();
+    const reviewed = ResearchFindingProposalSchema.parse({
+      ...current,
+      items: editedItems,
+      status: request.decision,
+      acceptedItemIds,
+      reviewedAt,
+      updatedAt: reviewedAt
+    });
+    writeJson(this.resolve(`library/papers/${paperId}/proposals/findings/${proposalId}.json`), reviewed);
     return reviewed;
   }
 

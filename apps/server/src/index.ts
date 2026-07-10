@@ -19,6 +19,7 @@ import {
   QaRequestSchema,
   QaThreadRequestSchema,
   ReviewMetadataProposalRequestSchema,
+  ReviewResearchFindingProposalRequestSchema,
   ReviewRelevanceProposalRequestSchema,
   SearchRequestSchema,
   UpdateAnnotationRequestSchema,
@@ -444,6 +445,42 @@ app.patch(
         ReviewMetadataProposalRequestSchema.parse(req.body)
       )
     );
+  })
+);
+
+app.get(
+  "/api/papers/:id/finding-proposals",
+  asyncHandler((req, res) => {
+    const projectId = queryString(req, "projectId");
+    const statusValue = queryString(req, "status");
+    const status = statusValue ? ProposalReviewStatusSchema.parse(statusValue) : null;
+    res.json(
+      repo.listResearchFindingProposals(
+        routeParam(req, "id"),
+        projectId ? { projectId, status } : { status }
+      )
+    );
+  })
+);
+
+app.patch(
+  "/api/papers/:id/finding-proposals/:proposalId",
+  asyncHandler((req, res) => {
+    res.json(
+      repo.reviewResearchFindingProposal(
+        routeParam(req, "id"),
+        routeParam(req, "proposalId"),
+        ReviewResearchFindingProposalRequestSchema.parse(req.body)
+      )
+    );
+  })
+);
+
+app.get(
+  "/api/papers/:id/findings",
+  asyncHandler((req, res) => {
+    const projectId = queryString(req, "projectId");
+    res.json(repo.listResearchRecords(routeParam(req, "id"), projectId ?? undefined));
   })
 );
 

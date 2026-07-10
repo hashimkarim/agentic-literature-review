@@ -625,6 +625,20 @@ button { font-family: var(--font-sans); }
 .la-metadata-rationale { color: var(--text-muted); font: var(--text-caption); line-height: 1.4; margin-top: 6px; }
 .la-metadata-source { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--accent-soft); font: var(--text-caption); padding: 5px 0 0; cursor: pointer; }
 .la-metadata-source:hover { color: var(--accent-bright); }
+.la-finding-items { display: grid; gap: 8px; }
+.la-finding-item { display: grid; gap: 6px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-deep); padding: 8px; opacity: 0.72; }
+.la-finding-item.selected { border-color: color-mix(in srgb, var(--accent-primary) 48%, var(--border-light)); opacity: 1; }
+.la-finding-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.la-finding-head input { accent-color: var(--accent-primary); }
+.la-finding-head .confidence { margin-left: auto; color: var(--text-muted); font: var(--text-caption); }
+.la-finding-item :is(input.la-finding-title, textarea) { width: 100%; box-sizing: border-box; border: 1px solid var(--border-line); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-primary); font: var(--text-body-sm); padding: 6px 7px; resize: vertical; }
+.la-finding-item input.la-finding-title { color: var(--text-high); font-weight: 600; }
+.la-finding-attributes { display: flex; flex-wrap: wrap; gap: 4px; }
+.la-finding-attributes span { max-width: 100%; border-radius: var(--radius-sm); background: var(--surface-hover); color: var(--text-secondary); font: var(--text-caption); padding: 3px 5px; overflow-wrap: anywhere; }
+.la-research-records { display: grid; gap: 7px; padding: 0 12px 16px; }
+.la-research-record { border: 1px solid var(--border-light); border-left: 3px solid var(--accent-primary); border-radius: var(--radius-sm); background: var(--bg-deep); padding: 9px 10px; }
+.la-research-record h4 { color: var(--text-high); font: var(--text-body-sm); margin: 7px 0 4px; }
+.la-research-record p { color: var(--text-secondary); font: var(--text-caption); line-height: 1.5; margin: 0; }
 
 /* ============================================================
    EVIDENCE / AGENT PANEL

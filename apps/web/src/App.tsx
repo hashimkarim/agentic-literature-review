@@ -17,7 +17,10 @@ import type {
   QaResponse,
   QaThread,
   RelevanceProposal,
+  ResearchFindingProposal,
+  ResearchRecord,
   ReviewMetadataProposalRequest,
+  ReviewResearchFindingProposalRequest,
   ReviewRelevanceProposalRequest,
   WorkflowRun,
   WorkflowType
@@ -444,6 +447,8 @@ function App() {
   const [qaThread, setQaThread] = useState<QaThread | null>(null);
   const [relevanceProposals, setRelevanceProposals] = useState<RelevanceProposal[]>([]);
   const [metadataProposals, setMetadataProposals] = useState<MetadataProposal[]>([]);
+  const [researchFindingProposals, setResearchFindingProposals] = useState<ResearchFindingProposal[]>([]);
+  const [researchRecords, setResearchRecords] = useState<ResearchRecord[]>([]);
   const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
   const [citationActivation, setCitationActivation] = useState(0);
   const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([]);
@@ -625,6 +630,28 @@ function App() {
     loadMetadataProposals(selectedPaperId);
   }, [loadMetadataProposals, selectedPaperId]);
 
+  const loadResearchFindings = useCallback((paperId: string | null, projectId: string | null) => {
+    if (!paperId) {
+      setResearchFindingProposals([]);
+      setResearchRecords([]);
+      return;
+    }
+    void Promise.all([
+      api.researchFindingProposals(paperId, projectId),
+      api.researchRecords(paperId, projectId)
+    ]).then(([proposals, records]) => {
+      setResearchFindingProposals(proposals);
+      setResearchRecords(records);
+    }).catch(() => {
+      setResearchFindingProposals([]);
+      setResearchRecords([]);
+    });
+  }, []);
+
+  useEffect(() => {
+    loadResearchFindings(selectedPaperId, screen === "projects" ? activeProjectId : null);
+  }, [activeProjectId, loadResearchFindings, screen, selectedPaperId]);
+
   useEffect(() => {
     if (!selectedPaperId) {
       setMarkdown(null);
@@ -663,6 +690,8 @@ function App() {
     if (relevanceRun) loadRelevanceProposals(activeProjectId, selectedPaperId);
     const metadataRun = terminalRuns.find((run) => run.type === "metadata-extraction" && workflowMatchesPaper(run, selectedPaperId));
     if (metadataRun) loadMetadataProposals(selectedPaperId);
+    const findingsRun = terminalRuns.find((run) => run.type === "key-findings" && workflowMatchesPaper(run, selectedPaperId));
+    if (findingsRun) loadResearchFindings(selectedPaperId, screen === "projects" ? activeProjectId : null);
     const markdownRun = terminalRuns.find((run) => run.type === "pdf-markdown-processing" && workflowMatchesPaper(run, selectedPaperId));
     if (!markdownRun) return;
     if (markdownRun.status !== "completed") {
@@ -679,7 +708,7 @@ function App() {
       setProjectEntries(nextProject);
       setMarkdownNotice(nextMarkdown ? "Markdown updated from the completed conversion." : "Conversion completed, but no Markdown file was found for this paper.");
     })();
-  }, [activeProjectId, loadMetadataProposals, loadPaperArtifacts, loadRelevanceProposals, projectEntries, selectedPaperId, workflows]);
+  }, [activeProjectId, loadMetadataProposals, loadPaperArtifacts, loadRelevanceProposals, loadResearchFindings, projectEntries, screen, selectedPaperId, workflows]);
 
   const reviewRelevanceProposal = useCallback(
     (proposalId: string, review: ReviewRelevanceProposalRequest) => {
@@ -717,6 +746,24 @@ function App() {
       });
     },
     [activeProjectId, projectEntries, selectedPaperId]
+  );
+
+  const reviewResearchFindingProposal = useCallback(
+    (proposalId: string, review: ReviewResearchFindingProposalRequest) => {
+      if (!selectedPaperId) return;
+      startTransition(() => {
+        void api.reviewResearchFindingProposal(selectedPaperId, proposalId, review).then(async () => {
+          const projectId = screen === "projects" ? activeProjectId : null;
+          const [nextProposals, nextRecords] = await Promise.all([
+            api.researchFindingProposals(selectedPaperId, projectId),
+            api.researchRecords(selectedPaperId, projectId)
+          ]);
+          setResearchFindingProposals(nextProposals);
+          setResearchRecords(nextRecords);
+        });
+      });
+    },
+    [activeProjectId, screen, selectedPaperId]
   );
 
   const jumpToPdfAnnotation = useCallback((id: string) => {
@@ -964,6 +1011,9 @@ function App() {
             onReviewRelevanceProposal={reviewRelevanceProposal}
             metadataProposals={metadataProposals}
             onReviewMetadataProposal={reviewMetadataProposal}
+            researchFindingProposals={researchFindingProposals}
+            researchRecords={researchRecords}
+            onReviewResearchFindingProposal={reviewResearchFindingProposal}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -1008,6 +1058,9 @@ function App() {
             onReviewRelevanceProposal={reviewRelevanceProposal}
             metadataProposals={metadataProposals}
             onReviewMetadataProposal={reviewMetadataProposal}
+            researchFindingProposals={researchFindingProposals}
+            researchRecords={researchRecords}
+            onReviewResearchFindingProposal={reviewResearchFindingProposal}
             providers={providers}
             selectedProviderId={selectedProviderId}
             selectedModel={selectedModel}
@@ -1166,6 +1219,9 @@ interface WorkspaceProps {
   onReviewRelevanceProposal: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
   metadataProposals: MetadataProposal[];
   onReviewMetadataProposal: (proposalId: string, review: ReviewMetadataProposalRequest) => void;
+  researchFindingProposals: ResearchFindingProposal[];
+  researchRecords: ResearchRecord[];
+  onReviewResearchFindingProposal: (proposalId: string, review: ReviewResearchFindingProposalRequest) => void;
   providers: AgentProvider[];
   selectedProviderId: string;
   selectedModel: string | null;
@@ -2100,6 +2156,9 @@ function PaperInspector({
   onReview,
   metadataProposals,
   onReviewMetadata,
+  researchFindingProposals,
+  researchRecords,
+  onReviewResearchFindings,
   onOpenCitation
 }: {
   paper: UiPaper;
@@ -2107,16 +2166,22 @@ function PaperInspector({
   onReview: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
   metadataProposals: MetadataProposal[];
   onReviewMetadata: (proposalId: string, review: ReviewMetadataProposalRequest) => void;
+  researchFindingProposals: ResearchFindingProposal[];
+  researchRecords: ResearchRecord[];
+  onReviewResearchFindings: (proposalId: string, review: ReviewResearchFindingProposalRequest) => void;
   onOpenCitation: (item: EvidenceRef) => void;
 }) {
   const proposal = proposals.find((candidate) => candidate.status === "pending") ?? proposals[0] ?? null;
   const metadataProposal = metadataProposals.find((candidate) => candidate.status === "pending") ?? metadataProposals[0] ?? null;
+  const findingsProposal = researchFindingProposals.find((candidate) => candidate.status === "pending") ?? researchFindingProposals[0] ?? null;
   const [editing, setEditing] = useState(false);
   const [proposedState, setProposedState] = useState<RelevanceProposal["proposedState"]>("maybe");
   const [rationale, setRationale] = useState("");
   const [projectTags, setProjectTags] = useState("");
   const [selectedMetadataFields, setSelectedMetadataFields] = useState<string[]>([]);
   const [metadataEdits, setMetadataEdits] = useState<Record<string, string>>({});
+  const [selectedFindingIds, setSelectedFindingIds] = useState<string[]>([]);
+  const [findingEdits, setFindingEdits] = useState<Record<string, { title: string; content: string }>>({});
   useEffect(() => {
     setEditing(false);
     setProposedState(proposal?.proposedState ?? "maybe");
@@ -2127,6 +2192,10 @@ function PaperInspector({
     setSelectedMetadataFields(metadataProposal?.fields.map((field) => field.field) ?? []);
     setMetadataEdits(Object.fromEntries(metadataProposal?.fields.map((field) => [field.field, metadataValueText(field.proposedValue)]) ?? []));
   }, [metadataProposal?.id, metadataProposal?.updatedAt, paper.id]);
+  useEffect(() => {
+    setSelectedFindingIds(findingsProposal?.items.map((item) => item.id) ?? []);
+    setFindingEdits(Object.fromEntries(findingsProposal?.items.map((item) => [item.id, { title: item.title, content: item.content }]) ?? []));
+  }, [findingsProposal?.id, findingsProposal?.updatedAt, paper.id]);
   const review = (decision: "accepted" | "rejected") => {
     if (!proposal) return;
     onReview(proposal.id, {
@@ -2148,6 +2217,24 @@ function PaperInspector({
         metadataProposal.fields
           .filter((field) => acceptedFields.includes(field.field))
           .map((field) => [field.field, parseMetadataValue(field.field, metadataEdits[field.field] ?? "")])
+      )
+    });
+  };
+  const reviewFindings = (decision: "accepted" | "rejected") => {
+    if (!findingsProposal) return;
+    const acceptedItemIds = findingsProposal.items
+      .map((item) => item.id)
+      .filter((itemId) => selectedFindingIds.includes(itemId));
+    onReviewResearchFindings(findingsProposal.id, {
+      decision,
+      acceptedItemIds,
+      edits: Object.fromEntries(
+        findingsProposal.items
+          .filter((item) => acceptedItemIds.includes(item.id))
+          .map((item) => [item.id, {
+            title: findingEdits[item.id]?.title.trim() || item.title,
+            content: findingEdits[item.id]?.content.trim() || item.content
+          }])
       )
     });
   };
@@ -2319,6 +2406,97 @@ function PaperInspector({
           </div>
         </div>
       )}
+
+      <div className="la-sectionlabel">Research records · {researchRecords.length}</div>
+      {findingsProposal?.status === "pending" ? (
+        <div style={{ padding: "0 12px 16px" }}>
+          <div className="la-proposal la-findings-proposal pending">
+            <div className="ph">
+              <Icon name="key" size={13} />Findings review
+              <Badge>{findingsProposal.items.length} item{findingsProposal.items.length === 1 ? "" : "s"}</Badge>
+            </div>
+            <div className="la-proposal-meta">
+              <span>{findingsProposal.providerId}{findingsProposal.model ? ` / ${findingsProposal.model}` : ""}</span>
+              <span>evidence backed</span>
+            </div>
+            <div className="la-finding-items">
+              {findingsProposal.items.map((item) => {
+                const selected = selectedFindingIds.includes(item.id);
+                return (
+                  <article key={item.id} className={`la-finding-item${selected ? " selected" : ""}`}>
+                    <label className="la-finding-head">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => setSelectedFindingIds((current) => current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id])}
+                      />
+                      <Badge variant="outline">{item.kind}</Badge>
+                      <span className="confidence">{Math.round(item.confidence * 100)}%</span>
+                    </label>
+                    <input
+                      className="la-finding-title"
+                      aria-label={`Finding title ${item.id}`}
+                      value={findingEdits[item.id]?.title ?? item.title}
+                      onChange={(event) => setFindingEdits((current) => ({
+                        ...current,
+                        [item.id]: { title: event.currentTarget.value, content: current[item.id]?.content ?? item.content }
+                      }))}
+                    />
+                    <textarea
+                      aria-label={`Finding content ${item.id}`}
+                      rows={3}
+                      value={findingEdits[item.id]?.content ?? item.content}
+                      onChange={(event) => setFindingEdits((current) => ({
+                        ...current,
+                        [item.id]: { title: current[item.id]?.title ?? item.title, content: event.currentTarget.value }
+                      }))}
+                    />
+                    {Object.keys(item.attributes).length ? (
+                      <div className="la-finding-attributes">
+                        {Object.entries(item.attributes).map(([key, value]) => <span key={key}>{key}: {Array.isArray(value) ? value.join(", ") : String(value)}</span>)}
+                      </div>
+                    ) : null}
+                    {item.evidence.slice(0, 2).map((evidence) => (
+                      <button key={evidence.passageId} type="button" className="la-metadata-source" onClick={() => onOpenCitation(evidence)}>
+                        <Icon name="link" size={11} /> {evidence.section || "Passage"} · p.{evidence.page ?? "?"}
+                      </button>
+                    ))}
+                  </article>
+                );
+              })}
+            </div>
+            <div className="pactions">
+              <Btn variant="primary" sm icon="check" onClick={() => reviewFindings("accepted")} disabled={!selectedFindingIds.length}>Accept selected</Btn>
+              <Btn variant="ghost" sm icon="x" onClick={() => reviewFindings("rejected")}>Reject all</Btn>
+            </div>
+          </div>
+        </div>
+      ) : researchRecords.length ? (
+        <div className="la-research-records">
+          {researchRecords.map((record) => (
+            <article key={record.id} className="la-research-record">
+              <div className="la-finding-head">
+                <Badge variant="outline">{record.kind}</Badge>
+                <span className="confidence">{Math.round(record.confidence * 100)}%</span>
+              </div>
+              <h4>{record.title}</h4>
+              <p>{record.content}</p>
+              {record.evidence.slice(0, 1).map((evidence) => (
+                <button key={evidence.passageId} type="button" className="la-metadata-source" onClick={() => onOpenCitation(evidence)}>
+                  <Icon name="link" size={11} /> {evidence.section || "Passage"} · p.{evidence.page ?? "?"}
+                </button>
+              ))}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div style={{ padding: "0 12px 16px" }}>
+          <div className="la-proposal empty">
+            <div className="ph"><Icon name="key" size={13} />{findingsProposal?.status === "rejected" ? "Findings rejected" : "No research records"}</div>
+            <div className="pbody">Run Key findings to extract reviewable methods, datasets, results, limitations, and reproducibility details.</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2340,6 +2518,9 @@ function AgentPanel({
   onReviewRelevanceProposal,
   metadataProposals,
   onReviewMetadataProposal,
+  researchFindingProposals,
+  researchRecords,
+  onReviewResearchFindingProposal,
   pdfAnnotations,
   activePdfAnnotationId,
   onJumpPdfAnnotation,
@@ -2429,6 +2610,9 @@ function AgentPanel({
             onReview={onReviewRelevanceProposal}
             metadataProposals={metadataProposals}
             onReviewMetadata={onReviewMetadataProposal}
+            researchFindingProposals={researchFindingProposals}
+            researchRecords={researchRecords}
+            onReviewResearchFindings={onReviewResearchFindingProposal}
             onOpenCitation={(item) => onOpenCitation(item, scopeProjectId)}
           />
         </div>

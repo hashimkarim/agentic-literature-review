@@ -266,6 +266,78 @@ export const ReviewMetadataProposalRequestSchema = z.object({
 export type ReviewMetadataProposalRequest = z.infer<typeof ReviewMetadataProposalRequestSchema>;
 export type ReviewMetadataProposalRequestInput = z.input<typeof ReviewMetadataProposalRequestSchema>;
 
+export const ResearchRecordKindSchema = z.enum([
+  "finding",
+  "method",
+  "dataset",
+  "result",
+  "limitation",
+  "reproducibility"
+]);
+export type ResearchRecordKind = z.infer<typeof ResearchRecordKindSchema>;
+
+export const ResearchAttributeValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.array(z.string()),
+  z.null()
+]);
+export type ResearchAttributeValue = z.infer<typeof ResearchAttributeValueSchema>;
+
+export const ResearchItemSchema = z.object({
+  id: z.string(),
+  kind: ResearchRecordKindSchema,
+  title: z.string().min(1),
+  content: z.string().min(1),
+  attributes: z.record(z.string(), ResearchAttributeValueSchema).default({}),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(EvidenceRefSchema).min(1)
+});
+export type ResearchItem = z.infer<typeof ResearchItemSchema>;
+
+export const ResearchFindingProposalSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  projectId: z.string().nullable().default(null),
+  paperId: z.string(),
+  items: z.array(ResearchItemSchema).min(1),
+  providerId: z.string(),
+  model: z.string().nullable().default(null),
+  status: ProposalReviewStatusSchema.default("pending"),
+  acceptedItemIds: z.array(z.string()).default([]),
+  reviewedAt: isoDateSchema.nullable().default(null),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type ResearchFindingProposal = z.infer<typeof ResearchFindingProposalSchema>;
+
+export const ResearchRecordSchema = ResearchItemSchema.extend({
+  paperId: z.string(),
+  projectId: z.string().nullable().default(null),
+  sourceRunId: z.string(),
+  sourceProposalId: z.string(),
+  sourceItemId: z.string(),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type ResearchRecord = z.infer<typeof ResearchRecordSchema>;
+
+export const ResearchItemEditSchema = z.object({
+  kind: ResearchRecordKindSchema.optional(),
+  title: z.string().min(1).optional(),
+  content: z.string().min(1).optional(),
+  attributes: z.record(z.string(), ResearchAttributeValueSchema).optional()
+});
+
+export const ReviewResearchFindingProposalRequestSchema = z.object({
+  decision: z.enum(["accepted", "rejected"]),
+  acceptedItemIds: z.array(z.string()).optional(),
+  edits: z.record(z.string(), ResearchItemEditSchema).default({})
+});
+export type ReviewResearchFindingProposalRequest = z.infer<typeof ReviewResearchFindingProposalRequestSchema>;
+export type ReviewResearchFindingProposalRequestInput = z.input<typeof ReviewResearchFindingProposalRequestSchema>;
+
 export const CitationRectSourceSchema = z.enum(["passage", "annotation", "none"]);
 export type CitationRectSource = z.infer<typeof CitationRectSourceSchema>;
 
