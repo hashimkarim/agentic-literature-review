@@ -323,6 +323,56 @@ export const ResearchRecordSchema = ResearchItemSchema.extend({
 });
 export type ResearchRecord = z.infer<typeof ResearchRecordSchema>;
 
+export const ComparisonCellStatusSchema = z.enum(["supported", "not_found"]);
+export type ComparisonCellStatus = z.infer<typeof ComparisonCellStatusSchema>;
+
+export const ComparisonCellSchema = z.object({
+  paperId: z.string(),
+  status: ComparisonCellStatusSchema,
+  summary: z.string().min(1),
+  recordIds: z.array(z.string()).default([]),
+  evidence: z.array(EvidenceRefSchema).default([])
+});
+export type ComparisonCell = z.infer<typeof ComparisonCellSchema>;
+
+export const ComparisonRowSchema = z.object({
+  kind: ResearchRecordKindSchema,
+  label: z.string().min(1),
+  cells: z.array(ComparisonCellSchema).min(2)
+});
+export type ComparisonRow = z.infer<typeof ComparisonRowSchema>;
+
+export const ComparisonArtifactStatusSchema = z.enum(["draft", "accepted", "rejected"]);
+export type ComparisonArtifactStatus = z.infer<typeof ComparisonArtifactStatusSchema>;
+
+export const ComparisonArtifactSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  projectId: z.string().nullable().default(null),
+  title: z.string().min(1),
+  summary: z.string().default(""),
+  query: z.string().nullable().default(null),
+  paperIds: z.array(z.string()).min(2),
+  rows: z.array(ComparisonRowSchema).min(1),
+  providerId: z.string(),
+  model: z.string().nullable().default(null),
+  status: ComparisonArtifactStatusSchema.default("draft"),
+  outputPath: z.string(),
+  reviewedAt: isoDateSchema.nullable().default(null),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type ComparisonArtifact = z.infer<typeof ComparisonArtifactSchema>;
+
+export const ReviewComparisonArtifactRequestSchema = z.object({
+  decision: z.enum(["accepted", "rejected"]),
+  title: z.string().min(1).optional(),
+  summary: z.string().optional(),
+  cellSummaries: z.record(z.string(), z.string().min(1)).default({})
+});
+export type ReviewComparisonArtifactRequest = z.infer<typeof ReviewComparisonArtifactRequestSchema>;
+export type ReviewComparisonArtifactRequestInput = z.input<typeof ReviewComparisonArtifactRequestSchema>;
+
 export const ResearchItemEditSchema = z.object({
   kind: ResearchRecordKindSchema.optional(),
   title: z.string().min(1).optional(),

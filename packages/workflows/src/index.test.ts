@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AgentHarness, AgentProviderCatalog, type ProviderDefinition } from "@litagent/agents";
-import { QaResponseSchema } from "@litagent/contracts";
+import { QaResponseSchema, type ResearchRecordKind } from "@litagent/contracts";
 import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
 
@@ -43,6 +43,42 @@ function fakeConvert(repo: LitAgentRepository, paperId: string): ConversionResul
     passageCount: result.passages.length,
     message: "fake marker conversion"
   };
+}
+
+function acceptResearchRecord(
+  repo: LitAgentRepository,
+  input: { projectId: string; paperId: string; kind: ResearchRecordKind; title: string; content: string; passageId: string }
+) {
+  const paper = repo.readPaper(input.paperId);
+  const passage = repo.readPassages(input.paperId).find((candidate) => candidate.id === input.passageId);
+  if (!paper || !passage) throw new Error("Comparison test fixture is missing its paper or passage.");
+  const proposal = repo.createResearchFindingProposal({
+    runId: `run_${input.kind}_${input.paperId}`,
+    projectId: input.projectId,
+    paperId: input.paperId,
+    providerId: "test-provider",
+    items: [{
+      id: `item_${input.kind}_${input.paperId}`,
+      kind: input.kind,
+      title: input.title,
+      content: input.content,
+      attributes: {},
+      confidence: 0.9,
+      evidence: [{
+        paperId: input.paperId,
+        passageId: passage.id,
+        page: passage.page,
+        paperTitle: paper.title,
+        section: passage.section,
+        quote: passage.quote,
+        confidence: 0.9
+      }]
+    }]
+  });
+  repo.reviewResearchFindingProposal(input.paperId, proposal.id, { decision: "accepted" });
+  const record = repo.listResearchRecords(input.paperId, input.projectId).find((candidate) => candidate.sourceProposalId === proposal.id);
+  if (!record) throw new Error("Comparison test fixture did not create an accepted record.");
+  return record;
 }
 
 describe("PDF inbox processing", () => {
@@ -520,6 +556,172 @@ describe("structured research findings", () => {
       attributes: { metric: "accuracy", value: 91, dataset: "TestSet" }
     });
     expect(proposals[0]?.items[0]?.evidence[0]?.passageId).toBe(passages[0]?.id);
+    index.close();
+  });
+});
+
+describe("paper comparison artifacts", () => {
+  it("builds and reviews a cited matrix from accepted records", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Comparison Project" });
+    const first = repo.importPaper({ projectId: project.id, metadata: { title: "First Model" } });
+    const second = repo.importPaper({ projectId: project.id, metadata: { title: "Second Model" } });
+    const firstPassages = repo.writeMarkdown(first.paper.id, "# Method\n\nFirst Model uses a convolutional encoder.\n\n# Results\n\nFirst Model reaches 90 percent accuracy.").passages;
+    const secondPassages = repo.writeMarkdown(second.paper.id, "# Method\n\nSecond Model uses a transformer encoder.\n\n# Results\n\nSecond Model reaches 93 percent accuracy.").passages;
+    acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: first.paper.id,
+      kind: "method",
+      title: "Convolutional encoder",
+      content: "Uses a convolutional encoder.",
+      passageId: firstPassages[0]?.id ?? "missing"
+    });
+    acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: second.paper.id,
+      kind: "method",
+      title: "Transformer encoder",
+      content: "Uses a transformer encoder.",
+      passageId: secondPassages[0]?.id ?? "missing"
+    });
+    const firstResult = acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: first.paper.id,
+      kind: "result",
+      title: "Accuracy",
+      content: "Reaches 90 percent accuracy.",
+      passageId: firstPassages[1]?.id ?? "missing"
+    });
+    acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: second.paper.id,
+      kind: "result",
+      title: "Accuracy",
+      content: "Reaches 93 percent accuracy.",
+      passageId: secondPassages[1]?.id ?? "missing"
+    });
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    const engine = new WorkflowEngine(repo, index);
+
+    const run = engine.startWorkflow({
+      type: "compare-papers",
+      projectId: project.id,
+      paperIds: [first.paper.id, second.paper.id],
+      collectionIds: [],
+      query: "Which model performs better?",
+      options: {},
+      providerId: "local-heuristic",
+      model: null
+    });
+    const artifact = engine.listComparisonArtifacts(project.id)[0];
+    const resultRow = artifact?.rows.find((row) => row.kind === "result");
+    const datasetRow = artifact?.rows.find((row) => row.kind === "dataset");
+
+    expect(run.status).toBe("completed");
+    expect(artifact).toMatchObject({ status: "draft", paperIds: [first.paper.id, second.paper.id] });
+    expect(resultRow?.cells.every((cell) => cell.status === "supported")).toBe(true);
+    expect(resultRow?.cells[0]?.recordIds).toEqual([firstResult.id]);
+    expect(datasetRow?.cells.every((cell) => cell.status === "not_found")).toBe(true);
+    expect(datasetRow?.cells.every((cell) => cell.evidence.length === 0)).toBe(true);
+    const markdown = fs.readFileSync(repo.resolve(artifact?.outputPath ?? "missing"), "utf8");
+    expect(markdown).toContain("| **Results** |");
+    expect(markdown).toContain(firstPassages[1]?.id);
+
+    const reviewed = engine.reviewComparisonArtifact(project.id, artifact?.id ?? "missing", {
+      decision: "accepted",
+      summary: "Reviewed comparison summary.",
+      cellSummaries: { [`result:${first.paper.id}`]: "Reviewed first-model result." }
+    });
+    expect(reviewed).toMatchObject({ status: "accepted", summary: "Reviewed comparison summary." });
+    expect(reviewed.rows.find((row) => row.kind === "result")?.cells[0]).toMatchObject({
+      summary: "Reviewed first-model result.",
+      recordIds: [firstResult.id]
+    });
+    expect(reviewed.rows.find((row) => row.kind === "result")?.cells[0]?.evidence[0]?.passageId).toBe(firstPassages[1]?.id);
+    expect(fs.readFileSync(repo.resolve(reviewed.outputPath), "utf8")).toContain("Status: **accepted**");
+    index.close();
+  });
+
+  it("validates provider comparison cells against accepted record ids", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Provider Comparison" });
+    const first = repo.importPaper({ projectId: project.id, metadata: { title: "Paper A" } });
+    const second = repo.importPaper({ projectId: project.id, metadata: { title: "Paper B" } });
+    const firstPassage = repo.writeMarkdown(first.paper.id, "# Method\n\nPaper A uses method alpha.").passages[0];
+    const secondPassage = repo.writeMarkdown(second.paper.id, "# Method\n\nPaper B uses method beta.").passages[0];
+    const firstRecord = acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: first.paper.id,
+      kind: "method",
+      title: "Method alpha",
+      content: "Uses method alpha.",
+      passageId: firstPassage?.id ?? "missing"
+    });
+    const secondRecord = acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: second.paper.id,
+      kind: "method",
+      title: "Method beta",
+      content: "Uses method beta.",
+      passageId: secondPassage?.id ?? "missing"
+    });
+    const kinds: ResearchRecordKind[] = ["finding", "method", "dataset", "result", "limitation", "reproducibility"];
+    const providerOutput = JSON.stringify({
+      title: "Provider comparison",
+      summary: "The papers use different methods.",
+      rows: kinds.map((kind) => ({
+        kind,
+        cells: [first.paper, second.paper].map((paper) => ({
+          paperId: paper.id,
+          status: kind === "method" ? "supported" : "not_found",
+          summary: kind === "method" ? `Reviewed method for ${paper.title}.` : "Not available in accepted records.",
+          recordIds: kind === "method" ? [paper.id === first.paper.id ? firstRecord.id : secondRecord.id] : []
+        }))
+      }))
+    });
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-comparison",
+      label: "Fake Comparison Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
+      promptDelivery: "stdin"
+    };
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+
+    const run = engine.startWorkflow({
+      type: "compare-papers",
+      projectId: project.id,
+      paperIds: [first.paper.id, second.paper.id],
+      collectionIds: [],
+      query: null,
+      options: {},
+      providerId: fakeProvider.id,
+      model: null
+    });
+    let completed = engine.readRun(run.id).run;
+    for (let attempt = 0; attempt < 100 && completed.status === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      completed = engine.readRun(run.id).run;
+    }
+    const artifact = engine.listComparisonArtifacts(project.id)[0];
+
+    expect(completed.status).toBe("completed");
+    expect(artifact).toMatchObject({ title: "Provider comparison", providerId: fakeProvider.id, status: "draft" });
+    expect(artifact?.rows.find((row) => row.kind === "method")?.cells.map((cell) => cell.recordIds)).toEqual([
+      [firstRecord.id],
+      [secondRecord.id]
+    ]);
+    expect(artifact?.rows.find((row) => row.kind === "method")?.cells.map((cell) => cell.evidence[0]?.passageId)).toEqual([
+      firstPassage?.id,
+      secondPassage?.id
+    ]);
     index.close();
   });
 });

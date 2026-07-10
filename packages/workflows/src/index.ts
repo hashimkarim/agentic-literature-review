@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { AgentHarness, AgentProviderCatalog, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
 import {
+  ComparisonArtifactSchema,
   EvidenceRefSchema,
   MetadataFieldNameSchema,
   MetadataFieldValueSchema,
@@ -19,8 +20,11 @@ import {
   QaThreadSchema,
   ResearchAttributeValueSchema,
   ResearchRecordKindSchema,
+  ReviewComparisonArtifactRequestSchema,
   WorkflowRunSchema,
   WorkflowTypeSchema,
+  type ComparisonArtifact,
+  type ComparisonCell,
   type EvidenceRef,
   type MetadataFieldName,
   type MetadataFieldProposal,
@@ -34,7 +38,9 @@ import {
   type QaThread,
   type QaThreadRequestInput,
   type ResearchItem,
+  type ResearchRecord,
   type ResearchRecordKind,
+  type ReviewComparisonArtifactRequestInput,
   type SearchResult,
   type WorkflowRun,
   type WorkflowType
@@ -96,6 +102,20 @@ const ProviderResearchFindingsResultSchema = z.object({
   proposals: z.array(z.object({
     paperId: z.string(),
     items: z.array(ProviderResearchItemSchema).default([])
+  })).min(1)
+});
+
+const ProviderComparisonResultSchema = z.object({
+  title: z.string().min(1),
+  summary: z.string().default(""),
+  rows: z.array(z.object({
+    kind: ResearchRecordKindSchema,
+    cells: z.array(z.object({
+      paperId: z.string(),
+      status: z.enum(["supported", "not_found"]),
+      summary: z.string().min(1),
+      recordIds: z.array(z.string()).default([])
+    })).min(2)
   })).min(1)
 });
 
@@ -210,6 +230,40 @@ function collectPapers(repo: LitAgentRepository, request: WorkflowStartRequest):
     return entries.map((entry) => entry.paper);
   }
   return repo.listGlobalPapers();
+}
+
+const comparisonKinds: ResearchRecordKind[] = [
+  "finding",
+  "method",
+  "dataset",
+  "result",
+  "limitation",
+  "reproducibility"
+];
+
+const comparisonKindLabels: Record<ResearchRecordKind, string> = {
+  finding: "Key findings",
+  method: "Methods",
+  dataset: "Datasets",
+  result: "Results",
+  limitation: "Limitations",
+  reproducibility: "Reproducibility"
+};
+
+function uniqueEvidence(records: ResearchRecord[]): EvidenceRef[] {
+  const evidence = new Map<string, EvidenceRef>();
+  for (const record of records) {
+    for (const item of record.evidence) evidence.set(`${item.paperId}:${item.passageId}`, item);
+  }
+  return [...evidence.values()];
+}
+
+function comparisonCellKey(kind: ResearchRecordKind, paperId: string): string {
+  return `${kind}:${paperId}`;
+}
+
+function markdownTableValue(value: string): string {
+  return value.replaceAll("|", "\\|").replace(/\s+/g, " ").trim();
 }
 
 function scoreRelevance(paper: Paper, query: string, markdown = ""): number {
@@ -1743,6 +1797,57 @@ export class WorkflowEngine {
     private readonly providerSettings: AgentProviderSettingsStore | null = null
   ) {}
 
+  listComparisonArtifacts(projectId: string | null): ComparisonArtifact[] {
+    const dir = this.comparisonDirectory(projectId);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => ComparisonArtifactSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"))))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  readComparisonArtifact(projectId: string | null, comparisonId: string): ComparisonArtifact | null {
+    const filePath = this.comparisonJsonPath(projectId, comparisonId);
+    if (!fs.existsSync(filePath)) return null;
+    return ComparisonArtifactSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+  }
+
+  reviewComparisonArtifact(
+    projectId: string | null,
+    comparisonId: string,
+    input: ReviewComparisonArtifactRequestInput
+  ): ComparisonArtifact {
+    const request = ReviewComparisonArtifactRequestSchema.parse(input);
+    const current = this.readComparisonArtifact(projectId, comparisonId);
+    if (!current) throw new Error(`Comparison artifact not found: ${comparisonId}`);
+    if (current.status !== "draft") {
+      if (current.status === request.decision) return current;
+      throw new Error(`Comparison artifact has already been ${current.status}.`);
+    }
+    const validCellKeys = new Set(
+      current.rows.flatMap((row) => row.cells.map((cell) => comparisonCellKey(row.kind, cell.paperId)))
+    );
+    const unknownCellKeys = Object.keys(request.cellSummaries).filter((key) => !validCellKeys.has(key));
+    if (unknownCellKeys.length > 0) throw new Error(`Comparison review includes unknown cells: ${unknownCellKeys.join(", ")}`);
+    const reviewedAt = nowIso();
+    return this.persistComparisonArtifact(ComparisonArtifactSchema.parse({
+      ...current,
+      title: request.title ?? current.title,
+      summary: request.summary ?? current.summary,
+      rows: current.rows.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell) => ({
+          ...cell,
+          summary: request.cellSummaries[comparisonCellKey(row.kind, cell.paperId)] ?? cell.summary
+        }))
+      })),
+      status: request.decision,
+      reviewedAt,
+      updatedAt: reviewedAt
+    }));
+  }
+
   answerQuestion(input: QaRequestInput): QaResponse {
     const parsed = QaRequestSchema.parse(input);
     return this.buildLocalQaResponse(parsed);
@@ -2324,6 +2429,7 @@ export class WorkflowEngine {
           .map((artifactPath) => (fs.existsSync(artifactPath) ? fs.readFileSync(artifactPath, "utf8") : ""))
           .find((content) => content.trim().length > 0) ?? result.transcript;
       let proposalIds: string[] = [];
+      let comparison: ComparisonArtifact | null = null;
       if (request.type === "relevance-tagging") {
         try {
           proposalIds = this.createProviderRelevanceProposals(request, run.id, finalText, absoluteEventsPath);
@@ -2372,20 +2478,44 @@ export class WorkflowEngine {
             })
           );
         }
+      } else if (request.type === "compare-papers") {
+        try {
+          const structuredOutput = result.events
+            .map((runEvent) => runEvent.payload.native)
+            .find((native) => ProviderComparisonResultSchema.safeParse(native).success);
+          comparison = this.createProviderComparisonArtifact(
+            request,
+            run.id,
+            structuredOutput ?? finalText,
+            absoluteEventsPath
+          );
+        } catch (error) {
+          status = "failed";
+          appendEvent(
+            absoluteEventsPath,
+            event({
+              runId: run.id,
+              providerId: request.providerId,
+              type: "run.failed",
+              message: error instanceof Error ? error.message : String(error),
+              payload: { failureClass: "invalid_workflow_output" }
+            })
+          );
+        }
       }
-      const outputPath = this.writeProjectOutput(
-        request.projectId,
-        `${slugify(request.type)}-${slugify(run.id)}.md`,
-        [
-          `# ${request.type}`,
-          "",
-          `Provider: ${request.providerId}`,
-          `Model: ${request.model ?? "CLI default"}`,
-          `Run: ${run.id}`,
-          "",
-          finalText.trim() || "Provider completed without assistant text output."
-        ].join("\n")
-      );
+      const outputPath = comparison?.outputPath ?? this.writeProjectOutput(
+          request.projectId,
+          `${slugify(request.type)}-${slugify(run.id)}.md`,
+          [
+            `# ${request.type}`,
+            "",
+            `Provider: ${request.providerId}`,
+            `Model: ${request.model ?? "CLI default"}`,
+            `Run: ${run.id}`,
+            "",
+            finalText.trim() || "Provider completed without assistant text output."
+          ].join("\n")
+        );
       appendEvent(
         absoluteEventsPath,
         event({
@@ -2393,7 +2523,12 @@ export class WorkflowEngine {
           providerId: request.providerId,
           type: "artifact.written",
           message: "Provider transcript artifact written",
-          payload: { outputPath, sessionId: result.sessionId, proposalIds }
+          payload: {
+            outputPath,
+            sessionId: result.sessionId,
+            proposalIds,
+            ...(comparison ? { comparisonId: comparison.id, compared: comparison.paperIds } : {})
+          }
         })
       );
     }
@@ -2734,6 +2869,36 @@ export class WorkflowEngine {
         "",
         "Selected paper context:",
         findingsContext || "No papers are selected."
+      ].join("\n");
+    }
+    if (request.type === "compare-papers") {
+      const recordsByPaper = this.comparisonRecords(papers, request.projectId);
+      const acceptedRecordContext = papers.map((paper) => [
+        `--- PAPER: ${paper.title} ---`,
+        `paperId: ${paper.id}`,
+        ...(recordsByPaper.get(paper.id)?.length
+          ? (recordsByPaper.get(paper.id) ?? []).map((record) =>
+              `- recordId=${record.id}; kind=${record.kind}; title=${record.title}; content=${record.content}; evidence=${record.evidence.map((item) => item.passageId).join(",")}`
+            )
+          : ["- no accepted research records"])
+      ].join("\n")).join("\n\n");
+      return [
+        "You are LitAgent comparing research papers from reviewed, accepted research records.",
+        "Use only the accepted records supplied below. Do not use unreviewed proposals, outside knowledge, or unsupported details.",
+        "Return exactly one row for each kind: finding, method, dataset, result, limitation, reproducibility.",
+        "Return exactly one cell for every selected paper in every row.",
+        "A supported cell must reference one or more accepted recordId values from the same paper and row kind.",
+        "Use status not_found with an empty recordIds array when accepted records do not support that cell.",
+        "Summaries should be concise comparisons, preserve important measurements and dataset names, and state gaps plainly.",
+        "Return only JSON with no Markdown fence or commentary.",
+        "Schema: {\"title\":\"...\",\"summary\":\"...\",\"rows\":[{\"kind\":\"finding|method|dataset|result|limitation|reproducibility\",\"cells\":[{\"paperId\":\"...\",\"status\":\"supported|not_found\",\"summary\":\"...\",\"recordIds\":[\"record_...\"]}]}]}",
+        "",
+        `Workflow run id: ${runId}`,
+        `Project: ${project?.name ?? "global library"}`,
+        `Research question context: ${request.query ?? researchQuestions[0] ?? "none supplied"}`,
+        "",
+        "Accepted research records:",
+        acceptedRecordContext
       ].join("\n");
     }
     return [
@@ -3092,18 +3257,13 @@ export class WorkflowEngine {
         return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
       }
       case "compare-papers": {
-        const lines = [
-          "# Paper Comparison",
-          "",
-          "| Paper | Year | Tags | Evidence passages |",
-          "| --- | ---: | --- | ---: |",
-          ...papers.map(
-            (paper) =>
-              `| ${paper.title} | ${paper.year ?? ""} | ${paper.tags.join(", ")} | ${this.repo.readPassages(paper.id).length} |`
-          )
-        ];
-        const outputPath = this.writeProjectOutput(request.projectId, `comparison-${slugify(runId)}.md`, lines.join("\n"));
-        return { outputPath, compared: papers.map((paper) => paper.id) };
+        const comparison = this.createLocalComparisonArtifact(request, runId, absoluteEventsPath);
+        return {
+          comparisonId: comparison.id,
+          outputPath: comparison.outputPath,
+          compared: comparison.paperIds,
+          status: comparison.status
+        };
       }
       case "synthesis-note":
       case "contradiction-finder":
@@ -3173,6 +3333,245 @@ export class WorkflowEngine {
           commonHooks
         );
     return { ...result };
+  }
+
+  private comparisonDirectory(projectId: string | null): string {
+    return this.repo.resolve(projectId ? `projects/${projectId}/outputs/comparisons` : "workflows/comparisons");
+  }
+
+  private comparisonJsonPath(projectId: string | null, comparisonId: string): string {
+    return path.join(this.comparisonDirectory(projectId), `${comparisonId}.json`);
+  }
+
+  private comparisonOutputPath(projectId: string | null, comparisonId: string): string {
+    return projectId
+      ? `projects/${projectId}/outputs/comparisons/${comparisonId}.md`
+      : `workflows/comparisons/${comparisonId}.md`;
+  }
+
+  private comparisonRecords(papers: Paper[], projectId: string | null): Map<string, ResearchRecord[]> {
+    return new Map(papers.map((paper) => [paper.id, this.repo.listResearchRecords(paper.id, projectId)]));
+  }
+
+  private createLocalComparisonArtifact(
+    request: WorkflowStartRequest,
+    runId: string,
+    absoluteEventsPath: string
+  ): ComparisonArtifact {
+    const papers = collectPapers(this.repo, request);
+    this.assertComparisonScope(papers);
+    const recordsByPaper = this.comparisonRecords(papers, request.projectId);
+    this.assertComparisonRecords(recordsByPaper);
+    const rows = comparisonKinds.map((kind) => ({
+      kind,
+      label: comparisonKindLabels[kind],
+      cells: papers.map((paper): ComparisonCell => {
+        const records = (recordsByPaper.get(paper.id) ?? []).filter((record) => record.kind === kind);
+        return records.length > 0
+          ? {
+              paperId: paper.id,
+              status: "supported",
+              summary: records.map((record) => `${record.title}: ${record.content}`).join(" "),
+              recordIds: records.map((record) => record.id),
+              evidence: uniqueEvidence(records)
+            }
+          : {
+              paperId: paper.id,
+              status: "not_found",
+              summary: "Not available in accepted records.",
+              recordIds: [],
+              evidence: []
+            };
+      })
+    }));
+    const supportedCells = rows.flatMap((row) => row.cells).filter((cell) => cell.status === "supported").length;
+    return this.createComparisonArtifact({
+      request,
+      runId,
+      papers,
+      title: this.defaultComparisonTitle(papers),
+      summary: `Compared ${papers.length} papers across ${comparisonKinds.length} evidence-backed dimensions; ${supportedCells} cells contain accepted records.`,
+      rows,
+      absoluteEventsPath
+    });
+  }
+
+  private createProviderComparisonArtifact(
+    request: WorkflowStartRequest,
+    runId: string,
+    providerOutput: unknown,
+    absoluteEventsPath: string
+  ): ComparisonArtifact {
+    const papers = collectPapers(this.repo, request);
+    this.assertComparisonScope(papers);
+    const recordsByPaper = this.comparisonRecords(papers, request.projectId);
+    this.assertComparisonRecords(recordsByPaper);
+    const parsed = ProviderComparisonResultSchema.parse(
+      typeof providerOutput === "string" ? parseProviderJson(providerOutput) : providerOutput
+    );
+    const paperIds = new Set(papers.map((paper) => paper.id));
+    const rowsByKind = new Map(parsed.rows.map((row) => [row.kind, row]));
+    const missingKinds = comparisonKinds.filter((kind) => !rowsByKind.has(kind));
+    if (missingKinds.length > 0) throw new Error(`Provider omitted comparison rows: ${missingKinds.join(", ")}`);
+    const rows = comparisonKinds.map((kind) => {
+      const providerRow = rowsByKind.get(kind);
+      if (!providerRow) throw new Error(`Provider omitted comparison row: ${kind}`);
+      const cellsByPaper = new Map(providerRow.cells.map((cell) => [cell.paperId, cell]));
+      const unknownPaperIds = providerRow.cells.map((cell) => cell.paperId).filter((paperId) => !paperIds.has(paperId));
+      if (unknownPaperIds.length > 0) throw new Error(`Provider returned out-of-scope comparison papers: ${unknownPaperIds.join(", ")}`);
+      const missingPaperIds = papers.map((paper) => paper.id).filter((paperId) => !cellsByPaper.has(paperId));
+      if (missingPaperIds.length > 0) throw new Error(`Provider omitted comparison cells for ${kind}: ${missingPaperIds.join(", ")}`);
+      return {
+        kind,
+        label: comparisonKindLabels[kind],
+        cells: papers.map((paper): ComparisonCell => {
+          const providerCell = cellsByPaper.get(paper.id);
+          if (!providerCell) throw new Error(`Provider omitted comparison cell: ${kind}/${paper.id}`);
+          const records = recordsByPaper.get(paper.id) ?? [];
+          const recordsById = new Map(records.map((record) => [record.id, record]));
+          const selectedRecords = providerCell.recordIds.map((recordId) => {
+            const record = recordsById.get(recordId);
+            if (!record || record.kind !== kind) throw new Error(`Provider used an invalid accepted record for ${kind}/${paper.id}: ${recordId}`);
+            return record;
+          });
+          if (providerCell.status === "supported" && selectedRecords.length === 0) {
+            throw new Error(`Provider marked ${kind}/${paper.id} as supported without an accepted record.`);
+          }
+          if (providerCell.status === "not_found" && selectedRecords.length > 0) {
+            throw new Error(`Provider marked ${kind}/${paper.id} as not found but attached accepted records.`);
+          }
+          return {
+            paperId: paper.id,
+            status: providerCell.status,
+            summary: providerCell.summary,
+            recordIds: selectedRecords.map((record) => record.id),
+            evidence: uniqueEvidence(selectedRecords)
+          };
+        })
+      };
+    });
+    return this.createComparisonArtifact({
+      request,
+      runId,
+      papers,
+      title: parsed.title,
+      summary: parsed.summary,
+      rows,
+      absoluteEventsPath
+    });
+  }
+
+  private createComparisonArtifact(input: {
+    request: WorkflowStartRequest;
+    runId: string;
+    papers: Paper[];
+    title: string;
+    summary: string;
+    rows: ComparisonArtifact["rows"];
+    absoluteEventsPath: string;
+  }): ComparisonArtifact {
+    const id = createId("comparison");
+    const timestamp = nowIso();
+    const artifact = this.persistComparisonArtifact(ComparisonArtifactSchema.parse({
+      id,
+      runId: input.runId,
+      projectId: input.request.projectId,
+      title: input.title,
+      summary: input.summary,
+      query: input.request.query,
+      paperIds: input.papers.map((paper) => paper.id),
+      rows: input.rows,
+      providerId: input.request.providerId,
+      model: input.request.model,
+      status: "draft",
+      outputPath: this.comparisonOutputPath(input.request.projectId, id),
+      reviewedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    const emitted = new Set<string>();
+    for (const evidence of artifact.rows.flatMap((row) => row.cells.flatMap((cell) => cell.evidence))) {
+      const key = `${evidence.paperId}:${evidence.passageId}`;
+      if (emitted.has(key)) continue;
+      emitted.add(key);
+      appendEvent(input.absoluteEventsPath, event({
+        runId: input.runId,
+        providerId: input.request.providerId,
+        type: "evidence.found",
+        message: evidence.quote,
+        payload: { ...evidence, comparisonId: artifact.id }
+      }));
+    }
+    return artifact;
+  }
+
+  private persistComparisonArtifact(artifact: ComparisonArtifact): ComparisonArtifact {
+    const parsed = ComparisonArtifactSchema.parse(artifact);
+    const dir = this.comparisonDirectory(parsed.projectId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(this.comparisonJsonPath(parsed.projectId, parsed.id), `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    const markdownPath = this.repo.resolve(parsed.outputPath);
+    fs.mkdirSync(path.dirname(markdownPath), { recursive: true });
+    fs.writeFileSync(markdownPath, `${this.renderComparisonMarkdown(parsed).trim()}\n`, "utf8");
+    return parsed;
+  }
+
+  private renderComparisonMarkdown(artifact: ComparisonArtifact): string {
+    const papers = artifact.paperIds.map((paperId) => this.repo.readPaper(paperId)).filter((paper): paper is Paper => Boolean(paper));
+    const evidenceByKey = new Map<string, { index: number; evidence: EvidenceRef }>();
+    for (const evidence of artifact.rows.flatMap((row) => row.cells.flatMap((cell) => cell.evidence))) {
+      const key = `${evidence.paperId}:${evidence.passageId}`;
+      if (!evidenceByKey.has(key)) evidenceByKey.set(key, { index: evidenceByKey.size + 1, evidence });
+    }
+    const header = `| Dimension | ${papers.map((paper) => markdownTableValue(paper.title)).join(" | ")} |`;
+    const divider = `| --- | ${papers.map(() => "---").join(" | ")} |`;
+    const rows = artifact.rows.map((row) => {
+      const cells = artifact.paperIds.map((paperId) => {
+        const cell = row.cells.find((candidate) => candidate.paperId === paperId);
+        if (!cell) return "Not found";
+        const refs = cell.evidence
+          .map((evidence) => evidenceByKey.get(`${evidence.paperId}:${evidence.passageId}`)?.index)
+          .filter((index): index is number => Boolean(index))
+          .map((index) => `[^${index}]`)
+          .join(" ");
+        return markdownTableValue(`${cell.summary}${refs ? ` ${refs}` : ""}`);
+      });
+      return `| **${row.label}** | ${cells.join(" | ")} |`;
+    });
+    const evidenceLines = [...evidenceByKey.values()].map(({ index, evidence }) =>
+      `[^${index}]: ${evidence.paperTitle || evidence.paperId}${evidence.page ? `, p. ${evidence.page}` : ""}${evidence.section ? `, ${evidence.section}` : ""}. Passage \`${evidence.passageId}\`: ${evidence.quote}`
+    );
+    return [
+      `# ${artifact.title}`,
+      "",
+      `Status: **${artifact.status}**`,
+      artifact.query ? `Research question: ${artifact.query}` : "",
+      "",
+      artifact.summary,
+      "",
+      header,
+      divider,
+      ...rows,
+      "",
+      "## Evidence",
+      "",
+      ...(evidenceLines.length ? evidenceLines : ["No accepted-record evidence is available."])
+    ].filter((line, index, lines) => line !== "" || lines[index - 1] !== "").join("\n");
+  }
+
+  private assertComparisonScope(papers: Paper[]): void {
+    if (papers.length < 2) throw new Error("Paper comparison requires at least two selected papers.");
+  }
+
+  private assertComparisonRecords(recordsByPaper: Map<string, ResearchRecord[]>): void {
+    if ([...recordsByPaper.values()].every((records) => records.length === 0)) {
+      throw new Error("Paper comparison requires accepted research records. Run Key findings and accept supported items first.");
+    }
+  }
+
+  private defaultComparisonTitle(papers: Paper[]): string {
+    if (papers.length === 2) return `${papers[0]?.title ?? "Paper 1"} compared with ${papers[1]?.title ?? "Paper 2"}`;
+    return `Comparison of ${papers.length} papers`;
   }
 
   private writeProjectOutput(projectId: string | null, filename: string, content: string): string {

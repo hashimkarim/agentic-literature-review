@@ -19,6 +19,7 @@ import {
   QaRequestSchema,
   QaThreadRequestSchema,
   ReviewMetadataProposalRequestSchema,
+  ReviewComparisonArtifactRequestSchema,
   ReviewResearchFindingProposalRequestSchema,
   ReviewRelevanceProposalRequestSchema,
   SearchRequestSchema,
@@ -688,6 +689,39 @@ app.get(
   "/api/workflows",
   asyncHandler((_req, res) => {
     res.json(workflows.listRuns());
+  })
+);
+
+app.get(
+  "/api/comparisons",
+  asyncHandler((req, res) => {
+    res.json(workflows.listComparisonArtifacts(queryString(req, "projectId")));
+  })
+);
+
+app.get(
+  "/api/comparisons/:comparisonId",
+  asyncHandler((req, res) => {
+    const artifact = workflows.readComparisonArtifact(
+      queryString(req, "projectId"),
+      routeParam(req, "comparisonId")
+    );
+    if (!artifact) {
+      res.status(404).json({ error: "Comparison artifact not found" });
+      return;
+    }
+    res.json(artifact);
+  })
+);
+
+app.patch(
+  "/api/comparisons/:comparisonId",
+  asyncHandler((req, res) => {
+    res.json(workflows.reviewComparisonArtifact(
+      queryString(req, "projectId"),
+      routeParam(req, "comparisonId"),
+      ReviewComparisonArtifactRequestSchema.parse(req.body)
+    ));
   })
 );
 
