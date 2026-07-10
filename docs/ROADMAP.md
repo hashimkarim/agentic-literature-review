@@ -15,31 +15,33 @@ state, tags, collections, notes, questions, and generated research artifacts.
 | PDF import and conversion | Working | Recursive PDF inbox, upload import, bundled Marker runtime path, assets, Markdown, passages, FTS refresh | Packaged-runtime validation on all desktop targets |
 | PDF reader | Working | PDF.js highlighter, text/area/drawing annotations, colors/fill, persistence, citation jumps | Exact generated citation rectangles on more PDFs |
 | Markdown reader | Working | GFM, figures/assets, KaTeX equations, tables, links, algorithm rendering | Editing and side-by-side PDF/Markdown mode |
-| Search and cited Q&A | Working MVP | Scoped FTS, provider-backed Markdown-context answers, persistent chat threads, linked supporting evidence | Anchor-based citation validation and conversation-aware follow-ups |
+| Search and cited Q&A | Working MVP | Scoped FTS, provider-backed Markdown-context answers, persistent chat threads, validated passage citations, evidence-backed inference and follow-ups | Evaluation/repair loop and scalable project retrieval |
 | Provider harness | Working MVP | Codex, Claude, Gemini, OpenCode, Copilot and custom CLI discovery/settings, streaming, cancellation, normalized logs | PTY/ACP support, approval prompts, resume and richer model discovery |
-| Agent workflows | Working MVP | Queue, provider/model selection, conversion, Q&A, and reviewable relevance, metadata, findings, methods, datasets, results, limitations, and reproducibility records | Build comparison/synthesis from accepted records and implement discovery |
+| Agent workflows | Working MVP | Queue, provider/model selection, conversion, Q&A, reviewable relevance/metadata/research records, and cited comparison matrices from accepted records | Build synthesis from accepted comparisons and implement discovery |
 | Notes | Backend foundation | Markdown note CRUD and annotation links | Real editor, backlinks, workflow-to-note flow and note search UI |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
 | Git and LFS | Foundation | Repository bootstrap, LFS policy and status display | Commit/sync UI, conflict handling and recovery guidance |
 
 The core reading loop is usable: import a PDF, convert it, read/annotate it,
-ask a provider-backed question, and jump from supporting evidence to the source.
-The app is not feature-complete yet because comparison, synthesis, discovery,
-screening, and note workflows still need to consume the structured records.
+ask a provider-backed question, compare accepted records across papers, and jump
+from supporting evidence to the source. The app is not feature-complete yet
+because synthesis, discovery, screening, and note workflows still need to
+consume the structured records.
 
 ## Ordered Milestones
 
 ### 1. Reviewable Agent Outputs
 
-Status: core record extraction complete; derived artifacts in progress.
+Status: record extraction and comparison artifacts complete; synthesis next.
 
 - Evidence-backed relevance proposals can be edited, accepted, or rejected before
   changing project state.
 - Metadata patch proposals support field-level evidence, edits, and partial acceptance.
 - Findings, methods, datasets, results, limitations, and reproducibility details
   become typed, evidence-backed records only after per-item review.
-- Build comparison and synthesis artifacts from accepted records and evidence.
+- Build cited comparison artifacts from accepted records and evidence. Complete.
+- Build synthesis artifacts from accepted comparison cells and evidence.
 
 ### 2. Research Notes And Evidence Ledger
 

@@ -10,6 +10,7 @@ import "katex/dist/katex.min.css";
 import type {
   AgentProvider,
   CitationTarget,
+  ComparisonArtifact,
   EvidenceRef,
   MetadataProposal,
   Passage,
@@ -19,6 +20,7 @@ import type {
   RelevanceProposal,
   ResearchFindingProposal,
   ResearchRecord,
+  ReviewComparisonArtifactRequest,
   ReviewMetadataProposalRequest,
   ReviewResearchFindingProposalRequest,
   ReviewRelevanceProposalRequest,
@@ -327,7 +329,6 @@ const workflowRecipes: Array<{ type: WorkflowType; name: string; icon: string; d
   { type: "relevance-tagging", name: "Relevance tagging", icon: "tag", desc: "Tag against RQs" },
   { type: "metadata-extraction", name: "Metadata extract", icon: "list", desc: "Patch proposals" },
   { type: "key-findings", name: "Key findings", icon: "key", desc: "Findings and limits" },
-  { type: "compare-papers", name: "Comparison matrix", icon: "columns-3", desc: "Compare papers" },
   { type: "find-papers", name: "Find related", icon: "git-fork", desc: "Similar papers" },
   { type: "synthesis-note", name: "Synthesis note", icon: "notebook-pen", desc: "Generate note" },
   { type: "contradiction-finder", name: "Contradictions", icon: "split", desc: "Find conflicts" },
@@ -1241,7 +1242,7 @@ function LibraryScreen(props: WorkspaceProps & { projects: Project[] }) {
           <AgentPanel {...props} contextLabel="Global Library" scopeProjectId={null} />
         </div>
       ) : (
-        <ScopedToolView tool={tool} contextLabel="Global Library" scopeProjectId={null} {...props} />
+        <ScopedToolView tool={tool} contextLabel="Global Library" scopeProjectId={null} onNavigatePapers={() => setTool("papers")} {...props} />
       )}
     </WorkspaceShell>
   );
@@ -1342,7 +1343,7 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
           <AgentPanel {...props} contextLabel={props.project.name} scopeProjectId={props.activeProjectId} />
         </div>
       ) : (
-        <ScopedToolView tool={tool} contextLabel={props.project.name} scopeProjectId={props.activeProjectId} {...props} />
+        <ScopedToolView tool={tool} contextLabel={props.project.name} scopeProjectId={props.activeProjectId} onNavigatePapers={() => setTool("papers")} {...props} />
       )}
     </WorkspaceShell>
   );
@@ -3141,7 +3142,7 @@ function WorkflowQueue({
   );
 }
 
-function ScopedToolView(props: WorkspaceProps & { tool: WorkspaceTool; contextLabel: string; scopeProjectId: string | null }) {
+function ScopedToolView(props: WorkspaceProps & { tool: WorkspaceTool; contextLabel: string; scopeProjectId: string | null; onNavigatePapers: () => void }) {
   if (props.tool === "workflows") return <WorkflowsView {...props} />;
   if (props.tool === "map") return <ConceptMapView papers={props.papers} />;
   if (props.tool === "notes") return <NotesToolView papers={props.papers} />;
@@ -3149,7 +3150,23 @@ function ScopedToolView(props: WorkspaceProps & { tool: WorkspaceTool; contextLa
   return null;
 }
 
-function WorkflowsView({ contextLabel, scopeProjectId, papers, selectedPaper, workflows, onRefreshWorkflows, onRunWorkflow, onCancelWorkflow }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
+function WorkflowsView({
+  contextLabel,
+  scopeProjectId,
+  papers,
+  selectedPaper,
+  providers,
+  selectedProviderId,
+  selectedModel,
+  onProviderChange,
+  onModelChange,
+  workflows,
+  onRefreshWorkflows,
+  onRunWorkflow,
+  onCancelWorkflow,
+  onOpenCitation,
+  onNavigatePapers
+}: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null; onNavigatePapers: () => void }) {
   const [sourceDir, setSourceDir] = useState("pdfs");
   const [force, setForce] = useState(false);
   const [intervalMinutes, setIntervalMinutes] = useState(15);
@@ -3157,6 +3174,15 @@ function WorkflowsView({ contextLabel, scopeProjectId, papers, selectedPaper, wo
   const [automation, setAutomation] = useState<PdfInboxAutomationRule | null>(null);
   const [converterStatus, setConverterStatus] = useState<ConverterStatus | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [comparisonPaperIds, setComparisonPaperIds] = useState<string[]>([]);
+  const [comparisonQuery, setComparisonQuery] = useState("");
+  const [comparisons, setComparisons] = useState<ComparisonArtifact[]>([]);
+  const [activeComparisonId, setActiveComparisonId] = useState<string | null>(null);
+  const [comparisonEditing, setComparisonEditing] = useState(false);
+  const [comparisonTitle, setComparisonTitle] = useState("");
+  const [comparisonSummary, setComparisonSummary] = useState("");
+  const [comparisonCellSummaries, setComparisonCellSummaries] = useState<Record<string, string>>({});
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
   const scanInbox = useCallback(() => {
     setScanning(true);
     void api
@@ -3168,6 +3194,84 @@ function WorkflowsView({ contextLabel, scopeProjectId, papers, selectedPaper, wo
   useEffect(() => {
     scanInbox();
   }, [scanInbox]);
+
+  useEffect(() => {
+    const available = new Set(papers.map((paper) => paper.id));
+    setComparisonPaperIds((current) => {
+      const retained = current.filter((paperId) => available.has(paperId));
+      if (retained.length > 0 || !selectedPaper) return retained;
+      return [selectedPaper.id];
+    });
+  }, [papers, selectedPaper?.id]);
+
+  const comparisonWorkflowSignature = workflows
+    .filter((run) => run.type === "compare-papers" && run.projectId === scopeProjectId)
+    .map((run) => `${run.id}:${run.status}:${run.updatedAt}`)
+    .join("|");
+  useEffect(() => {
+    void api.comparisons(scopeProjectId).then((items) => {
+      setComparisons(items);
+      setActiveComparisonId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id ?? null);
+    }).catch((error: unknown) => setComparisonError(error instanceof Error ? error.message : String(error)));
+    const latestRun = workflows.find((run) => run.type === "compare-papers" && run.projectId === scopeProjectId);
+    if (latestRun?.status === "failed") {
+      void api.workflow(latestRun.id).then(({ events }) => {
+        const failure = [...events]
+          .reverse()
+          .find((item): item is { type: string; message: string } => Boolean(
+            item
+            && typeof item === "object"
+            && "type" in item
+            && item.type === "run.failed"
+            && "message" in item
+            && typeof item.message === "string"
+          ));
+        setComparisonError(failure?.message ?? "Comparison workflow failed.");
+      }).catch(() => setComparisonError("Comparison workflow failed."));
+    }
+  }, [scopeProjectId, comparisonWorkflowSignature]);
+
+  const activeComparison = comparisons.find((comparison) => comparison.id === activeComparisonId) ?? comparisons[0] ?? null;
+  useEffect(() => {
+    if (!activeComparison) return;
+    setComparisonTitle(activeComparison.title);
+    setComparisonSummary(activeComparison.summary);
+    setComparisonCellSummaries(Object.fromEntries(
+      activeComparison.rows.flatMap((row) => row.cells.map((cell) => [`${row.kind}:${cell.paperId}`, cell.summary]))
+    ));
+    setComparisonEditing(false);
+  }, [activeComparison?.id, activeComparison?.updatedAt]);
+
+  const comparisonRun = workflows.find((run) =>
+    run.type === "compare-papers"
+    && run.projectId === scopeProjectId
+    && (run.status === "running" || run.status === "queued")
+  ) ?? null;
+
+  const toggleComparisonPaper = useCallback((paperId: string) => {
+    setComparisonPaperIds((current) => current.includes(paperId)
+      ? current.filter((candidate) => candidate !== paperId)
+      : [...current, paperId]);
+  }, []);
+
+  const reviewComparison = useCallback((decision: ReviewComparisonArtifactRequest["decision"]) => {
+    if (!activeComparison) return;
+    setComparisonError(null);
+    const request: ReviewComparisonArtifactRequest = {
+      decision,
+      cellSummaries: comparisonEditing ? comparisonCellSummaries : {},
+      ...(comparisonEditing ? {
+        title: comparisonTitle.trim() || activeComparison.title,
+        summary: comparisonSummary.trim()
+      } : {})
+    };
+    void api.reviewComparison(activeComparison.id, scopeProjectId, request)
+      .then((reviewed) => {
+        setComparisons((current) => current.map((item) => item.id === reviewed.id ? reviewed : item));
+        setComparisonEditing(false);
+      })
+      .catch((error: unknown) => setComparisonError(error instanceof Error ? error.message : String(error)));
+  }, [activeComparison, comparisonCellSummaries, comparisonEditing, comparisonSummary, comparisonTitle, scopeProjectId]);
 
   useEffect(() => {
     void api.pdfInboxAutomation().then((rule) => {
@@ -3317,6 +3421,141 @@ function WorkflowsView({ contextLabel, scopeProjectId, papers, selectedPaper, wo
               <p>Run a workflow on the selected paper or current scope.</p>
             </div>
             <Badge>{scopeProjectId ? "project scoped" : "global scoped"}</Badge>
+          </div>
+          <div className="la-comparison-builder">
+            <div className="la-comparison-head">
+              <div className="la-workflow-icon"><Icon name="columns-3" size={17} /></div>
+              <div className="la-comparison-headcopy">
+                <strong>Evidence-backed comparison</strong>
+                <span>Compare reviewed records; unsupported cells stay empty.</span>
+              </div>
+              <ModelPicker
+                providers={providers}
+                providerId={selectedProviderId}
+                model={selectedModel}
+                onProviderChange={onProviderChange}
+                onModelChange={onModelChange}
+              />
+            </div>
+            <div className="la-comparison-setup">
+              <div className="la-comparison-papers" aria-label="Papers to compare">
+                <div className="la-comparison-label">Papers <span>{comparisonPaperIds.length} selected</span></div>
+                <div className="la-comparison-paperlist">
+                  {papers.map((paper) => {
+                    const checked = comparisonPaperIds.includes(paper.id);
+                    return (
+                      <label key={paper.id} className={checked ? "on" : ""}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleComparisonPaper(paper.id)} />
+                        <span><strong>{paper.title}</strong><small>{paper.firstAuthor} · {paper.year ?? "unknown year"}</small></span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="la-comparison-config">
+                <label className="la-comparison-query">
+                  <span>Research question <small>optional</small></span>
+                  <input
+                    value={comparisonQuery}
+                    onChange={(event) => setComparisonQuery(event.currentTarget.value)}
+                    placeholder="What should the comparison focus on?"
+                  />
+                </label>
+                <div className="la-comparison-runline">
+                  <span>Methods, datasets, results, limitations and reproducibility</span>
+                  <Btn
+                    variant="primary"
+                    sm
+                    icon={comparisonRun ? "loader-circle" : "play"}
+                    onClick={() => {
+                      setComparisonError(null);
+                      onRunWorkflow("compare-papers", comparisonPaperIds, comparisonQuery.trim() || null);
+                    }}
+                    disabled={comparisonPaperIds.length < 2 || Boolean(comparisonRun)}
+                  >
+                    {comparisonRun ? "Comparing" : "Compare"}
+                  </Btn>
+                </div>
+                {comparisonPaperIds.length < 2 ? <div className="la-comparison-hint">Select at least two papers.</div> : null}
+                {comparisonError ? <div className="la-comparison-error"><Icon name="alert-triangle" size={13} />{comparisonError}</div> : null}
+              </div>
+            </div>
+            {comparisons.length ? (
+              <div className="la-comparison-result">
+                <div className="la-comparison-resulthead">
+                  <select value={activeComparison?.id ?? ""} onChange={(event) => setActiveComparisonId(event.currentTarget.value)}>
+                    {comparisons.map((comparison) => <option key={comparison.id} value={comparison.id}>{comparison.title}</option>)}
+                  </select>
+                  {activeComparison ? <Badge variant={activeComparison.status === "accepted" ? "success" : activeComparison.status === "rejected" ? "error" : "warning"}>{activeComparison.status}</Badge> : null}
+                  <span className="spacer" />
+                  {activeComparison?.status === "draft" ? (
+                    <>
+                      <Btn variant="ghost" sm icon="pencil" onClick={() => setComparisonEditing((current) => !current)}>{comparisonEditing ? "Cancel edit" : "Edit"}</Btn>
+                      <Btn variant="ghost" sm icon="x" onClick={() => reviewComparison("rejected")}>Reject</Btn>
+                      <Btn variant="primary" sm icon="check" onClick={() => reviewComparison("accepted")}>Accept</Btn>
+                    </>
+                  ) : null}
+                </div>
+                {activeComparison ? (
+                  <>
+                    {comparisonEditing ? (
+                      <div className="la-comparison-editmeta">
+                        <input value={comparisonTitle} onChange={(event) => setComparisonTitle(event.currentTarget.value)} aria-label="Comparison title" />
+                        <textarea value={comparisonSummary} onChange={(event) => setComparisonSummary(event.currentTarget.value)} rows={2} aria-label="Comparison summary" />
+                      </div>
+                    ) : (
+                      <p className="la-comparison-summary">{activeComparison.summary}</p>
+                    )}
+                    <div className="la-comparison-tablewrap">
+                      <table className="la-comparison-table">
+                        <thead>
+                          <tr>
+                            <th>Dimension</th>
+                            {activeComparison.paperIds.map((paperId) => <th key={paperId}>{papers.find((paper) => paper.id === paperId)?.title ?? paperId}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeComparison.rows.map((row) => (
+                            <tr key={row.kind}>
+                              <th>{row.label}</th>
+                              {activeComparison.paperIds.map((paperId) => {
+                                const cell = row.cells.find((candidate) => candidate.paperId === paperId);
+                                if (!cell) return <td key={paperId} className="missing">Not found</td>;
+                                const key = `${row.kind}:${paperId}`;
+                                return (
+                                  <td key={paperId} className={cell.status === "not_found" ? "missing" : ""}>
+                                    {comparisonEditing ? (
+                                      <textarea
+                                        value={comparisonCellSummaries[key] ?? cell.summary}
+                                        onChange={(event) => setComparisonCellSummaries((current) => ({ ...current, [key]: event.currentTarget.value }))}
+                                        rows={4}
+                                        aria-label={`${row.label} for ${papers.find((paper) => paper.id === paperId)?.title ?? paperId}`}
+                                      />
+                                    ) : <span>{cell.summary}</span>}
+                                    {cell.evidence.length ? (
+                                      <div className="la-comparison-evidence">
+                                        {cell.evidence.map((evidence, index) => (
+                                          <button key={`${evidence.paperId}:${evidence.passageId}`} type="button" onClick={() => {
+                                            onOpenCitation(evidence, scopeProjectId);
+                                            onNavigatePapers();
+                                          }} title={evidence.quote}>
+                                            <Icon name="quote" size={10} /> {index + 1}{evidence.page ? ` · p.${evidence.page}` : ""}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className={`la-workflow-target${selectedPaper ? "" : " empty"}`}>
             <div className="la-workflow-target-icon">

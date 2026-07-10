@@ -1,5 +1,6 @@
 import type {
   AgentProvider,
+  ComparisonArtifact,
   Collection,
   Paper,
   PaperProjectLink,
@@ -12,6 +13,7 @@ import type {
   ResearchFindingProposal,
   ResearchRecord,
   ReviewMetadataProposalRequest,
+  ReviewComparisonArtifactRequest,
   ReviewResearchFindingProposalRequest,
   ReviewRelevanceProposalRequest,
   CitationTarget,
@@ -187,6 +189,21 @@ export const api = {
       }
     ),
   workflows: () => request<WorkflowRun[]>("/api/workflows"),
+  comparisons: (projectId: string | null) =>
+    request<ComparisonArtifact[]>(`/api/comparisons${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
+  comparison: (comparisonId: string, projectId: string | null) =>
+    request<ComparisonArtifact>(
+      `/api/comparisons/${encodeURIComponent(comparisonId)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`
+    ),
+  reviewComparison: (comparisonId: string, projectId: string | null, body: ReviewComparisonArtifactRequest) =>
+    request<ComparisonArtifact>(
+      `/api/comparisons/${encodeURIComponent(comparisonId)}${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }
+    ),
   pdfInbox: (sourceDir = "pdfs") =>
     request<PdfInboxItem[]>(`/api/pdf-inbox?sourceDir=${encodeURIComponent(sourceDir)}`),
   pdfInboxAutomation: () => request<PdfInboxAutomationRule>("/api/workflow-automations/pdf-inbox"),
