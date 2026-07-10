@@ -403,7 +403,9 @@ function bestEvidenceSentence(quote: string, terms: string[]): string {
 function qaConversationContext(thread: QaThread): string {
   const maxMessages = 8;
   const maxChars = 12_000;
-  const messages = thread.messages.slice(-maxMessages);
+  const messages = thread.messages
+    .filter((message) => message.role === "user" || message.response?.status !== "not_found")
+    .slice(-maxMessages);
   const lines: string[] = [];
   let usedChars = 0;
   for (const message of messages.reverse()) {
@@ -421,8 +423,11 @@ function buildProviderQaPrompt(question: string, context: QaMarkdownContext, thr
   return [
     "You are LitAgent answering a literature-review question from converted Markdown papers.",
     "Use only the Markdown context below. Do not inspect files, run tools, or write files.",
-    "Use the prior conversation only to understand follow-up wording. It is not a factual source and must not be cited.",
-    "If the Markdown context does not answer the question, say: Not found in the selected sources.",
+    "Use the prior conversation only to understand follow-up wording. It is not a factual source, may contain incomplete earlier answers, and must not be cited.",
+    "Reasonable source-grounded deductions are allowed and expected when the paper does not state the answer verbatim.",
+    "For a deduction, clearly label it as an inference, state the reasoning briefly, and cite the passages containing every factual premise.",
+    "For example, bidirectional temporal context can support an inference that a model is offline/non-causal even if the paper never uses those exact labels.",
+    "Say 'Not found in the selected sources.' only when neither an explicit answer nor a defensible deduction is supported by the Markdown context.",
     "Answer from the whole paper context, not from a preselected evidence snippet list.",
     "Keep the answer concise and avoid adding outside knowledge.",
     "Every factual claim must end with one or more exact passage markers copied from the Markdown, using [[passage:PASSAGE_ID]].",
@@ -602,7 +607,28 @@ function answerClaimSpans(answer: string): AnswerClaimSpan[] {
       .trim();
     if (supportTerms(text).length >= 2) spans.push({ start: 0, end: answer.length, raw: answer, text });
   }
-  return spans;
+  const merged: AnswerClaimSpan[] = [];
+  for (let index = 0; index < spans.length; index += 1) {
+    const current = spans[index];
+    if (!current) continue;
+    const next = spans[index + 1];
+    const isInferenceLead = /^(?:inference\s*:|likely\b|this (?:suggests|implies|indicates)\b|therefore\b)/i.test(current.text);
+    const currentHasCitation = /\[\[passage:[^\]\s]+\]\]/.test(current.raw);
+    const nextHasCitation = next ? /\[\[passage:[^\]\s]+\]\]/.test(next.raw) : false;
+    const sameParagraph = next ? !answer.slice(current.end, next.start).includes("\n") : false;
+    if (isInferenceLead && !currentHasCitation && next && nextHasCitation && sameParagraph) {
+      merged.push({
+        start: current.start,
+        end: next.end,
+        raw: answer.slice(current.start, next.end),
+        text: `${current.text} ${next.text}`
+      });
+      index += 1;
+      continue;
+    }
+    merged.push(current);
+  }
+  return merged;
 }
 
 function passageDocumentFrequencies(candidates: QaPassageCandidate[]): Map<string, number> {
@@ -676,23 +702,34 @@ function linkAnswerToEvidence(question: string, answer: string, context: QaMarkd
       candidate,
       score: passageSupportScore(claim.text, question, candidate, documentFrequencies, Math.max(1, candidates.length))
     });
-    const requestedBest = requestedCandidates.map(scoreCandidate).sort((left, right) => right.score - left.score)[0];
+    const requestedSupported = requestedCandidates
+      .map(scoreCandidate)
+      .filter((item) => item.score >= 0.2);
     const fallbackBest = candidates.map(scoreCandidate).sort((left, right) => right.score - left.score)[0];
-    const best = requestedBest && requestedBest.score >= 0.2 ? requestedBest : fallbackBest;
-    if (!best || best.score < 0.2) {
+    const supported = requestedSupported.length > 0
+      ? requestedSupported
+      : fallbackBest && fallbackBest.score >= 0.2
+        ? [fallbackBest]
+        : [];
+    if (supported.length === 0) {
       edits.push({ start: claim.start, end: claim.end, replacement: "" });
       continue;
     }
-    if (requestedCandidates.some((candidate) => candidate.passage.id === best.candidate.passage.id)) usedProviderPassage = true;
-    let evidenceIndex = selectedIndexes.get(best.candidate.passage.id);
-    if (evidenceIndex === undefined) {
-      if (selected.length >= limit) {
-        edits.push({ start: claim.start, end: claim.end, replacement: "" });
-        continue;
+    if (requestedSupported.length > 0) usedProviderPassage = true;
+    const evidenceIndexes: number[] = [];
+    for (const item of supported) {
+      let evidenceIndex = selectedIndexes.get(item.candidate.passage.id);
+      if (evidenceIndex === undefined) {
+        if (selected.length >= limit) continue;
+        evidenceIndex = selected.length;
+        selected.push(item.candidate);
+        selectedIndexes.set(item.candidate.passage.id, evidenceIndex);
       }
-      evidenceIndex = selected.length;
-      selected.push(best.candidate);
-      selectedIndexes.set(best.candidate.passage.id, evidenceIndex);
+      evidenceIndexes.push(evidenceIndex);
+    }
+    if (evidenceIndexes.length === 0) {
+      edits.push({ start: claim.start, end: claim.end, replacement: "" });
+      continue;
     }
     const leading = claim.raw.match(/^\s*/)?.[0] ?? "";
     const trailing = claim.raw.match(/\s*$/)?.[0] ?? "";
@@ -700,7 +737,7 @@ function linkAnswerToEvidence(question: string, answer: string, context: QaMarkd
     edits.push({
       start: claim.start,
       end: claim.end,
-      replacement: `${leading}${cleanClaim} [${evidenceIndex + 1}]${trailing}`
+      replacement: `${leading}${cleanClaim} ${[...new Set(evidenceIndexes)].map((evidenceIndex) => `[${evidenceIndex + 1}]`).join(" ")}${trailing}`
     });
   }
 

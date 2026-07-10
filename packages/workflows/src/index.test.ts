@@ -755,6 +755,81 @@ describe("RAG question answering", () => {
     index.close();
   });
 
+  it("permits cited deductions without reinforcing earlier not-found answers", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Inference QA" });
+    const imported = repo.importPaper({
+      projectId: project.id,
+      metadata: { title: "Inference Paper" }
+    });
+    repo.writeMarkdown(
+      imported.paper.id,
+      [
+        "# Approach",
+        "",
+        "The temporal model uses multiple connections both forwards and backwards in time at different time scales.",
+        "",
+        "# Training",
+        "",
+        "The model is trained on full sequences with a batch size of one."
+      ].join("\n")
+    );
+    const passages = repo.readPassages(imported.paper.id);
+    const approachPassage = passages.find((passage) => passage.section === "Approach");
+    const trainingPassage = passages.find((passage) => passage.section === "Training");
+    expect(approachPassage).toBeTruthy();
+    expect(trainingPassage).toBeTruthy();
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    index.rebuild(repo);
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-inference",
+      label: "Fake Inference Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => [
+        "-e",
+        `let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('Reasonable source-grounded deductions are allowed and expected')&&!input.includes('Assistant: Not found in the selected sources.')?'Inference: the model is likely offline/non-causal, not online. It uses connections both forwards and backwards in time and is trained on full sequences. [[passage:${approachPassage?.id}]] [[passage:${trainingPassage?.id}]]':'Not found in the selected sources.'))`
+      ],
+      promptDelivery: "stdin"
+    };
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+    const earlierBase = engine.answerQuestion({
+      question: "Does the paper report deployment latency?",
+      projectId: project.id,
+      paperId: imported.paper.id
+    });
+    const earlier = QaResponseSchema.parse({
+      ...earlierBase,
+      answer: "Not found in the selected sources.",
+      evidence: [],
+      status: "not_found",
+      diagnostics: {
+        ...earlierBase.diagnostics,
+        evidenceCount: 0
+      }
+    });
+    engine.recordQaExchange({ projectId: project.id, paperId: imported.paper.id }, earlier);
+
+    const answer = await engine.answerQuestionWithProvider({
+      question: "Is it an online or offline model?",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      providerId: fakeProvider.id
+    });
+
+    expect(answer.status).toBe("answered");
+    expect(answer.answer).toContain("likely offline/non-causal");
+    expect(answer.answer).toContain("[1]");
+    expect(answer.answer).toContain("[2]");
+    expect(answer.evidence.map((item) => item.passageId)).toEqual([approachPassage?.id, trainingPassage?.id]);
+    index.close();
+  });
+
   it("archives a Q&A thread before starting a new chat", () => {
     const repo = makeRepo();
     const project = repo.createProject({ name: "Archived QA" });
