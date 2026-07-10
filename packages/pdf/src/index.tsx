@@ -32,6 +32,7 @@ import type {
 } from "react-pdf-highlighter-plus";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { OnProgressParameters, PDFDocumentProxy } from "pdfjs-dist";
+import { citationPageSearchOrder } from "./citation";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "react-pdf-highlighter-plus/style/style.css";
 
@@ -1378,9 +1379,12 @@ function ArrowShapeEditor({
 }
 
 async function resolveHighlight(pdfDocument: PDFDocumentProxy, highlight: PdfHighlight, index: number): Promise<LitHighlight> {
-  const pageNumber = normalizePageNumber(highlight.page, pdfDocument.numPages);
-  const page = await readExtractedPage(pdfDocument, pageNumber);
-  const quotePosition = highlight.quote.trim() ? resolveQuotePosition(page, highlight.quote) : null;
+  const requestedPageNumber = normalizePageNumber(highlight.page, pdfDocument.numPages);
+  const quoteResolution = highlight.quote.trim()
+    ? await resolveQuoteAcrossDocument(pdfDocument, requestedPageNumber, highlight.quote)
+    : null;
+  const page = quoteResolution?.page ?? await readExtractedPage(pdfDocument, requestedPageNumber);
+  const quotePosition = quoteResolution?.position ?? null;
   const rectPosition = quotePosition ?? resolveRectPosition(page, highlight.rects ?? []);
   const position = rectPosition ?? pageTopPosition(page);
 
@@ -1391,25 +1395,51 @@ async function resolveHighlight(pdfDocument: PDFDocumentProxy, highlight: PdfHig
     position,
     litColor: highlight.color ?? "yellow",
     litQuote: highlight.quote,
-    litPage: pageNumber,
+    litPage: page.pageNumber,
     litActive: Boolean(highlight.active),
     litResolvedFrom: quotePosition ? "quote" : rectPosition ? "rect" : "page"
   };
 }
 
+const extractedPageCache = new WeakMap<PDFDocumentProxy, Map<number, Promise<PdfExtractedPage>>>();
+
+async function resolveQuoteAcrossDocument(
+  pdfDocument: PDFDocumentProxy,
+  requestedPage: number,
+  quote: string
+): Promise<{ page: PdfExtractedPage; position: ScaledPosition } | null> {
+  for (const pageNumber of citationPageSearchOrder(requestedPage, pdfDocument.numPages)) {
+    const page = await readExtractedPage(pdfDocument, pageNumber);
+    const position = resolveQuotePosition(page, quote);
+    if (position) return { page, position };
+  }
+  return null;
+}
+
 async function readExtractedPage(pdfDocument: PDFDocumentProxy, pageNumber: number): Promise<PdfExtractedPage> {
-  const pages = await extractPageTextItems(pdfDocument, {
+  let documentCache = extractedPageCache.get(pdfDocument);
+  if (!documentCache) {
+    documentCache = new Map();
+    extractedPageCache.set(pdfDocument, documentCache);
+  }
+  const cached = documentCache.get(pageNumber);
+  if (cached) return cached;
+  const pending = extractPageTextItems(pdfDocument, {
     pages: [pageNumber],
     columnDetection: "none"
-  });
-  const page = pages[0];
-  if (page) return page;
-  return {
+  }).then((pages) => pages[0] ?? {
     pageNumber,
     width: 612,
     height: 792,
     textItems: []
-  };
+  });
+  documentCache.set(pageNumber, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    documentCache.delete(pageNumber);
+    throw error;
+  }
 }
 
 function resolveQuotePosition(page: PdfExtractedPage, quote: string): ScaledPosition | null {
