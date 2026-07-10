@@ -8,7 +8,7 @@ import { QaResponseSchema } from "@litagent/contracts";
 import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
 
-import { WorkflowEngine, discoverPdfInputs, markerRuntimeStatus, processPdfInbox, processPdfInboxAsync, processPaperSetWithMarker, type ConversionResult } from "./index";
+import { WorkflowEngine, assessMarkdownReadiness, discoverPdfInputs, markerRuntimeStatus, processPdfInbox, processPdfInboxAsync, processPaperSetWithMarker, type ConversionResult } from "./index";
 
 function makeRepo(): LitAgentRepository {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-workflow-test-"));
@@ -162,6 +162,32 @@ describe("PDF inbox processing", () => {
     expect(conversions).toBe(2);
     expect(second.skipped).toBe(1);
     expect(forced.converted).toBe(1);
+  });
+
+  it("does not treat citation-demo Markdown as a completed conversion", () => {
+    const repo = makeRepo();
+    const imported = repo.importPaper({ metadata: { title: "Placeholder paper" } });
+    repo.writeMarkdown(
+      imported.paper.id,
+      "# Abstract\n\nThis passage is a literal abstract excerpt used for the local citation demo."
+    );
+    let conversions = 0;
+
+    const result = processPaperSetWithMarker(
+      repo,
+      [imported.paper.id],
+      {},
+      {
+        convertPaper: (repository, paperId) => {
+          conversions += 1;
+          return fakeConvert(repository, paperId);
+        }
+      }
+    );
+
+    expect(assessMarkdownReadiness("This passage is a literal abstract excerpt used for the local citation demo.", 1).status).toBe("placeholder");
+    expect(conversions).toBe(1);
+    expect(result.converted).toBe(1);
   });
 
   it("processes inbox PDFs asynchronously and emits progress", async () => {
@@ -783,7 +809,7 @@ describe("RAG question answering", () => {
       defaultModel: null,
       runArgs: () => [
         "-e",
-        `let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('limits mobile deployment')?'Battery consumption constrains mobile deployment. [[passage:${limitationPassage?.id}]]':'A transformer encoder classifies streaming audio frames. [[passage:${methodPassage?.id}]]'))`
+        `let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('Summarize both findings')?'A transformer encoder classifies streaming audio frames with a score of 0.841. [[passage:${methodPassage?.id}]] Battery consumption constrains mobile deployment. [[passage:${limitationPassage?.id}]]':input.includes('limits mobile deployment')?'Battery consumption constrains mobile deployment. [[passage:${limitationPassage?.id}]]':'A transformer encoder classifies streaming audio frames. [[passage:${methodPassage?.id}]]'))`
       ],
       promptDelivery: "stdin"
     };
@@ -802,12 +828,20 @@ describe("RAG question answering", () => {
       paperId: imported.paper.id,
       providerId: fakeProvider.id
     });
+    const combinedAnswer = await engine.answerQuestionWithProvider({
+      question: "Summarize both findings.",
+      projectId: project.id,
+      paperId: imported.paper.id,
+      providerId: fakeProvider.id
+    });
 
     expect(methodAnswer.evidence.map((item) => item.passageId)).toEqual([methodPassage?.id]);
     expect(limitationAnswer.evidence.map((item) => item.passageId)).toEqual([limitationPassage?.id]);
     expect(methodAnswer.evidence[0]?.passageId).not.toBe(limitationAnswer.evidence[0]?.passageId);
     expect(methodAnswer.diagnostics.evidenceMode).toBe("provider-passages");
     expect(limitationAnswer.answer).toContain("[1]");
+    expect(combinedAnswer.evidence.map((item) => item.passageId)).toEqual([methodPassage?.id, limitationPassage?.id]);
+    expect(combinedAnswer.answer).toBe("A transformer encoder classifies streaming audio frames with a score of 0.841. [1] Battery consumption constrains mobile deployment. [2]");
     index.close();
   });
 

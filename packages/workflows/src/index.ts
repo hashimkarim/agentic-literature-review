@@ -349,6 +349,7 @@ interface QaMarkdownPaperContext {
   paper: Paper;
   markdown: string;
   passages: ReturnType<LitAgentRepository["readPassages"]>;
+  readiness: MarkdownReadiness;
   truncated: boolean;
 }
 
@@ -484,10 +485,12 @@ function buildQaMarkdownContext(repo: LitAgentRepository, scope: QaScope): QaMar
     const allowed = Math.min(maxPerPaper, remaining);
     const included = markdown.length > allowed ? markdown.slice(0, allowed) : markdown;
     const paperTruncated = included.length < markdown.length;
+    const passages = repo.readPassages(paperId);
     papers.push({
       paper,
       markdown: included,
-      passages: repo.readPassages(paperId),
+      passages,
+      readiness: assessMarkdownReadiness(markdown, passages.length),
       truncated: paperTruncated
     });
     remaining -= included.length;
@@ -518,6 +521,7 @@ function buildQaMarkdownContext(repo: LitAgentRepository, scope: QaScope): QaMar
 const qaEvidenceVersion = 2;
 const passageCitationPattern = /\[\[passage:([^\]\s]+)\]\]/g;
 const numericCitationPattern = /\s+\[(?:\d+(?:\s*[-,]\s*\d+)*)\](?=\s*(?:[.!?]\s*)?(?:$|\n))/gm;
+const answerSentenceSegmenter = new Intl.Segmenter("en", { granularity: "sentence" });
 
 interface QaPassageCandidate {
   paper: Paper;
@@ -574,9 +578,9 @@ function answerClaimSpans(answer: string): AnswerClaimSpan[] {
   for (const lineMatch of answer.matchAll(linePattern)) {
     const line = lineMatch[0];
     const lineStart = lineMatch.index;
-    const sentencePattern = /[^.!?]+(?:[.!?]+|$)(?:\s*\[\[passage:[^\]\s]+\]\])*/g;
-    for (const sentenceMatch of line.matchAll(sentencePattern)) {
-      const raw = sentenceMatch[0];
+    const segmentationInput = line.replace(passageCitationPattern, (marker) => " ".repeat(marker.length));
+    for (const sentence of answerSentenceSegmenter.segment(segmentationInput)) {
+      const raw = line.slice(sentence.index, sentence.index + sentence.segment.length);
       const text = raw
         .replace(passageCitationPattern, " ")
         .replace(numericCitationPattern, " ")
@@ -585,7 +589,7 @@ function answerClaimSpans(answer: string): AnswerClaimSpan[] {
         .replace(/\s+/g, " ")
         .trim();
       if (!text || supportTerms(text).length < 2) continue;
-      const start = lineStart + (sentenceMatch.index ?? 0);
+      const start = lineStart + sentence.index;
       spans.push({ start, end: start + raw.length, raw, text });
     }
   }
@@ -700,11 +704,11 @@ function linkAnswerToEvidence(question: string, answer: string, context: QaMarkd
     });
   }
 
-  let linkedAnswer = withoutNumericCitations.replace(passageCitationPattern, "");
+  let linkedAnswer = withoutNumericCitations;
   for (const edit of edits.sort((left, right) => right.start - left.start)) {
     linkedAnswer = `${linkedAnswer.slice(0, edit.start)}${edit.replacement}${linkedAnswer.slice(edit.end)}`;
   }
-  linkedAnswer = linkedAnswer.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  linkedAnswer = linkedAnswer.replace(passageCitationPattern, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return {
     answer: linkedAnswer,
     evidence: selected.map((candidate) => {
@@ -866,6 +870,52 @@ function markdownMetrics(markdown: string, assetsCopied: number): Pick<Conversio
   };
 }
 
+export interface MarkdownReadiness {
+  status: "missing" | "placeholder" | "limited" | "ready";
+  characters: number;
+  passages: number;
+  message: string;
+}
+
+export function assessMarkdownReadiness(markdown: string | null, passageCount: number): MarkdownReadiness {
+  if (!markdown?.trim()) {
+    return { status: "missing", characters: 0, passages: passageCount, message: "Markdown conversion has not been run." };
+  }
+  const normalized = markdown.toLowerCase();
+  const isPlaceholder = [
+    "markdown conversion has not been run yet",
+    "run the marker conversion workflow to replace this placeholder",
+    "literal abstract excerpt used for the local citation demo"
+  ].some((marker) => normalized.includes(marker));
+  if (isPlaceholder) {
+    return {
+      status: "placeholder",
+      characters: markdown.length,
+      passages: passageCount,
+      message: "This is placeholder/demo Markdown and does not contain the full paper."
+    };
+  }
+  if (markdown.length < 1_500 || passageCount < 5) {
+    return {
+      status: "limited",
+      characters: markdown.length,
+      passages: passageCount,
+      message: `Only ${passageCount} passage${passageCount === 1 ? " is" : "s are"} available; questions about later sections may not be answerable.`
+    };
+  }
+  return {
+    status: "ready",
+    characters: markdown.length,
+    passages: passageCount,
+    message: `${passageCount} passages are available for cited Q&A.`
+  };
+}
+
+function shouldReuseMarkdown(repo: LitAgentRepository, paperId: string): boolean {
+  const markdown = repo.readMarkdown(paperId);
+  return assessMarkdownReadiness(markdown, repo.readPassages(paperId).length).status !== "placeholder" && Boolean(markdown);
+}
+
 function rewriteAssetLinks(markdown: string, sourceDir: string, assetDir: string): { markdown: string; metrics: Pick<ConversionResult, "lines" | "imageRefs" | "links" | "assetsCopied"> } {
   const copied = new Map<string, string>();
   const rewritten = markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (full, alt: string, target: string) => {
@@ -1021,7 +1071,7 @@ export function processPdfInbox(
     knownPaperIds.add(imported.paper.id);
 
     let conversion: ConversionResult;
-    if (!options.force && paperBeforeConversion.filePaths.markdown && repo.readMarkdown(imported.paper.id)) {
+    if (!options.force && paperBeforeConversion.filePaths.markdown && shouldReuseMarkdown(repo, imported.paper.id)) {
       conversion = {
         status: "ok",
         markdownPath: paperBeforeConversion.filePaths.markdown,
@@ -1093,7 +1143,7 @@ export function processPaperSetWithMarker(
     const start = performance.now();
     hooks.onProgress?.(`Processing paper ${index + 1}/${paperIds.length}: ${paper.title}`, { paperId });
 
-    if (!options.force && paper.filePaths.markdown && repo.readMarkdown(paper.id)) {
+    if (!options.force && paper.filePaths.markdown && shouldReuseMarkdown(repo, paper.id)) {
       hooks.indexPaper?.(paper.id);
       items.push({
         sourcePath: paper.filePaths.pdf ? repo.resolve(paper.filePaths.pdf) : "",
@@ -1508,7 +1558,7 @@ export async function processPdfInboxAsync(
     knownPaperIds.add(imported.paper.id);
 
     let item: PdfProcessingItem;
-    if (!options.force && paperBeforeConversion.filePaths.markdown && repo.readMarkdown(imported.paper.id)) {
+    if (!options.force && paperBeforeConversion.filePaths.markdown && shouldReuseMarkdown(repo, imported.paper.id)) {
       hooks.indexPaper?.(imported.paper.id);
       item = {
         sourcePath: pdf.sourcePath,
@@ -1589,7 +1639,7 @@ export async function processPaperSetWithMarkerAsync(
     });
 
     let item: PdfProcessingItem;
-    if (!options.force && paper.filePaths.markdown && repo.readMarkdown(paper.id)) {
+    if (!options.force && paper.filePaths.markdown && shouldReuseMarkdown(repo, paper.id)) {
       hooks.indexPaper?.(paper.id);
       item = {
         sourcePath: paper.filePaths.pdf ? repo.resolve(paper.filePaths.pdf) : "",
@@ -1751,7 +1801,9 @@ export class WorkflowEngine {
       evidenceMode: "claim-match" as const,
       evidenceVersion: qaEvidenceVersion,
       message: context.papers.length
-        ? `Using Markdown context from ${context.papers.length} paper${context.papers.length === 1 ? "" : "s"}${context.truncated ? " (truncated to fit context budget)" : ""}.`
+        ? context.papers.some((item) => item.readiness.status === "placeholder" || item.readiness.status === "limited")
+          ? `Source coverage is limited. ${context.papers.filter((item) => item.readiness.status === "placeholder" || item.readiness.status === "limited").map((item) => `${item.paper.title}: ${item.readiness.message}`).join(" ")}`
+          : `Using Markdown context from ${context.papers.length} paper${context.papers.length === 1 ? "" : "s"}${context.truncated ? " (truncated to fit context budget)" : ""}.`
         : "No converted Markdown exists in the selected scope. Run PDF-to-Markdown conversion first."
     };
     if (context.papers.length === 0) {

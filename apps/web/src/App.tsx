@@ -2599,6 +2599,7 @@ function ChatAnswer({
 
 function AgentPanel({
   selectedPaper,
+  markdown,
   contextLabel,
   scopeProjectId,
   providers,
@@ -2624,6 +2625,7 @@ function AgentPanel({
   onJumpPdfAnnotation,
   onDeletePdfAnnotation,
   onClearPdfAnnotations,
+  onRunWorkflow,
   onCancelWorkflow,
   onAsk,
   onLoadQaThread,
@@ -2653,6 +2655,14 @@ function AgentPanel({
   const qaErrorHere = qaError?.projectId === scopeProjectId && qaError.paperId === askPaperId ? qaError : null;
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   const providerLabel = selectedProvider?.label ?? selectedProviderId;
+  const markdownCharacters = markdown?.length ?? 0;
+  const markdownLooksLikePlaceholder = Boolean(markdown && /literal abstract excerpt used for the local citation demo|markdown conversion has not been run yet|replace this placeholder/i.test(markdown));
+  const sourceCoverageLimited = Boolean(selectedPaper && (markdownLooksLikePlaceholder || markdownCharacters < 1_500 || passages.length < 5));
+  const conversionRunning = Boolean(selectedPaper && workflows.some((run) =>
+    run.type === "pdf-markdown-processing"
+    && (run.status === "running" || run.status === "queued")
+    && run.scope.paperIds.includes(selectedPaper.id)
+  ));
   const promptSuggestions = effectiveQaScope === "paper"
     ? [
         "Summarize the paper's main contribution.",
@@ -2783,6 +2793,24 @@ function AgentPanel({
                 <Icon name={clearingThread ? "loader-circle" : "message-square-plus"} size={15} className={clearingThread ? "spin" : ""} />
               </button>
             </div>
+            {sourceCoverageLimited ? (
+              <div className={`la-chat-source-warning${markdownLooksLikePlaceholder ? " placeholder" : ""}`}>
+                <Icon name="database-zap" size={15} />
+                <div>
+                  <strong>{markdownLooksLikePlaceholder ? "Full paper is not indexed" : "Limited source coverage"}</strong>
+                  <span>{passages.length} passage{passages.length === 1 ? "" : "s"} · {markdownCharacters.toLocaleString()} Markdown characters</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={conversionRunning || !selectedPaper?.entry.paper.filePaths.pdf}
+                  onClick={() => selectedPaper && onRunWorkflow("pdf-markdown-processing", [selectedPaper.id], null, { force: true })}
+                  title="Replace the current Markdown with a full Marker conversion"
+                >
+                  <Icon name={conversionRunning ? "loader-circle" : "refresh-cw"} size={12} className={conversionRunning ? "spin" : ""} />
+                  {conversionRunning ? "Converting" : "Convert full PDF"}
+                </button>
+              </div>
+            ) : null}
             <div className="la-chatthread">
               {qaThread?.messages.length ? (
                 qaThread.messages.map((message) => {
