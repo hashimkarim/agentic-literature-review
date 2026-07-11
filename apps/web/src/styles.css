@@ -1453,11 +1453,20 @@ button { font-family: var(--font-sans); }
 .la-comparison-evidence { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
 .la-comparison-evidence button { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--border-line); border-radius: var(--radius-sm); background: var(--surface-highlight-alt); color: var(--accent-soft); padding: 3px 5px; cursor: pointer; font: var(--text-caption); font-size: 10px; }
 .la-comparison-evidence button:hover { border-color: var(--accent-primary); background: var(--surface-hover); }
+.la-synthesis-result { border-top: 1px solid var(--border-line); background: var(--bg-deep); }
+.la-synthesis-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.la-synthesis-sections section { min-width: 0; padding: 11px 12px; border-right: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); }
+.la-synthesis-sections h3 { margin: 0 0 8px; color: var(--text-primary); font: var(--text-body-sm); font-weight: 650; }
+.la-synthesis-claim + .la-synthesis-claim { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--border-light); }
+.la-synthesis-claim p { margin: 0; color: var(--text-secondary); font: var(--text-caption); line-height: 1.55; }
+.la-synthesis-claim textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--border-line); border-radius: var(--radius-sm); outline: 0; background: var(--surface-input); color: var(--text-primary); padding: 7px 8px; font: var(--text-caption); line-height: 1.45; }
+.la-synthesis-claim textarea:focus { border-color: var(--accent-primary); }
 
 @media (max-width: 900px) {
   .la-comparison-setup { grid-template-columns: 1fr; }
   .la-comparison-papers { border-right: 0; border-bottom: 1px solid var(--border-light); }
   .la-manual-grid { grid-template-columns: 1fr; }
+  .la-synthesis-sections { grid-template-columns: 1fr; }
 }
 
 .la-pdfobject,

@@ -17,7 +17,7 @@ state, tags, collections, notes, questions, and generated research artifacts.
 | Markdown reader | Working | GFM, figures/assets, KaTeX equations, tables, links, algorithm rendering | Editing and side-by-side PDF/Markdown mode |
 | Search and cited Q&A | Working MVP | Scoped FTS, provider-backed Markdown-context answers, persistent chat threads, validated passage citations, evidence-backed inference and follow-ups | Evaluation/repair loop and scalable project retrieval |
 | Provider harness | Working MVP | Codex, Claude, Gemini, OpenCode, Copilot and custom CLI discovery/settings, streaming, cancellation, normalized logs | PTY/ACP support, approval prompts, resume and richer model discovery |
-| Agent workflows | Working MVP | Queue, provider/model selection, conversion, Q&A, reviewable relevance/metadata/research records, and cited comparison matrices from accepted records | Build synthesis from accepted comparisons and implement discovery |
+| Agent workflows | Working MVP | Queue, provider/model selection, conversion, Q&A, reviewable relevance/metadata/research records, cited comparison matrices, and synthesis notes from accepted comparisons | Implement discovery, contradiction analysis and reusable recipes |
 | Notes | Backend foundation | Markdown note CRUD and annotation links | Real editor, backlinks, workflow-to-note flow and note search UI |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
@@ -26,14 +26,14 @@ state, tags, collections, notes, questions, and generated research artifacts.
 The core reading loop is usable: import a PDF, convert it, read/annotate it,
 ask a provider-backed question, compare accepted records across papers, and jump
 from supporting evidence to the source. The app is not feature-complete yet
-because synthesis, discovery, screening, and note workflows still need to
-consume the structured records.
+because discovery, screening, contradiction review, and the general notes
+workspace still need to consume the structured records.
 
 ## Ordered Milestones
 
 ### 1. Reviewable Agent Outputs
 
-Status: record extraction and comparison artifacts complete; synthesis next.
+Status: record extraction, comparison artifacts, and synthesis notes complete.
 
 - Evidence-backed relevance proposals can be edited, accepted, or rejected before
   changing project state.
@@ -41,7 +41,7 @@ Status: record extraction and comparison artifacts complete; synthesis next.
 - Findings, methods, datasets, results, limitations, and reproducibility details
   become typed, evidence-backed records only after per-item review.
 - Build cited comparison artifacts from accepted records and evidence. Complete.
-- Build synthesis artifacts from accepted comparison cells and evidence.
+- Build synthesis artifacts from accepted comparison cells and evidence. Complete.
 
 ### 2. Research Notes And Evidence Ledger
 

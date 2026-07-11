@@ -16,8 +16,10 @@ import type {
   ReviewComparisonArtifactRequest,
   ReviewResearchFindingProposalRequest,
   ReviewRelevanceProposalRequest,
+  ReviewSynthesisArtifactRequest,
   CitationTarget,
   SearchResult,
+  SynthesisArtifact,
   WorkflowRun,
   WorkflowType
 } from "@litagent/contracts";
@@ -204,6 +206,13 @@ export const api = {
         body: JSON.stringify(body)
       }
     ),
+  syntheses: (projectId: string) => request<SynthesisArtifact[]>(`/api/projects/${encodeURIComponent(projectId)}/syntheses`),
+  reviewSynthesis: (projectId: string, synthesisId: string, body: ReviewSynthesisArtifactRequest) =>
+    request<SynthesisArtifact>(`/api/projects/${encodeURIComponent(projectId)}/syntheses/${encodeURIComponent(synthesisId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }),
   pdfInbox: (sourceDir = "pdfs") =>
     request<PdfInboxItem[]>(`/api/pdf-inbox?sourceDir=${encodeURIComponent(sourceDir)}`),
   pdfInboxAutomation: () => request<PdfInboxAutomationRule>("/api/workflow-automations/pdf-inbox"),

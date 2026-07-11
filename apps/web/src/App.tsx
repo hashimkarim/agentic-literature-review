@@ -24,6 +24,8 @@ import type {
   ReviewMetadataProposalRequest,
   ReviewResearchFindingProposalRequest,
   ReviewRelevanceProposalRequest,
+  ReviewSynthesisArtifactRequest,
+  SynthesisArtifact,
   WorkflowRun,
   WorkflowType
 } from "@litagent/contracts";
@@ -330,7 +332,6 @@ const workflowRecipes: Array<{ type: WorkflowType; name: string; icon: string; d
   { type: "metadata-extraction", name: "Metadata extract", icon: "list", desc: "Patch proposals" },
   { type: "key-findings", name: "Key findings", icon: "key", desc: "Findings and limits" },
   { type: "find-papers", name: "Find related", icon: "git-fork", desc: "Similar papers" },
-  { type: "synthesis-note", name: "Synthesis note", icon: "notebook-pen", desc: "Generate note" },
   { type: "contradiction-finder", name: "Contradictions", icon: "split", desc: "Find conflicts" },
   { type: "dataset-method-extractor", name: "Data/method", icon: "database", desc: "Extract tables" },
   { type: "citation-needed", name: "Citation needed", icon: "quote", desc: "Flag claims" },
@@ -3183,6 +3184,12 @@ function WorkflowsView({
   const [comparisonSummary, setComparisonSummary] = useState("");
   const [comparisonCellSummaries, setComparisonCellSummaries] = useState<Record<string, string>>({});
   const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [syntheses, setSyntheses] = useState<SynthesisArtifact[]>([]);
+  const [activeSynthesisId, setActiveSynthesisId] = useState<string | null>(null);
+  const [synthesisEditing, setSynthesisEditing] = useState(false);
+  const [synthesisTitle, setSynthesisTitle] = useState("");
+  const [synthesisSummary, setSynthesisSummary] = useState("");
+  const [synthesisClaimTexts, setSynthesisClaimTexts] = useState<Record<string, string>>({});
   const scanInbox = useCallback(() => {
     setScanning(true);
     void api
@@ -3242,8 +3249,39 @@ function WorkflowsView({
     setComparisonEditing(false);
   }, [activeComparison?.id, activeComparison?.updatedAt]);
 
+  const synthesisWorkflowSignature = workflows
+    .filter((run) => run.type === "synthesis-note" && run.projectId === scopeProjectId)
+    .map((run) => `${run.id}:${run.status}:${run.updatedAt}`)
+    .join("|");
+  useEffect(() => {
+    if (!scopeProjectId) {
+      setSyntheses([]);
+      setActiveSynthesisId(null);
+      return;
+    }
+    void api.syntheses(scopeProjectId).then((items) => {
+      setSyntheses(items);
+      setActiveSynthesisId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id ?? null);
+    }).catch((error: unknown) => setComparisonError(error instanceof Error ? error.message : String(error)));
+  }, [scopeProjectId, synthesisWorkflowSignature]);
+  const activeSynthesis = syntheses.find((synthesis) => synthesis.id === activeSynthesisId) ?? syntheses[0] ?? null;
+  useEffect(() => {
+    if (!activeSynthesis) return;
+    setSynthesisTitle(activeSynthesis.title);
+    setSynthesisSummary(activeSynthesis.summary);
+    setSynthesisClaimTexts(Object.fromEntries(
+      activeSynthesis.sections.flatMap((section) => section.claims.map((claim) => [claim.id, claim.text]))
+    ));
+    setSynthesisEditing(false);
+  }, [activeSynthesis?.id, activeSynthesis?.updatedAt]);
+
   const comparisonRun = workflows.find((run) =>
     run.type === "compare-papers"
+    && run.projectId === scopeProjectId
+    && (run.status === "running" || run.status === "queued")
+  ) ?? null;
+  const synthesisRun = workflows.find((run) =>
+    run.type === "synthesis-note"
     && run.projectId === scopeProjectId
     && (run.status === "running" || run.status === "queued")
   ) ?? null;
@@ -3272,6 +3310,24 @@ function WorkflowsView({
       })
       .catch((error: unknown) => setComparisonError(error instanceof Error ? error.message : String(error)));
   }, [activeComparison, comparisonCellSummaries, comparisonEditing, comparisonSummary, comparisonTitle, scopeProjectId]);
+
+  const reviewSynthesis = useCallback((decision: ReviewSynthesisArtifactRequest["decision"]) => {
+    if (!activeSynthesis || !scopeProjectId) return;
+    const request: ReviewSynthesisArtifactRequest = {
+      decision,
+      claimTexts: synthesisEditing ? synthesisClaimTexts : {},
+      ...(synthesisEditing ? {
+        title: synthesisTitle.trim() || activeSynthesis.title,
+        summary: synthesisSummary.trim()
+      } : {})
+    };
+    void api.reviewSynthesis(scopeProjectId, activeSynthesis.id, request)
+      .then((reviewed) => {
+        setSyntheses((current) => current.map((item) => item.id === reviewed.id ? reviewed : item));
+        setSynthesisEditing(false);
+      })
+      .catch((error: unknown) => setComparisonError(error instanceof Error ? error.message : String(error)));
+  }, [activeSynthesis, scopeProjectId, synthesisClaimTexts, synthesisEditing, synthesisSummary, synthesisTitle]);
 
   useEffect(() => {
     void api.pdfInboxAutomation().then((rule) => {
@@ -3495,6 +3551,22 @@ function WorkflowsView({
                       <Btn variant="primary" sm icon="check" onClick={() => reviewComparison("accepted")}>Accept</Btn>
                     </>
                   ) : null}
+                  {activeComparison?.status === "accepted" && scopeProjectId ? (
+                    <Btn
+                      variant="primary"
+                      sm
+                      icon={synthesisRun ? "loader-circle" : "notebook-pen"}
+                      onClick={() => onRunWorkflow(
+                        "synthesis-note",
+                        activeComparison.paperIds,
+                        activeComparison.query,
+                        { comparisonId: activeComparison.id }
+                      )}
+                      disabled={Boolean(synthesisRun)}
+                    >
+                      {synthesisRun ? "Synthesizing" : "Generate synthesis"}
+                    </Btn>
+                  ) : null}
                 </div>
                 {activeComparison ? (
                   <>
@@ -3554,6 +3626,61 @@ function WorkflowsView({
                     </div>
                   </>
                 ) : null}
+              </div>
+            ) : null}
+            {activeSynthesis ? (
+              <div className="la-synthesis-result">
+                <div className="la-comparison-resulthead">
+                  <Icon name="notebook-pen" size={14} color="var(--accent-soft)" />
+                  <select value={activeSynthesis.id} onChange={(event) => setActiveSynthesisId(event.currentTarget.value)}>
+                    {syntheses.map((synthesis) => <option key={synthesis.id} value={synthesis.id}>{synthesis.title}</option>)}
+                  </select>
+                  <Badge variant={activeSynthesis.status === "accepted" ? "success" : activeSynthesis.status === "rejected" ? "error" : "warning"}>{activeSynthesis.status}</Badge>
+                  {activeSynthesis.noteId ? <Badge variant="success">note saved</Badge> : null}
+                  <span className="spacer" />
+                  {activeSynthesis.status === "draft" ? (
+                    <>
+                      <Btn variant="ghost" sm icon="pencil" onClick={() => setSynthesisEditing((current) => !current)}>{synthesisEditing ? "Cancel edit" : "Edit"}</Btn>
+                      <Btn variant="ghost" sm icon="x" onClick={() => reviewSynthesis("rejected")}>Reject</Btn>
+                      <Btn variant="primary" sm icon="check" onClick={() => reviewSynthesis("accepted")}>Accept as note</Btn>
+                    </>
+                  ) : null}
+                </div>
+                {synthesisEditing ? (
+                  <div className="la-comparison-editmeta">
+                    <input value={synthesisTitle} onChange={(event) => setSynthesisTitle(event.currentTarget.value)} aria-label="Synthesis title" />
+                    <textarea value={synthesisSummary} onChange={(event) => setSynthesisSummary(event.currentTarget.value)} rows={2} aria-label="Synthesis summary" />
+                  </div>
+                ) : <p className="la-comparison-summary">{activeSynthesis.summary}</p>}
+                <div className="la-synthesis-sections">
+                  {activeSynthesis.sections.map((section) => (
+                    <section key={section.heading}>
+                      <h3>{section.heading}</h3>
+                      {section.claims.map((claim) => (
+                        <div key={claim.id} className="la-synthesis-claim">
+                          {synthesisEditing ? (
+                            <textarea
+                              value={synthesisClaimTexts[claim.id] ?? claim.text}
+                              onChange={(event) => setSynthesisClaimTexts((current) => ({ ...current, [claim.id]: event.currentTarget.value }))}
+                              rows={3}
+                              aria-label={`Claim in ${section.heading}`}
+                            />
+                          ) : <p>{claim.text}</p>}
+                          <div className="la-comparison-evidence">
+                            {claim.evidence.map((evidence, index) => (
+                              <button key={`${claim.id}:${evidence.paperId}:${evidence.passageId}`} type="button" onClick={() => {
+                                onOpenCitation(evidence, scopeProjectId);
+                                onNavigatePapers();
+                              }} title={evidence.quote}>
+                                <Icon name="quote" size={10} /> {index + 1}{evidence.page ? ` · p.${evidence.page}` : ""}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </section>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
