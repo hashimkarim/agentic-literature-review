@@ -22,6 +22,7 @@ import {
   ReviewComparisonArtifactRequestSchema,
   ReviewResearchFindingProposalRequestSchema,
   ReviewRelevanceProposalRequestSchema,
+  ReviewSynthesisArtifactRequestSchema,
   SearchRequestSchema,
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema
@@ -721,6 +722,24 @@ app.patch(
       queryString(req, "projectId"),
       routeParam(req, "comparisonId"),
       ReviewComparisonArtifactRequestSchema.parse(req.body)
+    ));
+  })
+);
+
+app.get(
+  "/api/projects/:id/syntheses",
+  asyncHandler((req, res) => {
+    res.json(workflows.listSynthesisArtifacts(routeParam(req, "id")));
+  })
+);
+
+app.patch(
+  "/api/projects/:id/syntheses/:synthesisId",
+  asyncHandler((req, res) => {
+    res.json(workflows.reviewSynthesisArtifact(
+      routeParam(req, "id"),
+      routeParam(req, "synthesisId"),
+      ReviewSynthesisArtifactRequestSchema.parse(req.body)
     ));
   })
 );

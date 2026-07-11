@@ -373,6 +373,48 @@ export const ReviewComparisonArtifactRequestSchema = z.object({
 export type ReviewComparisonArtifactRequest = z.infer<typeof ReviewComparisonArtifactRequestSchema>;
 export type ReviewComparisonArtifactRequestInput = z.input<typeof ReviewComparisonArtifactRequestSchema>;
 
+export const SynthesisClaimSchema = z.object({
+  id: z.string(),
+  text: z.string().min(1),
+  recordIds: z.array(z.string()).min(1),
+  evidence: z.array(EvidenceRefSchema).min(1)
+});
+export type SynthesisClaim = z.infer<typeof SynthesisClaimSchema>;
+
+export const SynthesisSectionSchema = z.object({
+  heading: z.string().min(1),
+  claims: z.array(SynthesisClaimSchema).min(1)
+});
+export type SynthesisSection = z.infer<typeof SynthesisSectionSchema>;
+
+export const SynthesisArtifactSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  projectId: z.string(),
+  comparisonId: z.string(),
+  title: z.string().min(1),
+  summary: z.string().default(""),
+  sections: z.array(SynthesisSectionSchema).min(1),
+  providerId: z.string(),
+  model: z.string().nullable().default(null),
+  status: ComparisonArtifactStatusSchema.default("draft"),
+  noteId: z.string().nullable().default(null),
+  outputPath: z.string(),
+  reviewedAt: isoDateSchema.nullable().default(null),
+  createdAt: isoDateSchema,
+  updatedAt: isoDateSchema
+});
+export type SynthesisArtifact = z.infer<typeof SynthesisArtifactSchema>;
+
+export const ReviewSynthesisArtifactRequestSchema = z.object({
+  decision: z.enum(["accepted", "rejected"]),
+  title: z.string().min(1).optional(),
+  summary: z.string().optional(),
+  claimTexts: z.record(z.string(), z.string().min(1)).default({})
+});
+export type ReviewSynthesisArtifactRequest = z.infer<typeof ReviewSynthesisArtifactRequestSchema>;
+export type ReviewSynthesisArtifactRequestInput = z.input<typeof ReviewSynthesisArtifactRequestSchema>;
+
 export const ResearchItemEditSchema = z.object({
   kind: ResearchRecordKindSchema.optional(),
   title: z.string().min(1).optional(),

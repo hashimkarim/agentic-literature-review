@@ -21,6 +21,8 @@ import {
   ResearchAttributeValueSchema,
   ResearchRecordKindSchema,
   ReviewComparisonArtifactRequestSchema,
+  ReviewSynthesisArtifactRequestSchema,
+  SynthesisArtifactSchema,
   WorkflowRunSchema,
   WorkflowTypeSchema,
   type ComparisonArtifact,
@@ -41,7 +43,9 @@ import {
   type ResearchRecord,
   type ResearchRecordKind,
   type ReviewComparisonArtifactRequestInput,
+  type ReviewSynthesisArtifactRequestInput,
   type SearchResult,
+  type SynthesisArtifact,
   type WorkflowRun,
   type WorkflowType
 } from "@litagent/contracts";
@@ -118,6 +122,22 @@ const ProviderComparisonResultSchema = z.object({
     })).min(2)
   })).min(1)
 });
+
+const ProviderSynthesisResultSchema = z.object({
+  title: z.string().min(1),
+  summary: z.string().default(""),
+  sections: z.array(z.object({
+    heading: z.string().min(1),
+    claims: z.array(z.object({
+      text: z.string().min(1),
+      recordIds: z.array(z.string()).min(1)
+    })).min(1)
+  })).min(1)
+});
+
+const SynthesisWorkflowOptionsSchema = z.object({
+  comparisonId: z.string().min(1)
+}).passthrough();
 
 function parseProviderJson(text: string): unknown {
   const candidates = [
@@ -1848,6 +1868,67 @@ export class WorkflowEngine {
     }));
   }
 
+  listSynthesisArtifacts(projectId: string): SynthesisArtifact[] {
+    const dir = this.synthesisDirectory(projectId);
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => SynthesisArtifactSchema.parse(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"))))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  readSynthesisArtifact(projectId: string, synthesisId: string): SynthesisArtifact | null {
+    const filePath = this.synthesisJsonPath(projectId, synthesisId);
+    if (!fs.existsSync(filePath)) return null;
+    return SynthesisArtifactSchema.parse(JSON.parse(fs.readFileSync(filePath, "utf8")));
+  }
+
+  reviewSynthesisArtifact(
+    projectId: string,
+    synthesisId: string,
+    input: ReviewSynthesisArtifactRequestInput
+  ): SynthesisArtifact {
+    const request = ReviewSynthesisArtifactRequestSchema.parse(input);
+    const current = this.readSynthesisArtifact(projectId, synthesisId);
+    if (!current) throw new Error(`Synthesis artifact not found: ${synthesisId}`);
+    if (current.status !== "draft") {
+      if (current.status === request.decision) return current;
+      throw new Error(`Synthesis artifact has already been ${current.status}.`);
+    }
+    const validClaimIds = new Set(current.sections.flatMap((section) => section.claims.map((claim) => claim.id)));
+    const unknownClaimIds = Object.keys(request.claimTexts).filter((claimId) => !validClaimIds.has(claimId));
+    if (unknownClaimIds.length > 0) throw new Error(`Synthesis review includes unknown claims: ${unknownClaimIds.join(", ")}`);
+    const timestamp = nowIso();
+    let reviewed = SynthesisArtifactSchema.parse({
+      ...current,
+      title: request.title ?? current.title,
+      summary: request.summary ?? current.summary,
+      sections: current.sections.map((section) => ({
+        ...section,
+        claims: section.claims.map((claim) => ({ ...claim, text: request.claimTexts[claim.id] ?? claim.text }))
+      })),
+      status: request.decision,
+      reviewedAt: timestamp,
+      updatedAt: timestamp
+    });
+    if (request.decision === "accepted") {
+      const comparison = this.readComparisonArtifact(projectId, reviewed.comparisonId);
+      if (!comparison) throw new Error(`Comparison artifact not found: ${reviewed.comparisonId}`);
+      const passageIds = [...new Set(reviewed.sections.flatMap((section) => section.claims.flatMap((claim) => claim.evidence.map((item) => item.passageId))))];
+      const note = this.repo.createNote(projectId, {
+        title: reviewed.title,
+        content: this.renderSynthesisMarkdown(reviewed),
+        paperId: null,
+        passageIds,
+        workflowRunIds: [reviewed.runId],
+        tags: ["synthesis", `comparison:${comparison.id}`]
+      });
+      reviewed = SynthesisArtifactSchema.parse({ ...reviewed, noteId: note.id, updatedAt: nowIso() });
+    }
+    return this.persistSynthesisArtifact(reviewed);
+  }
+
   answerQuestion(input: QaRequestInput): QaResponse {
     const parsed = QaRequestSchema.parse(input);
     return this.buildLocalQaResponse(parsed);
@@ -2430,6 +2511,7 @@ export class WorkflowEngine {
           .find((content) => content.trim().length > 0) ?? result.transcript;
       let proposalIds: string[] = [];
       let comparison: ComparisonArtifact | null = null;
+      let synthesis: SynthesisArtifact | null = null;
       if (request.type === "relevance-tagging") {
         try {
           proposalIds = this.createProviderRelevanceProposals(request, run.id, finalText, absoluteEventsPath);
@@ -2502,8 +2584,29 @@ export class WorkflowEngine {
             })
           );
         }
+      } else if (request.type === "synthesis-note") {
+        try {
+          const structuredOutput = result.events
+            .map((runEvent) => runEvent.payload.native)
+            .find((native) => ProviderSynthesisResultSchema.safeParse(native).success);
+          synthesis = this.createProviderSynthesisArtifact(
+            request,
+            run.id,
+            structuredOutput ?? finalText,
+            absoluteEventsPath
+          );
+        } catch (error) {
+          status = "failed";
+          appendEvent(absoluteEventsPath, event({
+            runId: run.id,
+            providerId: request.providerId,
+            type: "run.failed",
+            message: error instanceof Error ? error.message : String(error),
+            payload: { failureClass: "invalid_workflow_output" }
+          }));
+        }
       }
-      const outputPath = comparison?.outputPath ?? this.writeProjectOutput(
+      const outputPath = comparison?.outputPath ?? synthesis?.outputPath ?? this.writeProjectOutput(
           request.projectId,
           `${slugify(request.type)}-${slugify(run.id)}.md`,
           [
@@ -2527,7 +2630,8 @@ export class WorkflowEngine {
             outputPath,
             sessionId: result.sessionId,
             proposalIds,
-            ...(comparison ? { comparisonId: comparison.id, compared: comparison.paperIds } : {})
+            ...(comparison ? { comparisonId: comparison.id, compared: comparison.paperIds } : {}),
+            ...(synthesis ? { synthesisId: synthesis.id, comparisonId: synthesis.comparisonId } : {})
           }
         })
       );
@@ -2901,6 +3005,30 @@ export class WorkflowEngine {
         acceptedRecordContext
       ].join("\n");
     }
+    if (request.type === "synthesis-note") {
+      if (!request.projectId) return "Synthesis requires a project scope.";
+      const options = SynthesisWorkflowOptionsSchema.parse(request.options);
+      const comparison = this.readComparisonArtifact(request.projectId, options.comparisonId);
+      if (!comparison) return `Comparison artifact not found: ${options.comparisonId}`;
+      const comparisonContext = comparison.rows.flatMap((row) => row.cells.map((cell) =>
+        `- kind=${row.kind}; paperId=${cell.paperId}; status=${cell.status}; summary=${cell.summary}; recordIds=${cell.recordIds.join(",")}`
+      )).join("\n");
+      return [
+        "You are LitAgent writing a cited research synthesis from an accepted comparison artifact.",
+        "Use only supported comparison cells and their accepted recordId values. Do not add outside facts.",
+        "Each claim must cite one or more recordIds. Synthesize agreements, differences, tradeoffs, and evidence gaps rather than repeating a table.",
+        "Return only JSON with no Markdown fence or commentary.",
+        "Schema: {\"title\":\"...\",\"summary\":\"...\",\"sections\":[{\"heading\":\"...\",\"claims\":[{\"text\":\"...\",\"recordIds\":[\"record_...\"]}]}]}",
+        "",
+        `Workflow run id: ${runId}`,
+        `Project: ${project?.name ?? request.projectId}`,
+        `Research question context: ${request.query ?? comparison.query ?? "none supplied"}`,
+        `Accepted comparison: ${comparison.title}`,
+        "",
+        "Comparison cells:",
+        comparisonContext
+      ].join("\n");
+    }
     return [
       "You are LitAgent, a local-first agentic literature review assistant.",
       "Work only with the supplied project/library context unless the workflow explicitly asks you to find related papers.",
@@ -3265,7 +3393,15 @@ export class WorkflowEngine {
           status: comparison.status
         };
       }
-      case "synthesis-note":
+      case "synthesis-note": {
+        const synthesis = this.createLocalSynthesisArtifact(request, runId, absoluteEventsPath);
+        return {
+          synthesisId: synthesis.id,
+          comparisonId: synthesis.comparisonId,
+          outputPath: synthesis.outputPath,
+          status: synthesis.status
+        };
+      }
       case "contradiction-finder":
       case "screening":
       case "dataset-method-extractor":
@@ -3572,6 +3708,199 @@ export class WorkflowEngine {
   private defaultComparisonTitle(papers: Paper[]): string {
     if (papers.length === 2) return `${papers[0]?.title ?? "Paper 1"} compared with ${papers[1]?.title ?? "Paper 2"}`;
     return `Comparison of ${papers.length} papers`;
+  }
+
+  private synthesisDirectory(projectId: string): string {
+    return this.repo.resolve(`projects/${projectId}/outputs/syntheses`);
+  }
+
+  private synthesisJsonPath(projectId: string, synthesisId: string): string {
+    return path.join(this.synthesisDirectory(projectId), `${synthesisId}.json`);
+  }
+
+  private acceptedComparisonForSynthesis(request: WorkflowStartRequest): ComparisonArtifact {
+    if (!request.projectId) throw new Error("Synthesis requires a project scope.");
+    const options = SynthesisWorkflowOptionsSchema.parse(request.options);
+    const comparison = this.readComparisonArtifact(request.projectId, options.comparisonId);
+    if (!comparison) throw new Error(`Comparison artifact not found: ${options.comparisonId}`);
+    if (comparison.status !== "accepted") throw new Error("Synthesis requires an accepted comparison artifact.");
+    return comparison;
+  }
+
+  private synthesisRecords(comparison: ComparisonArtifact): Map<string, ResearchRecord> {
+    if (!comparison.projectId) return new Map();
+    const allowed = new Set(comparison.rows.flatMap((row) => row.cells.flatMap((cell) => cell.recordIds)));
+    return new Map(
+      comparison.paperIds
+        .flatMap((paperId) => this.repo.listResearchRecords(paperId, comparison.projectId))
+        .filter((record) => allowed.has(record.id))
+        .map((record) => [record.id, record])
+    );
+  }
+
+  private createLocalSynthesisArtifact(
+    request: WorkflowStartRequest,
+    runId: string,
+    absoluteEventsPath: string
+  ): SynthesisArtifact {
+    const comparison = this.acceptedComparisonForSynthesis(request);
+    const recordsById = this.synthesisRecords(comparison);
+    const sections = comparison.rows.flatMap((row) => {
+      const cells = row.cells.filter((cell) => cell.status === "supported" && cell.recordIds.length > 0);
+      const records = cells.flatMap((cell) => cell.recordIds.map((recordId) => recordsById.get(recordId)).filter((record): record is ResearchRecord => Boolean(record)));
+      if (records.length === 0) return [];
+      const statements = cells.map((cell) => {
+        const paper = this.repo.readPaper(cell.paperId);
+        return `${paper?.title ?? cell.paperId}: ${cell.summary}`;
+      });
+      return [{
+        heading: row.label,
+        claims: [{
+          id: createId("claim"),
+          text: statements.join(" In comparison, "),
+          recordIds: records.map((record) => record.id),
+          evidence: uniqueEvidence(records)
+        }]
+      }];
+    });
+    if (sections.length === 0) throw new Error("Accepted comparison has no supported cells to synthesize.");
+    return this.createSynthesisArtifact({
+      request,
+      runId,
+      comparison,
+      title: `Synthesis: ${comparison.title}`,
+      summary: comparison.summary,
+      sections,
+      absoluteEventsPath
+    });
+  }
+
+  private createProviderSynthesisArtifact(
+    request: WorkflowStartRequest,
+    runId: string,
+    providerOutput: unknown,
+    absoluteEventsPath: string
+  ): SynthesisArtifact {
+    const comparison = this.acceptedComparisonForSynthesis(request);
+    const recordsById = this.synthesisRecords(comparison);
+    const parsed = ProviderSynthesisResultSchema.parse(
+      typeof providerOutput === "string" ? parseProviderJson(providerOutput) : providerOutput
+    );
+    const sections = parsed.sections.map((section) => ({
+      heading: section.heading,
+      claims: section.claims.map((claim) => {
+        const records = claim.recordIds.map((recordId) => {
+          const record = recordsById.get(recordId);
+          if (!record) throw new Error(`Provider used a record outside the accepted comparison: ${recordId}`);
+          return record;
+        });
+        return {
+          id: createId("claim"),
+          text: claim.text,
+          recordIds: records.map((record) => record.id),
+          evidence: uniqueEvidence(records)
+        };
+      })
+    }));
+    return this.createSynthesisArtifact({
+      request,
+      runId,
+      comparison,
+      title: parsed.title,
+      summary: parsed.summary,
+      sections,
+      absoluteEventsPath
+    });
+  }
+
+  private createSynthesisArtifact(input: {
+    request: WorkflowStartRequest;
+    runId: string;
+    comparison: ComparisonArtifact;
+    title: string;
+    summary: string;
+    sections: SynthesisArtifact["sections"];
+    absoluteEventsPath: string;
+  }): SynthesisArtifact {
+    if (!input.request.projectId) throw new Error("Synthesis requires a project scope.");
+    const id = createId("synthesis");
+    const timestamp = nowIso();
+    const artifact = this.persistSynthesisArtifact(SynthesisArtifactSchema.parse({
+      id,
+      runId: input.runId,
+      projectId: input.request.projectId,
+      comparisonId: input.comparison.id,
+      title: input.title,
+      summary: input.summary,
+      sections: input.sections,
+      providerId: input.request.providerId,
+      model: input.request.model,
+      status: "draft",
+      noteId: null,
+      outputPath: `projects/${input.request.projectId}/outputs/syntheses/${id}.md`,
+      reviewedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    const emitted = new Set<string>();
+    for (const evidence of artifact.sections.flatMap((section) => section.claims.flatMap((claim) => claim.evidence))) {
+      const key = `${evidence.paperId}:${evidence.passageId}`;
+      if (emitted.has(key)) continue;
+      emitted.add(key);
+      appendEvent(input.absoluteEventsPath, event({
+        runId: input.runId,
+        providerId: input.request.providerId,
+        type: "evidence.found",
+        message: evidence.quote,
+        payload: { ...evidence, synthesisId: artifact.id, comparisonId: artifact.comparisonId }
+      }));
+    }
+    return artifact;
+  }
+
+  private persistSynthesisArtifact(artifact: SynthesisArtifact): SynthesisArtifact {
+    const parsed = SynthesisArtifactSchema.parse(artifact);
+    const dir = this.synthesisDirectory(parsed.projectId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(this.synthesisJsonPath(parsed.projectId, parsed.id), `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    fs.writeFileSync(this.repo.resolve(parsed.outputPath), `${this.renderSynthesisMarkdown(parsed).trim()}\n`, "utf8");
+    return parsed;
+  }
+
+  private renderSynthesisMarkdown(artifact: SynthesisArtifact): string {
+    const evidenceByKey = new Map<string, { index: number; evidence: EvidenceRef }>();
+    for (const evidence of artifact.sections.flatMap((section) => section.claims.flatMap((claim) => claim.evidence))) {
+      const key = `${evidence.paperId}:${evidence.passageId}`;
+      if (!evidenceByKey.has(key)) evidenceByKey.set(key, { index: evidenceByKey.size + 1, evidence });
+    }
+    const sections = artifact.sections.flatMap((section) => [
+      `## ${section.heading}`,
+      "",
+      ...section.claims.flatMap((claim) => {
+        const refs = claim.evidence
+          .map((evidence) => evidenceByKey.get(`${evidence.paperId}:${evidence.passageId}`)?.index)
+          .filter((index): index is number => Boolean(index))
+          .map((index) => `[^${index}]`)
+          .join(" ");
+        return [`${claim.text} ${refs}`.trim(), ""];
+      })
+    ]);
+    const evidence = [...evidenceByKey.values()].map(({ index, evidence }) =>
+      `[^${index}]: ${evidence.paperTitle || evidence.paperId}${evidence.page ? `, p. ${evidence.page}` : ""}${evidence.section ? `, ${evidence.section}` : ""}. Passage \`${evidence.passageId}\`: ${evidence.quote}`
+    );
+    return [
+      `# ${artifact.title}`,
+      "",
+      `Status: **${artifact.status}**`,
+      `Comparison: \`${artifact.comparisonId}\``,
+      "",
+      artifact.summary,
+      "",
+      ...sections,
+      "## Evidence",
+      "",
+      ...evidence
+    ].join("\n");
   }
 
   private writeProjectOutput(projectId: string | null, filename: string, content: string): string {

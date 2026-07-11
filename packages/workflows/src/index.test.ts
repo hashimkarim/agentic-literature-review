@@ -726,6 +726,109 @@ describe("paper comparison artifacts", () => {
   });
 });
 
+describe("synthesis artifacts", () => {
+  it("synthesizes an accepted comparison and creates a note only after review", async () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Synthesis Project" });
+    const first = repo.importPaper({ projectId: project.id, metadata: { title: "Paper One" } });
+    const second = repo.importPaper({ projectId: project.id, metadata: { title: "Paper Two" } });
+    const firstPassage = repo.writeMarkdown(first.paper.id, "# Method\n\nPaper One uses a convolutional encoder.").passages[0];
+    const secondPassage = repo.writeMarkdown(second.paper.id, "# Method\n\nPaper Two uses a transformer encoder.").passages[0];
+    const firstRecord = acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: first.paper.id,
+      kind: "method",
+      title: "Convolutional method",
+      content: "Uses a convolutional encoder.",
+      passageId: firstPassage?.id ?? "missing"
+    });
+    const secondRecord = acceptResearchRecord(repo, {
+      projectId: project.id,
+      paperId: second.paper.id,
+      kind: "method",
+      title: "Transformer method",
+      content: "Uses a transformer encoder.",
+      passageId: secondPassage?.id ?? "missing"
+    });
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    const localEngine = new WorkflowEngine(repo, index);
+    localEngine.startWorkflow({
+      type: "compare-papers",
+      projectId: project.id,
+      paperIds: [first.paper.id, second.paper.id],
+      collectionIds: [],
+      query: "How do the methods differ?",
+      options: {},
+      providerId: "local-heuristic",
+      model: null
+    });
+    const comparison = localEngine.listComparisonArtifacts(project.id)[0];
+    expect(comparison).toBeTruthy();
+    localEngine.reviewComparisonArtifact(project.id, comparison?.id ?? "missing", { decision: "accepted" });
+
+    const providerOutput = JSON.stringify({
+      title: "Method synthesis",
+      summary: "The papers use different encoder families.",
+      sections: [{
+        heading: "Methodological contrast",
+        claims: [{
+          text: "Paper One uses convolution while Paper Two uses a transformer.",
+          recordIds: [firstRecord.id, secondRecord.id]
+        }]
+      }]
+    });
+    const fakeProvider: ProviderDefinition = {
+      id: "fake-synthesis",
+      label: "Fake Synthesis Agent",
+      command: process.execPath,
+      versionArgs: ["--version"],
+      capabilities: ["cli", "stream", "research"],
+      connectCommand: "node --version",
+      models: [],
+      defaultModel: null,
+      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
+      promptDelivery: "stdin"
+    };
+    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
+    const run = engine.startWorkflow({
+      type: "synthesis-note",
+      projectId: project.id,
+      paperIds: comparison?.paperIds ?? [],
+      collectionIds: [],
+      query: comparison?.query ?? null,
+      options: { comparisonId: comparison?.id },
+      providerId: fakeProvider.id,
+      model: null
+    });
+    let completed = engine.readRun(run.id).run;
+    for (let attempt = 0; attempt < 100 && completed.status === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      completed = engine.readRun(run.id).run;
+    }
+    const synthesis = engine.listSynthesisArtifacts(project.id)[0];
+    const claim = synthesis?.sections[0]?.claims[0];
+
+    expect(completed.status).toBe("completed");
+    expect(synthesis).toMatchObject({ status: "draft", comparisonId: comparison?.id, noteId: null });
+    expect(claim?.recordIds).toEqual([firstRecord.id, secondRecord.id]);
+    expect(claim?.evidence.map((item) => item.passageId)).toEqual([firstPassage?.id, secondPassage?.id]);
+    expect(repo.listNotes(project.id)).toHaveLength(0);
+
+    const accepted = engine.reviewSynthesisArtifact(project.id, synthesis?.id ?? "missing", {
+      decision: "accepted",
+      claimTexts: { [claim?.id ?? "missing"]: "Reviewed synthesis claim." }
+    });
+    const note = accepted.noteId ? repo.readNote(project.id, accepted.noteId) : null;
+    expect(accepted).toMatchObject({ status: "accepted" });
+    expect(accepted.noteId).toMatch(/^note_/);
+    expect(note?.content).toContain("Reviewed synthesis claim.");
+    expect(note?.passageIds).toEqual(expect.arrayContaining([firstPassage?.id, secondPassage?.id]));
+    expect(fs.readFileSync(repo.resolve(accepted.outputPath), "utf8")).toContain("Status: **accepted**");
+    index.close();
+  });
+});
+
 describe("RAG question answering", () => {
   it("answers with scoped evidence refs and diagnostics", () => {
     const repo = makeRepo();
