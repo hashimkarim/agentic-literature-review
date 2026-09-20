@@ -27,7 +27,8 @@ import {
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema
 } from "@litagent/contracts";
-import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
+import { AgentProviderSettingsStore } from "@litagent/agents";
+import { agenticDriverCatalogFromEnvironment } from "@litagent/agents/agenticdriver";
 import { SearchIndex } from "@litagent/indexer";
 import { DEFAULT_REPO_ROOT, LitAgentRepository } from "@litagent/library";
 import { WorkflowEngine, WorkflowStartRequestSchema, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema } from "@litagent/workflows";
@@ -44,7 +45,7 @@ const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
 index.rebuild(repo);
 
 const providerSettings = new AgentProviderSettingsStore(repo.resolve(".litagent/provider-settings.json"));
-const providers = new AgentProviderCatalog(undefined, providerSettings.read());
+const providers = await agenticDriverCatalogFromEnvironment(providerSettings.read());
 const workflows = new WorkflowEngine(repo, index, providers, undefined, providerSettings);
 const upload = multer({ dest: repo.resolve(".litagent/cache/uploads") });
 
@@ -801,7 +802,12 @@ app.patch(
   "/api/settings/providers/:providerId",
   asyncHandler((req, res) => {
     const providerId = routeParam(req, "providerId");
-    providerSettings.patch(providerId, AgentProviderSettingsPatchSchema.parse(req.body));
+    const definition = providers.definition(providerId);
+    if (!definition) {
+      res.status(404).json({ error: `Unknown provider: ${providerId}` });
+      return;
+    }
+    providerSettings.patch(providerId, AgentProviderSettingsPatchSchema.parse(req.body), [definition]);
     res.json(refreshProviders());
   })
 );
@@ -822,7 +828,7 @@ app.post(
     providerSettings.patch(providerId, {
       enabled: true,
       connected: provider.authStatus !== "unavailable"
-    });
+    }, [providers.definition(providerId)!]);
     res.json(refreshProviders());
   })
 );

@@ -46,6 +46,9 @@ present.
 
 ## Repository Model
 
+Optional local/remote agent execution through the shared AgenticDriver SDK is
+documented in [AgenticDriver setup](docs/agenticdriver.md).
+
 ```text
 library/
   papers/{paperId}/paper.pdf

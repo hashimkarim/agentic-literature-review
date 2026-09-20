@@ -18,7 +18,7 @@ describe("AgentProviderCatalog", () => {
     expect(providers.map((provider) => provider.id)).toContain("codex");
     expect(providers.map((provider) => provider.id)).toContain("claude");
     expect(providers.every((provider) => typeof provider.installed === "boolean")).toBe(true);
-  });
+  }, 10_000); // Six discovery probes can each use 500 ms + an 800 ms version timeout.
 
   it("normalizes native JSON stream events into run events", () => {
     const events = normalizeProviderOutput({
