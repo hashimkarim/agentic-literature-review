@@ -32,6 +32,9 @@ and link implementation commits as work ships. Priorities are not deadlines.
 - Local files are canonical; SQLite/search indexes are rebuildable.
 - Use TypeScript/TSX, existing package boundaries, and the current PDF renderer.
 - Select provider/model per agentic task; no silent heuristic fallback.
+- AI compute development is paused here: AgenticDriver owns execution, auth,
+  model discovery, transport and provider lifecycle. Continue LitAgent domain/UI
+  work against the existing interface and fixtures; see the [execution boundary](ROADMAP.md#current-execution-boundary).
 - Agent outputs remain proposals until accepted. Missing data stays missing.
 - Every research claim retains evidence or is explicitly marked unsupported;
   distinguish reported findings from inference and external knowledge.
@@ -58,13 +61,20 @@ Inspiration: [Anara](COMPETITIVE_RESEARCH.md#c02-anara),
 | CHAT-03 | Full-Markdown paper context: MVP | P0 | Feed the complete converted paper when it fits; expose missing conversion, partial extraction and token-budget omissions instead of silently dropping later results. | C02, C11, Core |
 | CHAT-04 | Large-library retrieval: Partial | P1 | Evaluate hierarchical section retrieval, lexical/optional vector search and reranking against a labeled baseline; balance multi-paper coverage and disclose unsearched material. | C11, C20 |
 | CHAT-05 | Follow-ups and grounded inference: MVP | P0 | Tests cover pronouns, short follow-ups and multi-premise deductions; label inference, cite its premises, and distinguish unknown from negative evidence. | C01, C02, Core |
-| CHAT-06 | Claim-specific citations and repair: Partial | P0 | Check source identity, quote accuracy and actual claim support separately; bounded provider revision repairs bad citations or returns a specific unsupported/processing-failure state. | C05, C11 |
+| CHAT-06 | Claim-specific citations and repair: MVP | P0 | Structured claim IDs, source review and one repair are implemented; measure actual support quality on representative material, retaining a distinct processing-failure state. | C05, C11 |
 | CHAT-07 | Per-answer evidence navigation: MVP | P0 | Every citation selects its own source, including second/later references and another paper/page; no reused evidence stack from an earlier answer. | C02, C22 |
 | CHAT-08 | Streaming, retry and steering: Partial | P1 | Stream visible stages, cancel cleanly, retry a failed turn, edit/resend and steer running research; preserve prior versions and prevent duplicate messages. | C02, C36, C37 |
 | CHAT-09 | Reusable research context: Partial | P1 | Version project instructions, questions and user-approved thread summaries; include only scoped context and expose stale summaries after source changes. | C23, C35, C36 |
 | CHAT-10 | Figure/table-aware Q&A: Planned | P2 | Retrieve images, captions and structured cells; cite a figure/table/page, report OCR uncertainty, and do not present visually inferred values as exact measurements. | C03, C20, C43 |
 | CHAT-11 | Multilingual reading/chat: Planned | P2 | Preserve original quotes beside translated explanations; original-language citations still resolve and translation never overwrites the source. | C04, C22, C41 |
 | CHAT-12 | Q&A quality benchmark: Partial | P0 | Add representative tests for methods, results, tables, inference, absent answers, scanned PDFs, scope leaks and prompt injection; report answer coverage and citation correctness per provider. | C11, C43, Core |
+
+2026-09-21 checkpoint (`0a9764e`, `212c2a7`): CHAT-03/05/06 now have source manifests, explicit claim
+citations, inference premises, bounded source review/repair and 27 dedicated
+regressions. Source review uses the existing execution interface; it is not an
+independent quality guarantee. CHAT-12 remains partial, and live-provider work is
+paused. See [gate 1 progress](ROADMAP.md#1-trustworthy-research-chat) for validation
+and remaining work.
 
 ## Document Reading And Annotations
 
@@ -226,8 +236,9 @@ Inspiration: [ResearchRabbit](COMPETITIVE_RESEARCH.md#c13-researchrabbit),
 
 ## Agent Workflows And Living Reviews
 
-Owners: `packages/agents` for provider-specific behavior, `packages/workflows`
-for orchestration, `apps/server` for scheduling and `apps/web` for controls.
+Owners: AgenticDriver for compute; existing `packages/agents` integration remains
+in place. `packages/workflows` owns research orchestration, `apps/server`
+scheduling and `apps/web` controls. New provider-runtime work is paused here.
 PDF inbox event/timer/manual automation exists; a general workflow editor does not.
 Inspiration: [Anara](COMPETITIVE_RESEARCH.md#c02-anara),
 [Undermind](COMPETITIVE_RESEARCH.md#c06-undermind),
@@ -235,7 +246,7 @@ Inspiration: [Anara](COMPETITIVE_RESEARCH.md#c02-anara),
 
 | ID | Feature / Current State | Priority | Next Acceptance Gate | Sources |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Provider/model selection and lifecycle: MVP | P1 | Preserve direct CLI and shared AgenticDriver support; test capability/auth errors, cancellation and stream normalization per provider; never silently use another provider. | Core |
+| AUTO-01 | Provider/model selection and lifecycle: MVP; compute work paused | P1 | Preserve existing integration; consume the shared SDK's catalog/events/lifecycle when resumed. Keep application fixture tests for failures and cancellation; never silently use another provider. | Core |
 | AUTO-02 | Manual recipes and typed outputs: Partial | P1 | Version/share project recipe definitions with scope, inputs, prompt/schema, provider/model, review gates and reproducible artifact metadata. | C04, C26, C42 |
 | AUTO-03 | Event/scheduled workflows: Partial | P1 | Extend PDF inbox triggers to import/conversion/record changes and timed searches; deduplicate events and persist missed-run/retry policy across restarts. | C03, C26, Core |
 | AUTO-04 | Visual workflow editor: Planned | P2 | n8n-style trigger/action/condition/review nodes validate connections and cycles; show dry-run input/output and serialize to tracked definitions. | Core |

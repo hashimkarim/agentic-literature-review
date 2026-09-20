@@ -38,7 +38,24 @@ artifacts, rebuildable indexes, and CLI-backed agent workflows.
 - `packages/pdf`: PDF viewer integration primitives.
 - `packages/ui`: design tokens shared by app surfaces.
 
-## Provider Adapter Rules
+## AI Compute Ownership
+
+- For now, do not develop or redesign AI compute in this repository. The user is
+  building the shared SDK in `/mnt/shared/Git/agenticdriver`.
+- Coordination reference: T3 Code thread `e47d62d7-5263-410d-8983-1df4948e10d4`.
+  Read the SDK's `README.md` and `docs/architecture.md` for its documented contract;
+  the thread reference is not a substitute for inspecting that contract.
+- AgenticDriver owns provider execution, authentication, model discovery,
+  provider sessions, normalized events, cancellation, transport, and usage.
+  Do not introduce another SDK, provider harness, or vendor-specific runtime here.
+- LitAgent owns papers, retrieval, source validation, chat state/UI, research
+  workflow checkpoints, approval decisions/UI, and accepted artifacts.
+- Preserve existing adapters and the optional SDK integration while SDK work is
+  underway. Test application behavior with fixtures through the existing
+  interface; defer new live-provider experiments and runtime changes until the
+  user resumes that work. Do not modify the sibling SDK as part of LitAgent tasks.
+
+## Existing Provider Adapter Rules
 
 Provider-specific code stays in `packages/agents`. Workflow code should consume
 normalized provider events and should not parse provider-specific CLI output

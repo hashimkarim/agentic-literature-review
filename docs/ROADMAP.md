@@ -20,6 +20,17 @@ project-specific research state, selectable CLI agents, reviewable outputs,
 app-owned annotations and portable Git-backed evidence. Reliable chat and useful
 research artifacts take precedence over broad feature counts.
 
+## Current Execution Boundary
+
+AI compute development is paused here while the user develops the shared
+AgenticDriver SDK in `/mnt/shared/Git/agenticdriver` (T3 Code coordination thread
+`e47d62d7-5263-410d-8983-1df4948e10d4`). Provider execution, authentication,
+catalogs, sessions, streaming, cancellation, transport and usage belong there.
+Keep the existing integration working; do not build a parallel runtime or start
+new live-provider experiments. LitAgent work continues on domain data, chat
+state/UI, retrieval, evidence validation, workflow checkpoints and approval UI,
+using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENTS.md).
+
 ## Delivery Snapshot
 
 | Area | State | What Works Today | Main Gap |
@@ -29,8 +40,8 @@ research artifacts take precedence over broad feature counts.
 | PDF import and conversion | Working | Recursive PDF inbox, upload import, bundled Marker runtime path, assets, Markdown, passages, FTS refresh | Packaged-runtime validation on all desktop targets |
 | PDF reader | Working | PDF.js highlighter, text/area/drawing annotations, colors/fill, persistence, citation jumps | Exact generated citation rectangles on more PDFs |
 | Markdown reader | Working | GFM, figures/assets, KaTeX equations, tables, links, algorithm rendering | Editing and side-by-side PDF/Markdown mode |
-| Search and cited Q&A | Working MVP | Scoped FTS, provider-backed Markdown-context answers, persistent chat threads, validated passage citations, evidence-backed inference and follow-ups | Measured support quality, bounded repair, source coverage and scalable project retrieval |
-| Provider harness | Working MVP | CLI discovery/settings, provider/model selection, streaming, cancellation, normalized logs and optional shared AgenticDriver execution | Verify lifecycle/capability parity, approvals, resume and richer model discovery |
+| Search and cited Q&A | Working MVP | Scoped FTS, Markdown-context answers, persistent threads, explicit claim citations, bounded source review/repair and source-coverage diagnostics | Measured support quality, thread concurrency, versioned anchors and scalable project retrieval |
+| Provider harness | Existing MVP; development paused | CLI discovery/settings, provider/model selection, streaming, cancellation, normalized logs and optional shared AgenticDriver execution | Shared runtime work belongs to AgenticDriver; retain existing integration |
 | Agent workflows | Working MVP | Queue, provider/model selection, conversion, Q&A, reviewable relevance/metadata/research records, cited comparison matrices, and synthesis notes from accepted comparisons | Implement discovery, contradiction analysis and reusable recipes |
 | Automatic workflows | Partial | PDF inbox rules with event, interval and manual execution | General recipe graph, durable scheduling, idempotent steps and living-search monitors |
 | Discovery and screening | Partial | Local search, project relevance decisions and proposal review | Online discovery adapters, search histories, staged screening and auditable PRISMA counts |
@@ -97,11 +108,36 @@ follow-up regressions with diagnostic traces, then fix the demonstrated failure
 before expanding retrieval. Add optional vector search only after measuring the
 FTS/full-document baseline.
 
-Progress: interactive Q&A no longer silently falls back to heuristics for an
-unknown/disabled provider, cancellation, failed or empty provider output.
-Missing conversion is reported as a prerequisite instead of "not found".
-Eight failure-boundary regressions cover these cases; evidence validation and
-source-coverage diagnostics remain in progress.
+Progress (2026-09-21):
+
+- `0a9764e`: interactive Q&A no longer silently falls back to heuristics for an
+  unknown provider, cancellation, failed or empty provider output. Missing
+  conversion is reported as a prerequisite instead of "not found".
+- `212c2a7`: new answers declare each claim's source IDs. Missing, stale, out-of-scope or
+  truncated-away passages cannot be silently substituted. Inferences retain
+  their premises; short answers and more than five citations are preserved.
+- A source-review step checks support with the selected provider/model through
+  the existing execution interface, with at most one draft repair. Failed
+  processing remains an error, not a saved "not found" answer. This is model
+  judgment, not independent verification or calibrated confidence.
+- Answer details expose source hashes and included/total passage counts,
+  including missing/placeholder/omitted documents. Passage-marker overhead
+  counts toward the character budget; a source changed mid-answer requires retry.
+  New evidence shows "Source linked" instead of an invented confidence percent.
+- Verification: `bun run typecheck` and `bun run test` pass (78 tests, including
+  27 dedicated Q&A regressions). Mocked cases cover follow-ups, distinct evidence,
+  numerical/negation review failures, bounded repair, cancellation and source
+  coverage. Browser checks cover first screen, diagnostics and evidence at
+  1440px and 1920px with no page errors.
+- Before the compute pause, a three-question synthetic Codex smoke test returned
+  distinct method/result evidence and a labeled non-causal inference. No private
+  papers were used. This is not a multi-provider quality benchmark.
+
+Gate 1 remains open: next focus is application-side thread/scope concurrency and
+chat usability with deterministic fixtures. Legacy answer migration, durable
+versioned anchors, representative PDF/table/injection evaluations and measured
+cross-provider quality are not completed by this slice. Live compute work is
+deferred under the execution boundary above.
 
 ### 2. Research Notes And Evidence Ledger
 
