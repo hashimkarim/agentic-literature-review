@@ -2012,7 +2012,7 @@ export class WorkflowEngine {
     const context = buildQaMarkdownContext(this.repo, scope);
     const thread = this.readQaThread(parsed);
     if (!this.isProviderBackedRun(parsed.providerId)) {
-      return this.buildLocalQaResponse(parsed);
+      throw new Error("Select a connected agent provider in Settings. Heuristic Q&A is disabled.");
     }
     const baseDiagnostics = {
       retrievedCount: context.passageCount,
@@ -2030,15 +2030,7 @@ export class WorkflowEngine {
         : "No converted Markdown exists in the selected scope. Run PDF-to-Markdown conversion first."
     };
     if (context.papers.length === 0) {
-      return QaResponseSchema.parse({
-        answer: "Not found in the selected sources. Run PDF-to-Markdown conversion first so LitAgent can use the Markdown context.",
-        evidence: [],
-        runId: null,
-        question: parsed.question,
-        status: "not_found",
-        scope,
-        diagnostics: baseDiagnostics
-      });
+      throw new Error("No converted Markdown exists in the selected scope. Run PDF-to-Markdown conversion first.");
     }
 
     const runId = createId("run");
@@ -2066,6 +2058,8 @@ export class WorkflowEngine {
 
     const outputPath = this.repo.resolve(`.litagent/cache/provider-runs/${runId}/qa-answer.md`);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    let failureStatus: "failed" | "cancelled" = "failed";
+    let failureClass = "harness_error";
     try {
       const session = this.harness.startRun({
         runId,
@@ -2115,17 +2109,9 @@ export class WorkflowEngine {
         });
       }
 
-      const status = result.status === "cancelled" ? "cancelled" : "failed";
-      this.writeRun(WorkflowRunSchema.parse({ ...run, status, updatedAt: nowIso() }));
-      const fallback = this.buildLocalQaResponse(parsed);
-      return QaResponseSchema.parse({
-        ...fallback,
-        runId,
-        diagnostics: {
-          ...fallback.diagnostics,
-          message: `Provider ${parsed.providerId} did not return an answer${result.failureClass ? ` (${result.failureClass})` : ""}; showing extractive fallback. ${fallback.diagnostics.message}`
-        }
-      });
+      failureStatus = result.status === "cancelled" ? "cancelled" : "failed";
+      failureClass = result.failureClass ?? (result.status === "completed" ? "empty_output" : failureStatus);
+      throw new Error(`Provider ${parsed.providerId} did not return a completed answer (${failureClass}). Retry or check the provider settings.`);
     } catch (error) {
       appendEvent(
         absoluteEventsPath,
@@ -2134,19 +2120,11 @@ export class WorkflowEngine {
           providerId: parsed.providerId,
           type: "run.failed",
           message: error instanceof Error ? error.message : String(error),
-          payload: { failureClass: "harness_error" }
+          payload: { failureClass }
         })
       );
-      this.writeRun(WorkflowRunSchema.parse({ ...run, status: "failed", updatedAt: nowIso() }));
-      const fallback = this.buildLocalQaResponse(parsed);
-      return QaResponseSchema.parse({
-        ...fallback,
-        runId,
-        diagnostics: {
-          ...fallback.diagnostics,
-          message: `Provider ${parsed.providerId} failed before answering; showing extractive fallback. ${fallback.diagnostics.message}`
-        }
-      });
+      this.writeRun(WorkflowRunSchema.parse({ ...run, status: failureStatus, updatedAt: nowIso() }));
+      throw error;
     }
   }
 

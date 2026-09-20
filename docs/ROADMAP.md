@@ -97,6 +97,12 @@ follow-up regressions with diagnostic traces, then fix the demonstrated failure
 before expanding retrieval. Add optional vector search only after measuring the
 FTS/full-document baseline.
 
+Progress: interactive Q&A no longer silently falls back to heuristics for an
+unknown/disabled provider, cancellation, failed or empty provider output.
+Missing conversion is reported as a prerequisite instead of "not found".
+Eight failure-boundary regressions cover these cases; evidence validation and
+source-coverage diagnostics remain in progress.
+
 ### 2. Research Notes And Evidence Ledger
 
 Priority: P1. Status: backend and synthesis-to-note foundation exists.
@@ -284,5 +290,6 @@ determine release readiness.
 | 2026-07-10 to 2026-07-11 | Accepted research records, cited comparison review and synthesis-to-note workflows implemented | Existing unit/integration coverage and prior feature commits |
 | 2026-09-20 | Shared AgenticDriver SDK integration added alongside existing agent harness | Adapter tests; see [integration setup](agenticdriver.md) |
 | 2026-09-21 | Added first-party survey of 43 tools and prioritized feature backlog; corrected existing automation/notes status and reordered delivery around chat reliability | Documentation/link checks, `bun run typecheck`, `bun run test` (51 tests); no runtime behavior changed |
+| 2026-09-21 | CHAT-06/OPS-04: removed interactive Q&A heuristic fallbacks and separated provider/conversion failures from research findings | `bun run typecheck`, `bun run test` (59 tests, including 8 new failure-boundary regressions) |
 
 Keep this log and backlog current after each verified, locally committed feature.
