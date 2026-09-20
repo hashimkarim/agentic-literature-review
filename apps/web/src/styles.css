@@ -839,7 +839,10 @@ button { font-family: var(--font-sans); }
 .la-chat-diagnostics { position: relative; margin-left: auto; }
 .la-chat-diagnostics summary { list-style: none; }
 .la-chat-diagnostics summary::-webkit-details-marker { display: none; }
-.la-chat-diagnostics > div { position: absolute; right: 0; bottom: 28px; z-index: 3; width: 230px; border: 1px solid var(--border-line); border-radius: var(--radius-sm); background: var(--bg-secondary-alt); color: var(--text-secondary); padding: 8px; box-shadow: var(--shadow-lg); font: var(--text-caption); line-height: 1.45; }
+.la-chat-diagnostics > div { position: absolute; right: 0; bottom: 28px; z-index: 3; width: min(280px, 65vw); max-height: 300px; overflow: auto; overflow-wrap: anywhere; border: 1px solid var(--border-line); border-radius: var(--radius-sm); background: var(--bg-secondary-alt); color: var(--text-secondary); padding: 8px; box-shadow: var(--shadow-lg); font: var(--text-caption); line-height: 1.45; }
+.la-chat-diagnostics p { margin: 0 0 8px; }
+.la-chat-diagnostics ul { margin: 0; padding-left: 16px; }
+.la-chat-diagnostics li + li { margin-top: 6px; }
 .la-chatempty { display: grid; justify-items: center; padding: 16px 2px 4px; text-align: center; }
 .la-chatempty-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin-bottom: 9px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--bg-secondary); color: var(--accent-soft); }
 .la-chatempty strong { color: var(--text-high); font: var(--text-body); font-weight: 650; }

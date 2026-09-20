@@ -2896,7 +2896,19 @@ function AgentPanel({
                         ) : null}
                         <details className="la-chat-diagnostics" onClick={(event) => event.stopPropagation()}>
                           <summary title="Answer details"><Icon name="info" size={12} /></summary>
-                          <div>{response.diagnostics.message}</div>
+                          <div>
+                            <p>{response.diagnostics.message}</p>
+                            {response.diagnostics.validation ? <p>{response.diagnostics.validation.reason}</p> : null}
+                            {response.diagnostics.sources?.length ? (
+                              <ul>
+                                {response.diagnostics.sources.map((source) => (
+                                  <li key={source.paperId} title={`Markdown SHA-256: ${source.markdownHash ?? "unavailable"}`}>
+                                    <strong>{source.paperTitle}</strong>: {source.coverage}, {source.includedPassages}/{source.totalPassages} passages
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </div>
                         </details>
                       </div>
                     </article>
@@ -3001,7 +3013,9 @@ function AgentPanel({
                 <span>{item.section || "Passage"}</span>
                 <span className="pg">p.{item.page ?? "?"}</span>
                 <span className="spacer" />
-                <ConfBar value={Math.round(item.confidence * 100)} />
+                {item.confidence === null
+                  ? <span title="A source link is not a calibrated confidence score">Source linked</span>
+                  : <ConfBar value={Math.round(item.confidence * 100)} />}
               </div>
             </div>
           )) : <Empty icon="quote" title="No evidence yet" desc="Convert and index papers, then ask a cited question." />}

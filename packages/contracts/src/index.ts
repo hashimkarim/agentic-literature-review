@@ -185,7 +185,7 @@ export const EvidenceRefSchema = z.object({
   paperTitle: z.string().default(""),
   section: z.string().default(""),
   quote: z.string(),
-  confidence: z.number().min(0).max(1)
+  confidence: z.number().min(0).max(1).nullable()
 });
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
 
@@ -576,6 +576,19 @@ export const QaScopeSchema = z.object({
 });
 export type QaScope = z.infer<typeof QaScopeSchema>;
 
+export const QaContextSourceSchema = z.object({
+  paperId: z.string(),
+  paperTitle: z.string(),
+  markdownHash: z.string().nullable(),
+  totalChars: z.number().int().nonnegative(),
+  includedChars: z.number().int().nonnegative(),
+  totalPassages: z.number().int().nonnegative(),
+  includedPassages: z.number().int().nonnegative(),
+  coverage: z.enum(["full", "truncated", "omitted", "missing", "placeholder"]),
+  readiness: z.enum(["missing", "placeholder", "limited", "ready"])
+});
+export type QaContextSource = z.infer<typeof QaContextSourceSchema>;
+
 export const QaDiagnosticsSchema = z.object({
   retrievedCount: z.number().int().nonnegative().default(0),
   evidenceCount: z.number().int().nonnegative().default(0),
@@ -583,8 +596,19 @@ export const QaDiagnosticsSchema = z.object({
   model: z.string().nullable().default(null),
   contextMode: z.enum(["passage-search", "markdown-context"]).default("passage-search"),
   contextChars: z.number().int().nonnegative().default(0),
+  sources: z.array(QaContextSourceSchema).default([]),
   evidenceMode: z.enum(["passage-search", "provider-passages", "claim-match"]).default("passage-search"),
   evidenceVersion: z.number().int().positive().default(1),
+  validation: z.object({
+    method: z.literal("provider-review"),
+    attempts: z.number().int().min(1).max(2),
+    reason: z.string(),
+    claims: z.array(z.object({
+      index: z.number().int().nonnegative(),
+      supported: z.boolean(),
+      reason: z.string()
+    }))
+  }).nullable().default(null),
   message: z.string().default("")
 });
 export type QaDiagnostics = z.infer<typeof QaDiagnosticsSchema>;
@@ -606,17 +630,7 @@ export const QaResponseSchema = z.object({
     paperCount: 0,
     passageCount: 0
   }),
-  diagnostics: QaDiagnosticsSchema.default({
-    retrievedCount: 0,
-    evidenceCount: 0,
-    providerId: "local-heuristic",
-    model: null,
-    contextMode: "passage-search",
-    contextChars: 0,
-    evidenceMode: "passage-search",
-    evidenceVersion: 1,
-    message: ""
-  })
+  diagnostics: QaDiagnosticsSchema.default(() => QaDiagnosticsSchema.parse({}))
 });
 export type QaResponse = z.infer<typeof QaResponseSchema>;
 

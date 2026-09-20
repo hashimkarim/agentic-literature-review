@@ -9,6 +9,14 @@ import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
 
 import { WorkflowEngine, assessMarkdownReadiness, discoverPdfInputs, markerRuntimeStatus, processPdfInbox, processPdfInboxAsync, processPaperSetWithMarker, type ConversionResult } from "./index";
+import type { ProviderQaDraft } from "./qa-grounding";
+
+function qaProviderArgs(prompt: string, claims: ProviderQaDraft["claims"], supported = true): string[] {
+  const reply = prompt.startsWith("LitAgent Q&A source review")
+    ? { supported, reason: supported ? "The supplied sources support the answer." : "The source is about a different subject.", claims: claims.map((_, index) => ({ index, supported, reason: "Compared to the cited passage." })) }
+    : { status: claims.length ? "answered" : "not_found", claims };
+  return ["-e", `process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(JSON.stringify(reply))}))`];
+}
 
 function makeRepo(): LitAgentRepository {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-workflow-test-"));
@@ -954,10 +962,10 @@ describe("RAG question answering", () => {
       connectCommand: "node --version",
       models: [],
       defaultModel: null,
-      runArgs: () => [
-        "-e",
-        "process.stdout.write('Provider synthesis says low latency streaming inference improves reliability [1].')"
-      ],
+      runArgs: (prompt) => qaProviderArgs(prompt, [{
+        text: "Provider synthesis says low latency streaming inference improves reliability.",
+        kind: "reported", passageIds: [repo.readPassages(imported.paper.id)[0]!.id]
+      }]),
       promptDelivery: "stdin"
     };
     const catalog = new AgentProviderCatalog([fakeProvider]);
@@ -978,7 +986,8 @@ describe("RAG question answering", () => {
     const { run, events } = engine.readRun(answer.runId ?? "");
     expect(run.status).toBe("completed");
     expect(events.map((event) => event.type)).toContain("evidence.found");
-    expect(events.map((event) => event.type)).toContain("model.delta");
+    expect(events.map((event) => event.type)).toContain("tool.call");
+    expect(answer.diagnostics.validation?.method).toBe("provider-review");
     index.close();
   });
 
@@ -1032,10 +1041,10 @@ describe("RAG question answering", () => {
       connectCommand: "node --version",
       models: [],
       defaultModel: null,
-      runArgs: () => [
-        "-e",
-        "let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('What context is described?')?'Conversation context enables precise follow-up questions [1].':'Not found in the selected sources.'))"
-      ],
+      runArgs: (prompt) => qaProviderArgs(prompt, prompt.includes("What context is described?") ? [{
+        text: "Conversation context enables precise follow-up questions.", kind: "reported",
+        passageIds: [repo.readPassages(imported.paper.id)[0]!.id]
+      }] : []),
       promptDelivery: "stdin"
     };
     const catalog = new AgentProviderCatalog([fakeProvider]);
@@ -1095,10 +1104,11 @@ describe("RAG question answering", () => {
       connectCommand: "node --version",
       models: [],
       defaultModel: null,
-      runArgs: () => [
-        "-e",
-        `let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('Reasonable source-grounded deductions are allowed and expected')&&!input.includes('Assistant: Not found in the selected sources.')?'Inference: the model is likely offline/non-causal, not online. It uses connections both forwards and backwards in time and is trained on full sequences. [[passage:${approachPassage?.id}]] [[passage:${trainingPassage?.id}]]':'Not found in the selected sources.'))`
-      ],
+      runArgs: (prompt) => qaProviderArgs(prompt,
+        (prompt.startsWith("LitAgent Q&A source review") || prompt.includes("Reasonable source-grounded deductions are allowed and expected")) && !prompt.includes("Assistant: Not found in the selected sources.") ? [{
+          text: "The model is likely offline/non-causal, not online. It uses connections both forwards and backwards in time and is trained on full sequences.",
+          kind: "inference", passageIds: [approachPassage!.id, trainingPassage!.id]
+        }] : []),
       promptDelivery: "stdin"
     };
     const catalog = new AgentProviderCatalog([fakeProvider]);
@@ -1164,7 +1174,7 @@ describe("RAG question answering", () => {
       [
         "# Method",
         "",
-        "The method uses a transformer encoder to classify streaming audio frames.",
+        "The method uses a transformer encoder to classify streaming audio frames with a score of 0.841.",
         "",
         "# Limitations",
         "",
@@ -1187,10 +1197,12 @@ describe("RAG question answering", () => {
       connectCommand: "node --version",
       models: [],
       defaultModel: null,
-      runArgs: () => [
-        "-e",
-        `let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>process.stdout.write(input.includes('Summarize both findings')?'A transformer encoder classifies streaming audio frames with a score of 0.841. [[passage:${methodPassage?.id}]] Battery consumption constrains mobile deployment. [[passage:${limitationPassage?.id}]]':input.includes('limits mobile deployment')?'Battery consumption constrains mobile deployment. [[passage:${limitationPassage?.id}]]':'A transformer encoder classifies streaming audio frames. [[passage:${methodPassage?.id}]]'))`
-      ],
+      runArgs: (prompt) => qaProviderArgs(prompt, prompt.includes("Summarize both findings") ? [
+        { text: "A transformer encoder classifies streaming audio frames with a score of 0.841.", kind: "reported", passageIds: [methodPassage!.id] },
+        { text: "Battery consumption constrains mobile deployment.", kind: "reported", passageIds: [limitationPassage!.id] }
+      ] : prompt.includes("limits mobile deployment") ? [
+        { text: "Battery consumption constrains mobile deployment.", kind: "reported", passageIds: [limitationPassage!.id] }
+      ] : [{ text: "A transformer encoder classifies streaming audio frames.", kind: "reported", passageIds: [methodPassage!.id] }]),
       promptDelivery: "stdin"
     };
     const catalog = new AgentProviderCatalog([fakeProvider]);
@@ -1221,7 +1233,7 @@ describe("RAG question answering", () => {
     expect(methodAnswer.diagnostics.evidenceMode).toBe("provider-passages");
     expect(limitationAnswer.answer).toContain("[1]");
     expect(combinedAnswer.evidence.map((item) => item.passageId)).toEqual([methodPassage?.id, limitationPassage?.id]);
-    expect(combinedAnswer.answer).toBe("A transformer encoder classifies streaming audio frames with a score of 0.841. [1] Battery consumption constrains mobile deployment. [2]");
+    expect(combinedAnswer.answer).toBe("A transformer encoder classifies streaming audio frames with a score of 0.841. [1]\n\nBattery consumption constrains mobile deployment. [2]");
     index.close();
   });
 
@@ -1242,22 +1254,20 @@ describe("RAG question answering", () => {
       connectCommand: "node --version",
       models: [],
       defaultModel: null,
-      runArgs: () => ["-e", `process.stdout.write('Ocean temperature trends determine coastal erosion. [[passage:${passage?.id}]]')`],
+      runArgs: (prompt) => qaProviderArgs(prompt, [{
+        text: "Ocean temperature trends determine coastal erosion.", kind: "reported", passageIds: [passage!.id]
+      }], false),
       promptDelivery: "stdin"
     };
     const catalog = new AgentProviderCatalog([fakeProvider]);
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
 
-    const answer = await engine.answerQuestionWithProvider({
+    await expect(engine.answerQuestionWithProvider({
       question: "What determines coastal erosion?",
       projectId: project.id,
       paperId: imported.paper.id,
       providerId: fakeProvider.id
-    });
-
-    expect(answer.status).toBe("not_found");
-    expect(answer.evidence).toEqual([]);
-    expect(answer.answer).toBe("Not found in the selected sources.");
+    })).rejects.toThrow("after one repair attempt");
     index.close();
   });
 
