@@ -1,10 +1,24 @@
 # LitAgent Roadmap And Progress
 
-Updated: 2026-07-10
+Updated: 2026-09-21
 
 LitAgent is a local-first, project-centered literature review workspace. Papers
 are canonical global records; projects reference them with their own screening
 state, tags, collections, notes, questions, and generated research artifacts.
+
+## Planning Documents
+
+- [Competitive research](COMPETITIVE_RESEARCH.md): 43 products and adjacent tools,
+  documented features, first-party sources, aliases and coverage limits.
+- [Feature backlog](FEATURE_BACKLOG.md): deduplicated requirements with stable
+  IDs, current state, priority, ownership, dependencies and acceptance gates.
+- This document: current delivery snapshot, ordered milestones and release gates.
+
+The competitive survey is a planning input, not a commitment to clone all these
+products. Keep LitAgent's differentiators: local files, global paper identity,
+project-specific research state, selectable CLI agents, reviewable outputs,
+app-owned annotations and portable Git-backed evidence. Reliable chat and useful
+research artifacts take precedence over broad feature counts.
 
 ## Delivery Snapshot
 
@@ -15,10 +29,13 @@ state, tags, collections, notes, questions, and generated research artifacts.
 | PDF import and conversion | Working | Recursive PDF inbox, upload import, bundled Marker runtime path, assets, Markdown, passages, FTS refresh | Packaged-runtime validation on all desktop targets |
 | PDF reader | Working | PDF.js highlighter, text/area/drawing annotations, colors/fill, persistence, citation jumps | Exact generated citation rectangles on more PDFs |
 | Markdown reader | Working | GFM, figures/assets, KaTeX equations, tables, links, algorithm rendering | Editing and side-by-side PDF/Markdown mode |
-| Search and cited Q&A | Working MVP | Scoped FTS, provider-backed Markdown-context answers, persistent chat threads, validated passage citations, evidence-backed inference and follow-ups | Evaluation/repair loop and scalable project retrieval |
-| Provider harness | Working MVP | Codex, Claude, Gemini, OpenCode, Copilot and custom CLI discovery/settings, streaming, cancellation, normalized logs | PTY/ACP support, approval prompts, resume and richer model discovery |
+| Search and cited Q&A | Working MVP | Scoped FTS, provider-backed Markdown-context answers, persistent chat threads, validated passage citations, evidence-backed inference and follow-ups | Measured support quality, bounded repair, source coverage and scalable project retrieval |
+| Provider harness | Working MVP | CLI discovery/settings, provider/model selection, streaming, cancellation, normalized logs and optional shared AgenticDriver execution | Verify lifecycle/capability parity, approvals, resume and richer model discovery |
 | Agent workflows | Working MVP | Queue, provider/model selection, conversion, Q&A, reviewable relevance/metadata/research records, cited comparison matrices, and synthesis notes from accepted comparisons | Implement discovery, contradiction analysis and reusable recipes |
-| Notes | Backend foundation | Markdown note CRUD and annotation links | Real editor, backlinks, workflow-to-note flow and note search UI |
+| Automatic workflows | Partial | PDF inbox rules with event, interval and manual execution | General recipe graph, durable scheduling, idempotent steps and living-search monitors |
+| Discovery and screening | Partial | Local search, project relevance decisions and proposal review | Online discovery adapters, search histories, staged screening and auditable PRISMA counts |
+| Structured extraction | Working MVP | Accepted findings/method/dataset/result/limitation/reproducibility records | Configurable extraction schemas, editable literature sheets and per-cell provenance UI |
+| Notes | Backend foundation | Markdown note CRUD, annotation links and synthesis-to-note flow | General editor/browser, backlinks, evidence ledger and note search UI |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
 | Git and LFS | Foundation | Repository bootstrap, LFS policy and status display | Commit/sync UI, conflict handling and recovery guidance |
@@ -26,72 +43,198 @@ state, tags, collections, notes, questions, and generated research artifacts.
 The core reading loop is usable: import a PDF, convert it, read/annotate it,
 ask a provider-backed question, compare accepted records across papers, and jump
 from supporting evidence to the source. The app is not feature-complete yet
-because discovery, screening, contradiction review, and the general notes
-workspace still need to consume the structured records.
+because discovery, staged screening, contradiction review, and the general
+notes workspace still need to consume the structured records. "Working MVP"
+does not mean quality is proven across providers or every PDF: the next gate is
+an end-to-end evaluation of the existing chat and evidence loop.
 
-## Ordered Milestones
+## Delivered Foundation
 
-### 1. Reviewable Agent Outputs
-
-Status: record extraction, comparison artifacts, and synthesis notes complete.
+Record extraction, comparison artifacts, and synthesis-note workflows are
+implemented. Preserve and extend these rather than treating them as new work.
 
 - Evidence-backed relevance proposals can be edited, accepted, or rejected before
   changing project state.
 - Metadata patch proposals support field-level evidence, edits, and partial acceptance.
 - Findings, methods, datasets, results, limitations, and reproducibility details
   become typed, evidence-backed records only after per-item review.
-- Build cited comparison artifacts from accepted records and evidence. Complete.
-- Build synthesis artifacts from accepted comparison cells and evidence. Complete.
+- Cited comparison artifacts are built from accepted records and evidence.
+- Synthesis artifacts are built from accepted comparison cells and evidence,
+  with a review workspace and note creation.
+
+## Ordered Delivery Gates
+
+Order reflects the user's priorities and the competitive survey. Each gate
+contains small independently tested commits; there are no calendar estimates.
+Only rows explicitly included in the MVP definition are release blockers.
+Accessibility, privacy, type safety, tests and packaging smoke checks accompany
+every gate rather than being deferred to a final cleanup phase.
+
+### 1. Trustworthy Research Chat
+
+Priority: P0. Status: strengthen the existing MVP, not a rewrite.
+
+Backlog: CHAT-01 through CHAT-07, CHAT-12, READ-01/02/04, OPS-01/02.
+
+- Build a representative regression set for methods, results, numerical tables,
+  short follow-ups, inference, missing answers and multiple evidence references.
+- Show exactly which source versions were read; use full Markdown for a paper
+  when possible and disclose missing conversion, extraction gaps and truncation.
+- Validate that citations actually support their claims, not merely that a
+  passage ID exists. Repair within a bounded budget or explain the failure.
+- Verify that each answer has its own evidence and every citation jumps to its
+  own paper/page/quote, including after zoom, page changes and reconversion.
+- Preserve threads/scope and distinguish unsupported answers from provider or
+  processing failures. Keep heuristic fallback disabled.
+
+Exit: the benchmark reports answer quality, support coverage, citation accuracy
+and failure reasons; all supported deterministic regression cases pass. Live
+provider results are recorded separately from mocked tests, with limitations
+visible rather than an unsupported "verified" badge.
+
+First implementation slice: add the question-specific evidence and short
+follow-up regressions with diagnostic traces, then fix the demonstrated failure
+before expanding retrieval. Add optional vector search only after measuring the
+FTS/full-document baseline.
 
 ### 2. Research Notes And Evidence Ledger
 
-Status: backend foundation exists.
+Priority: P1. Status: backend and synthesis-to-note foundation exists.
+Backlog: WRITE-01/02, EVID-01, LIB-05; depends on gate 1 anchors.
 
 - Replace the placeholder notes reader with a Markdown editor and note browser.
 - Create notes from annotations, evidence, Q&A messages, and workflow outputs.
 - Render backlinks to papers, passages, annotations, workflow runs, and research
   questions.
 - Add an evidence ledger for claims, source passages, confidence, and note links.
-- Add citation-needed and contradiction review flows.
+- Carry source versions and accepted/generated status into notes and claims.
 
-### 3. Retrieval Quality
+Exit: a user can turn a cited answer or annotation into an editable note, find
+it later, follow all backlinks and reopen it after restart without losing data.
 
-Status: working MVP.
+### 3. Editable Extraction And Comparison
 
-- Put stable passage anchors into provider context and require anchor citations.
-- Validate every answer citation and ask the provider to revise unsupported claims.
-- Add conversation-aware follow-up questions without losing the selected scope.
-- Add optional embeddings/reranking after the FTS baseline is measured.
-- Improve Markdown-to-PDF rectangle alignment and page mapping.
+Priority: P1. Status: typed records and comparison/synthesis MVP exists.
+Backlog: DATA-01/02/03/06, LIB-03, WRITE-04.
+
+- Add versioned custom extraction columns and a paper-by-field review sheet.
+- Retain per-cell evidence, missing-data states, edits and partial acceptance.
+- Extend existing comparison and synthesis views with source-version changes
+  and explicit incomparability, not unsupported numerical rankings.
+
+Exit: extract and review a multi-paper matrix, correct a cell, generate a cited
+synthesis and save it to a note without re-entering accepted data.
 
 ### 4. Discovery And Screening
 
-Status: recipe placeholders.
+Priority: P1. Status: relevance decisions exist; online discovery is a gap.
+Backlog: LIB-02/06/07, FIND-01 through FIND-06, REV-01 through REV-05, REV-09.
 
-- Implement related-paper discovery through DOI, arXiv, Crossref, OpenAlex, and
-  Semantic Scholar adapters with explicit import review.
-- Add include/exclude/maybe screening with research-question rubrics.
-- Track deduplication and PRISMA-style import/screening counts.
-- Add reusable automatic and manual workflow recipes per project.
+- Implement source adapters incrementally, with normalized records, rate-limit
+  handling and provenance; do not depend on a proprietary competitor corpus.
+- Add editable search plans, citation traversal, filters and replayable logs.
+- Review discovery candidates before global import/project linking; preserve
+  DOI/preprint/published-version identity and full-text availability.
+- Add protocol versions, title/abstract and full-text stages, criterion-level
+  suggestions, inclusion/exclusion reasons, undo and event-derived counts.
+- Export search history, actual PRISMA-style counts and a draft methods report.
+
+Exit: find, review, deduplicate, import and screen a candidate set, with every
+count and decision traceable. No unreviewed automatic exclusions. Team/dual-blind
+review and specialist active-learning models are not required at this gate.
 
 ### 5. Interchange And Version Control
 
-Status: partial.
+Priority: P1. Status: partial.
+Backlog: PORT-01 through PORT-04, PORT-06/07, EVID-06.
 
-- Import/export BibTeX, BibLaTeX, and CSL JSON while preserving Zotero keys.
+- Import/export BibTeX, BibLaTeX, CSL JSON and useful review interchange formats
+  while preserving Zotero keys, citekeys, names and unmapped source fields.
 - Add Zotero watched-folder compatibility before any direct write-back.
 - Add Git diff, commit, pull/push, LFS health, and conflict recovery UI.
 - Export notes, evidence ledgers, comparisons, and Q&A threads as tracked files.
+- Validate reference identity and expose available correction/retraction signals.
 
-### 6. Concept Map And Desktop Delivery
+Exit: round-trip a project bibliography and research artifacts, restore a repo
+with rebuilt indexes, and intentionally commit/sync changes without silently
+publishing local PDFs, credentials or generated caches.
 
-Status: prototype/foundation.
+### 6. Grounded Writing And Concept Maps
 
-- Build graph data from projects, papers, authors, tags, methods, datasets,
-  citations, research questions, and accepted evidence records.
-- Add graph filters, node-to-paper selection, and saved project layouts.
+Priority: P1 core, P2 exploratory views. Status: prototype/foundation.
+Backlog: WRITE-03/04, MAP-01/02/03; then MAP-04 through MAP-07 and WRITE-05/07/09.
+
+- Add citation-needed suggestions that verify support before inserting a citekey.
+- Build actual graph edges from citations, project membership, accepted records
+  and research questions; distinguish citation from similarity and inference.
+- Add filters, paper/evidence selection, accessible table views and saved layouts.
+- Later add foundational/follow-on/bridge views, timelines and map-to-outline.
+
+Exit: every displayed relationship has a defined meaning and source; selecting
+a graph node opens the right paper/claim, and a drafted claim links to support or
+remains visibly unsupported.
+
+### 7. Reliable Automation And Living Research
+
+Priority: P1 recipes/runtime; P2 visual editor and monitoring.
+Status: PDF inbox event/timer/manual rules and workflow queue exist.
+Backlog: AUTO-01/02/03/05; then AUTO-04/06/07, EVID-07.
+
+- Version reusable project recipes with provider/model, typed inputs/outputs,
+  permissions, budgets and human review steps.
+- Persist checkpoints and deduplicate events; show queues scoped to the current
+  paper/project while retaining a global overview in the appropriate workspace.
+- Add an n8n-style editor after the underlying trigger/step model is reliable.
+- Add saved-search monitors, cited digests and affected-claim notifications.
+
+Exit: import triggers conversion, optional refinement and reviewable extraction;
+restart/retry causes no duplicate artifacts. Scheduled discovery produces a
+reviewable change set, never silently rewrites accepted research.
+
+### 8. Clean Desktop Release
+
+Priority: P1 release gate. Status: shell/runtime foundation exists.
+Backlog: OPS-03 through OPS-06, READ-05/06, PORT-07.
+
 - Package the local backend, Marker runtime, web assets, and Electron shell.
-- Add first-run repository selection, migrations, backup, and recovery checks.
+- Validate supported targets in clean environments, including model downloads,
+  cached offline reading/conversion behavior and provider prerequisites.
+- Add first-run repository selection, migrations, backup, recovery, diagnostics
+  and an install/update path. Do not require a developer's global Python setup.
+- Verify usable first screens, keyboard flows, loading/error states, and the
+  complete research loop with public/generated fixtures and optional local PDFs.
+
+Exit: a non-developer can install, set up a repository/provider, complete the MVP
+loop and recover their data. Packaging checks begin before this gate, not here.
+
+### 9. Advanced Evidence And Discovery
+
+Priority: P2. Start only after the relevant foundations are measured.
+Backlog: CHAT-04/10/11, DATA-04/05/07/08, EVID-02 through EVID-05,
+FIND-07/08/09, REV-06, AUTO-08, OPS-07/08.
+
+- Evaluate scalable hybrid retrieval, multilingual and figure/table questions.
+- Add contextual contradiction review, citation stances, corpus-scoped consensus
+  summaries, reproducibility/appraisal templates and evidence/gap maps.
+- Evaluate active-learning screening and separate verification agents against
+  simpler baselines; publish limits, cost and latency rather than accuracy claims.
+- Add optional bounded MCP/API tools and more discovery adapters.
+
+Exit per feature: measurable benefit on a defined evaluation set, editable
+outputs and provenance, not merely similarity to a competitor's marketing page.
+
+### 10. Optional Expansion
+
+Priority: P3, no MVP dependency. See the backlog's deferred rows.
+
+- Cloud/team sync, dual-blind review and reviewer assignments.
+- Mobile/offline capture, source-grounded teaching/audio/video outputs.
+- External editor/cloud connectors and licensed institutional/specialist corpora.
+- Statistical meta-analysis only with validated data and an established engine.
+- Enterprise controls only when there is a concrete supported deployment need.
+
+Do not adopt AI-detector scores as truth, detection-evasion products, autonomous
+wet-lab execution, molecule design or patient-specific clinical decision support.
 
 ## Definition Of MVP Complete
 
@@ -107,12 +250,39 @@ The local MVP is complete when a clean desktop install can:
    canonical changes.
 5. Jump every retained evidence reference to Markdown and the best available PDF
    page/selection, or clearly report that support was not found.
-6. Export a project bibliography and tracked research artifacts, then show a
-   healthy Git/Git LFS state.
+6. Review an editable multi-paper extraction/comparison and save its cited
+   synthesis into a searchable notes/evidence workspace.
+7. Discover candidate papers, approve import, screen against a versioned rubric
+   and export traceable search/screening counts without silent AI exclusions.
+8. Browse a real project concept map, filter it and return to linked evidence.
+9. Export a project bibliography and tracked research artifacts, intentionally
+   commit/sync them, then restore them with healthy Git/Git LFS state.
+10. Run a reviewed automatic import/conversion recipe with selected providers,
+    visible failures and restart-safe execution; no page reload is required to
+    see changed Markdown, jobs or evidence.
 
-## Deferred
+Advanced visual automation, proprietary data integrations, vector retrieval,
+meta-analysis, mobile, cloud/team features and multimedia outputs are not MVP
+requirements. The explicit delivery gates, not competitor feature counts,
+determine release readiness.
 
-- Hosted web sync and team collaboration.
-- Silent Zotero write-back.
-- Cloud-hosted indexes or provider credentials.
-- Exact PDF rectangles where the source PDF does not expose reliable text geometry.
+## Product Boundaries
+
+- Hosted sync/team workflows are optional future work; local use must stand alone.
+- No silent Zotero write-back, automatic canonical metadata changes or unattended
+  exclusions based solely on a language model.
+- No mandatory cloud indexes or hosted provider credentials. A selected remote
+  provider is explicit and its data egress must be visible.
+- Do not promise exact PDF rectangles when text geometry is unavailable; provide
+  honest page/quote fallbacks and preserve source versions.
+- Check API terms/content rights separately from competitive feature research.
+
+## Progress Log
+
+| Date | Change | Verification |
+| --- | --- | --- |
+| 2026-07-10 to 2026-07-11 | Accepted research records, cited comparison review and synthesis-to-note workflows implemented | Existing unit/integration coverage and prior feature commits |
+| 2026-09-20 | Shared AgenticDriver SDK integration added alongside existing agent harness | Adapter tests; see [integration setup](agenticdriver.md) |
+| 2026-09-21 | Added first-party survey of 43 tools and prioritized feature backlog; corrected existing automation/notes status and reordered delivery around chat reliability | Documentation/link checks, `bun run typecheck`, `bun run test` (51 tests); no runtime behavior changed |
+
+Keep this log and backlog current after each verified, locally committed feature.
