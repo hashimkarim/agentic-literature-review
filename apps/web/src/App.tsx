@@ -1,5 +1,5 @@
 import type { ComponentType, CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
-import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import * as Lucide from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -15,8 +15,6 @@ import type {
   MetadataProposal,
   Passage,
   Project,
-  QaResponse,
-  QaThread,
   RelevanceProposal,
   ResearchFindingProposal,
   ResearchRecord,
@@ -34,6 +32,7 @@ import type { PdfAnnotation } from "@litagent/pdf";
 import { workflowLabels } from "@litagent/ui";
 
 import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
+import { ChatSessions } from "./chat-sessions";
 
 type Screen = "library" | "projects" | "search" | "settings" | "presets";
 type WorkspaceTool = "papers" | "workflows" | "map" | "notes" | "exports";
@@ -72,16 +71,6 @@ interface UiProject {
   tags: string[];
   screen: { include: number; exclude: number; maybe: number; todo: number };
   raw: Project | null;
-}
-
-interface QaRequestState {
-  question: string;
-  projectId: string | null;
-  paperId: string | null;
-}
-
-interface QaErrorState extends QaRequestState {
-  message: string;
 }
 
 const iconAliases: Record<string, string> = {
@@ -461,10 +450,7 @@ function App() {
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [markdownNotice, setMarkdownNotice] = useState<string | null>(null);
   const [passages, setPassages] = useState<Passage[]>([]);
-  const [qa, setQa] = useState<QaResponse | null>(null);
-  const [qaThread, setQaThread] = useState<QaThread | null>(null);
-  const [qaPending, setQaPending] = useState<QaRequestState | null>(null);
-  const [qaError, setQaError] = useState<QaErrorState | null>(null);
+  const [chatSessions] = useState(() => new ChatSessions(api));
   const [relevanceProposals, setRelevanceProposals] = useState<RelevanceProposal[]>([]);
   const [metadataProposals, setMetadataProposals] = useState<MetadataProposal[]>([]);
   const [researchFindingProposals, setResearchFindingProposals] = useState<ResearchFindingProposal[]>([]);
@@ -843,75 +829,6 @@ function App() {
     });
   }, []);
 
-  const loadQaThread = useCallback((scopeProjectId: string | null, paperId: string | null) => {
-    void api
-      .qaThread({ projectId: scopeProjectId, paperId })
-      .then((thread) => {
-        setQaThread(thread);
-        const latestResponse = [...thread.messages].reverse().find((message) => message.response)?.response ?? null;
-        setQa(latestResponse);
-      })
-      .catch(() => {
-        setQaThread(null);
-        setQa(null);
-      });
-  }, []);
-
-  const loadLibraryQaThread = useCallback((paperId: string | null) => {
-    loadQaThread(null, paperId);
-  }, [loadQaThread]);
-
-  const loadProjectQaThread = useCallback((paperId: string | null) => {
-    loadQaThread(activeProjectId, paperId);
-  }, [activeProjectId, loadQaThread]);
-
-  const askQuestion = useCallback(
-    async (question: string, scopeProjectId: string | null, paperId: string | null) => {
-      const requestState = { question, projectId: scopeProjectId, paperId };
-      setQaPending(requestState);
-      setQaError(null);
-      try {
-        const response = await api.qa({
-          question,
-          projectId: scopeProjectId,
-          paperId,
-          providerId: selectedProviderId,
-          model: selectedModel
-        });
-        setQa(response);
-        setQaThread(await api.qaThread({ projectId: scopeProjectId, paperId }));
-        return true;
-      } catch (error) {
-        setQaError({
-          ...requestState,
-          message: error instanceof Error ? error.message : "The selected provider could not answer this question."
-        });
-        return false;
-      } finally {
-        setQaPending(null);
-      }
-    },
-    [selectedModel, selectedProviderId]
-  );
-
-  const clearQaThread = useCallback(async (scopeProjectId: string | null, paperId: string | null) => {
-    setQaError(null);
-    try {
-      const thread = await api.clearQaThread({ projectId: scopeProjectId, paperId });
-      setQaThread(thread);
-      setQa(null);
-      return true;
-    } catch (error) {
-      setQaError({
-        question: "",
-        projectId: scopeProjectId,
-        paperId,
-        message: error instanceof Error ? error.message : "The conversation could not be archived."
-      });
-      return false;
-    }
-  }, []);
-
   const updateProvider = useCallback(
     (providerId: string, patch: { enabled?: boolean; command?: string; defaultModel?: string | null; customModels?: string[] }) => {
       startTransition(() => {
@@ -1052,10 +969,7 @@ function App() {
             onDeletePdfAnnotation={deletePdfAnnotation}
             onClearPdfAnnotations={clearPdfAnnotations}
             passages={passages}
-            qa={qa}
-            qaThread={qaThread}
-            qaPending={qaPending}
-            qaError={qaError}
+            chatSessions={chatSessions}
             relevanceProposals={[]}
             onReviewRelevanceProposal={reviewRelevanceProposal}
             metadataProposals={metadataProposals}
@@ -1072,9 +986,6 @@ function App() {
             onRefreshWorkflows={loadSecondaryStatus}
             onRunWorkflow={(type, paperIds, query, options) => runWorkflow(type, null, paperIds, query, options)}
             onCancelWorkflow={cancelWorkflow}
-            onAsk={(question, paperId) => askQuestion(question, null, paperId)}
-            onLoadQaThread={loadLibraryQaThread}
-            onClearQaThread={(paperId) => clearQaThread(null, paperId)}
             onConvert={convertPaper}
             onImportPapers={openImportPicker}
             onOpenCitation={openCitation}
@@ -1102,10 +1013,7 @@ function App() {
             onDeletePdfAnnotation={deletePdfAnnotation}
             onClearPdfAnnotations={clearPdfAnnotations}
             passages={passages}
-            qa={qa}
-            qaThread={qaThread}
-            qaPending={qaPending}
-            qaError={qaError}
+            chatSessions={chatSessions}
             relevanceProposals={relevanceProposals}
             onReviewRelevanceProposal={reviewRelevanceProposal}
             metadataProposals={metadataProposals}
@@ -1122,9 +1030,6 @@ function App() {
             onRefreshWorkflows={loadSecondaryStatus}
             onRunWorkflow={(type, paperIds, query, options) => runWorkflow(type, activeProjectId, paperIds, query, options)}
             onCancelWorkflow={cancelWorkflow}
-            onAsk={(question, paperId) => askQuestion(question, activeProjectId, paperId)}
-            onLoadQaThread={loadProjectQaThread}
-            onClearQaThread={(paperId) => clearQaThread(activeProjectId, paperId)}
             onConvert={convertPaper}
             onImportPapers={openImportPicker}
             onOpenCitation={openCitation}
@@ -1266,10 +1171,7 @@ interface WorkspaceProps {
   onDeletePdfAnnotation: (id: string) => void;
   onClearPdfAnnotations: () => void;
   passages: Passage[];
-  qa: QaResponse | null;
-  qaThread: QaThread | null;
-  qaPending: QaRequestState | null;
-  qaError: QaErrorState | null;
+  chatSessions: ChatSessions;
   relevanceProposals: RelevanceProposal[];
   onReviewRelevanceProposal: (proposalId: string, review: ReviewRelevanceProposalRequest) => void;
   metadataProposals: MetadataProposal[];
@@ -1286,9 +1188,6 @@ interface WorkspaceProps {
   onRefreshWorkflows: () => void;
   onRunWorkflow: (type: WorkflowType, paperIds?: string[], query?: string | null, options?: Record<string, unknown>) => void;
   onCancelWorkflow: (runId: string) => void;
-  onAsk: (question: string, paperId: string | null) => Promise<boolean>;
-  onLoadQaThread: (paperId: string | null) => void;
-  onClearQaThread: (paperId: string | null) => Promise<boolean>;
   onConvert: (paperId: string) => void;
   onImportPapers: (projectId: string | null) => void;
   onOpenCitation: (ref: EvidenceRef, projectId: string | null) => void;
@@ -2611,10 +2510,7 @@ function AgentPanel({
   onModelChange,
   workflows,
   passages,
-  qa,
-  qaThread,
-  qaPending,
-  qaError,
+  chatSessions,
   relevanceProposals,
   onReviewRelevanceProposal,
   metadataProposals,
@@ -2629,34 +2525,29 @@ function AgentPanel({
   onClearPdfAnnotations,
   onRunWorkflow,
   onCancelWorkflow,
-  onAsk,
-  onLoadQaThread,
-  onClearQaThread,
   onOpenCitation
 }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
   const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
-  const [input, setInput] = useState("");
   const [qaScope, setQaScope] = useState<"paper" | "context">("paper");
   const [activeQaMessageId, setActiveQaMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-  const [clearingThread, setClearingThread] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    setQaScope(selectedPaper ? "paper" : "context");
-  }, [selectedPaper?.id]);
   const effectiveQaScope = selectedPaper ? qaScope : "context";
   const askPaperId = effectiveQaScope === "paper" ? selectedPaper?.id ?? null : null;
   const contextScopeLabel = scopeProjectId ? "Project" : "Global";
   const qaScopeLabel = effectiveQaScope === "paper" && selectedPaper ? "Current paper" : contextScopeLabel;
+  const chatScope = useMemo(() => ({ projectId: scopeProjectId, paperId: askPaperId }), [scopeProjectId, askPaperId]);
+  const chat = useSyncExternalStore(chatSessions.subscribe, () => chatSessions.get(chatScope));
+  const { thread: qaThread, draft: input, pending: qaPendingHere, error: qaErrorHere, clearing: clearingThread } = chat;
+  const chatBusy = chat.loading || clearingThread || Boolean(qaPendingHere) || !qaThread;
   useEffect(() => {
-    onLoadQaThread(askPaperId);
-  }, [askPaperId, onLoadQaThread]);
+    void chatSessions.load(chatScope);
+  }, [chatSessions, chatScope]);
   const assistantMessages = qaThread?.messages.filter((message) => message.role === "assistant" && message.response) ?? [];
-  const qaPendingHere = qaPending?.projectId === scopeProjectId && qaPending.paperId === askPaperId ? qaPending : null;
-  const qaErrorHere = qaError?.projectId === scopeProjectId && qaError.paperId === askPaperId ? qaError : null;
-  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
-  const providerLabel = selectedProvider?.label ?? selectedProviderId;
+  const runningProviderId = qaPendingHere?.providerId ?? selectedProviderId;
+  const selectedProvider = providers.find((provider) => provider.id === runningProviderId);
+  const providerLabel = selectedProvider?.label ?? runningProviderId;
   const markdownCharacters = markdown?.length ?? 0;
   const markdownLooksLikePlaceholder = Boolean(markdown && /literal abstract excerpt used for the local citation demo|markdown conversion has not been run yet|replace this placeholder/i.test(markdown));
   const sourceCoverageLimited = Boolean(selectedPaper && (markdownLooksLikePlaceholder || markdownCharacters < 1_500 || passages.length < 5));
@@ -2697,24 +2588,12 @@ function AgentPanel({
   }, [qaMessageSignature, qaThread?.updatedAt, qaPendingHere?.question, qaErrorHere?.message]);
   const submitQuestion = async (question = input) => {
     const trimmed = question.trim();
-    if (!trimmed || qaPendingHere) return;
-    setInput("");
-    const answered = await onAsk(trimmed, askPaperId);
-    if (!answered) setInput((current) => current || trimmed);
-  };
-  const startNewChat = async () => {
-    if (clearingThread || qaPendingHere) return;
-    setClearingThread(true);
-    const cleared = await onClearQaThread(askPaperId);
-    if (cleared) {
-      setActiveQaMessageId(null);
-      setCopiedMessageId(null);
-    }
-    setClearingThread(false);
+    if (!trimmed || chatBusy) return;
+    await chatSessions.ask(chatScope, trimmed, { providerId: selectedProviderId, model: selectedModel });
   };
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
   const activeQaMessage = assistantMessages.find((message) => message.id === activeQaMessageId) ?? assistantMessages.at(-1) ?? null;
-  const activeQa = activeQaMessage?.response ?? qa;
+  const activeQa = activeQaMessage?.response ?? null;
   const evidence: EvidenceRef[] = activeQa
     ? activeQa.evidence
     : passages.slice(0, 5).map((passage) => ({
@@ -2788,8 +2667,8 @@ function AgentPanel({
               <button
                 type="button"
                 className="la-iconbtn"
-                onClick={() => void startNewChat()}
-                disabled={clearingThread || Boolean(qaPendingHere) || !qaThread?.messages.length}
+                onClick={() => void chatSessions.clear(chatScope)}
+                disabled={chatBusy || !qaThread?.messages.length}
                 title="Archive this conversation and start a new chat"
               >
                 <Icon name={clearingThread ? "loader-circle" : "message-square-plus"} size={15} className={clearingThread ? "spin" : ""} />
@@ -2814,6 +2693,14 @@ function AgentPanel({
               </div>
             ) : null}
             <div className="la-chatthread">
+              {chat.loading ? <div className="la-chat-loading" role="status"><Icon name="loader-circle" size={14} className="spin" /> Loading conversation</div> : null}
+              {chat.loadError ? (
+                <div className="la-chaterror" role="alert">
+                  <Icon name="alert-circle" size={15} />
+                  <div><strong>History unavailable</strong><span>{chat.loadError}</span></div>
+                  <button type="button" onClick={() => void chatSessions.load(chatScope)} disabled={chat.loading || clearingThread || Boolean(qaPendingHere)}>Reload</button>
+                </div>
+              ) : null}
               {qaThread?.messages.length ? (
                 qaThread.messages.map((message) => {
                   if (message.role === "user") {
@@ -2914,20 +2801,20 @@ function AgentPanel({
                     </article>
                   );
                 })
-              ) : (
+              ) : !chat.loading && !chat.loadError && !qaPendingHere ? (
                 <div className="la-chatempty">
                   <span className="la-chatempty-icon"><Icon name="messages-square" size={20} /></span>
                   <strong>Ask the literature</strong>
                   <p>Answers use the selected Markdown sources and link supporting passages back to the paper.</p>
                   <div className="la-chatprompts">
                     {promptSuggestions.map((prompt) => (
-                      <button key={prompt} type="button" onClick={() => void submitQuestion(prompt)} disabled={Boolean(qaPendingHere)}>
+                      <button key={prompt} type="button" onClick={() => void submitQuestion(prompt)} disabled={chatBusy}>
                         <span>{prompt}</span><Icon name="arrow-up-right" size={12} />
                       </button>
                     ))}
                   </div>
                 </div>
-              )}
+              ) : null}
               {qaPendingHere ? (
                 <>
                   <article className="la-chatmessage user pending">
@@ -2944,8 +2831,8 @@ function AgentPanel({
               {qaErrorHere ? (
                 <div className="la-chaterror" role="alert">
                   <Icon name="alert-circle" size={15} />
-                  <div><strong>Answer failed</strong><span>{qaErrorHere.message}</span></div>
-                  {qaErrorHere.question ? <button type="button" onClick={() => void submitQuestion(qaErrorHere.question)}>Retry</button> : null}
+                  <div><strong>{qaErrorHere.operation === "answer" ? "Answer failed" : "Archive failed"}</strong><span>{qaErrorHere.message}</span></div>
+                  {qaErrorHere.question ? <button type="button" disabled={chatBusy} onClick={() => void submitQuestion(qaErrorHere.question)}>Retry</button> : null}
                 </div>
               ) : null}
             </div>
@@ -2975,19 +2862,19 @@ function AgentPanel({
             <div className={`la-chatcomposer${qaPendingHere ? " pending" : ""}`}>
               <textarea
                 value={input}
-                onChange={(event) => setInput(event.currentTarget.value)}
+                onChange={(event) => chatSessions.setDraft(chatScope, event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault();
                     void submitQuestion();
                   }
                 }}
                 placeholder={`Ask ${qaScopeLabel.toLowerCase()}...`}
                 rows={Math.min(5, Math.max(1, input.split("\n").length, Math.ceil(input.length / 36)))}
-                disabled={Boolean(qaPendingHere)}
+                disabled={Boolean(qaPendingHere) || clearingThread}
                 aria-label="Question"
               />
-              <button type="button" className="la-chat-send" onClick={() => void submitQuestion()} disabled={!input.trim() || Boolean(qaPendingHere)} title="Send question">
+              <button type="button" className="la-chat-send" onClick={() => void submitQuestion()} disabled={!input.trim() || chatBusy} title="Send question">
                 <Icon name={qaPendingHere ? "loader-circle" : "arrow-up"} size={15} className={qaPendingHere ? "spin" : ""} />
               </button>
             </div>
