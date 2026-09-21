@@ -1,8 +1,13 @@
 # Application Authentication Plan
 
-Status: planned, not implemented. SDK handoff `cd3f57f` reports local auth
-contracts passing; AD-013 platform CI remains pending in that handoff. This
-document does not certify a live AuthYard project, account or model run.
+Status: planned, not implemented. The SDK coordination handoff reports AD-013
+closed after all five [CI rows](https://github.com/hashimkarim/agenticdriver/actions/runs/35592627050)
+passed for `cd3f57f85c0f06be63637baf3d774f70af0990f0`, including native
+Better Auth/AuthYard contracts on Node 24/26, installed-package and cross-language
+TLS checks. The SDK CI gate is cleared; these checks have not been rerun here.
+This does not certify LitAgent's migration, a live AuthYard project, account or
+model run. AD-014 container deployment remains unpublished in this handoff and
+is not an accepted dependency.
 
 ## Ownership And Dependencies
 
@@ -15,6 +20,9 @@ provider account bindings are not inferred from the signed-in LitAgent user.
 
 The SDK's tested baseline is Better Auth and `@better-auth/oauth-provider`
 exactly 1.7.3, with packed `@authplane/better-auth` 0.2.0, protocol 1, Node 24+.
+The handoff records the tested connector artifact SHA-256 as
+`4df6857225eb9a34502716ee58883392b090950a4d3651256ed5c8f371ac5bc6`;
+verify downloaded/packed bytes against it before installation.
 Do not guess a registry release. AuthYard's working docs describe
 `@authyard/better-auth` 0.3.0; adopting it requires a reviewed committed artifact,
 its supported matrix and the control-plane-first migration. Do not install
@@ -33,8 +41,9 @@ Contract references to reread before implementation:
 
 ## Ordered Implementation
 
-1. Confirm SDK platform CI and the chosen AuthYard artifact/control-plane
-   compatibility. Coordinate integration of AD-035's isolated connection branch;
+1. SDK platform CI is cleared for the pinned commit above. Confirm the chosen
+   AuthYard artifact/control-plane compatibility and verify its checksum.
+   Coordinate integration of AD-035's isolated connection branch;
    it has not been integrated into this application's active branch.
 2. Establish a supported Node 24+ auth host for local web and packaged desktop.
    Bun tooling does not establish connector runtime compatibility. Verify
