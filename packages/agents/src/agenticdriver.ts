@@ -21,21 +21,36 @@ import {
   type ProviderRuntimeSession,
   type ProviderFailureClass,
 } from "./index";
+import {
+  AgenticDriverCatalogPresentation,
+  type AgenticDriverCatalogConfiguration,
+} from "./agenticdriver-catalog";
+export type { AgenticDriverCatalogBinding, AgenticDriverCatalogConfiguration } from "./agenticdriver-catalog";
 
 /** Adds scoped driver instances to the existing provider catalog and workflow lifecycle. */
 export class AgenticDriverCatalog extends AgentProviderCatalog {
   private driverSettings: Record<string, AgentProviderSettings>;
+  private readonly presentation: AgenticDriverCatalogPresentation;
   constructor(
     private readonly client: AgenticClient,
     private readonly instances: ProviderInfo[],
     settings: Record<string, AgentProviderSettings> = {},
+    configuration?: AgenticDriverCatalogConfiguration,
   ) {
     super(undefined, settings);
-    this.driverSettings = settings;
+    this.driverSettings = structuredClone(settings);
+    this.presentation = new AgenticDriverCatalogPresentation(configuration);
   }
   override setSettings(settings: Record<string, AgentProviderSettings>): void {
     super.setSettings(settings);
-    this.driverSettings = settings;
+    if (!isDeepStrictEqual(this.driverSettings, settings)) this.presentation.invalidate();
+    this.driverSettings = structuredClone(settings);
+  }
+  setCatalogConfiguration(configuration?: AgenticDriverCatalogConfiguration): void {
+    this.presentation.configure(configuration);
+  }
+  async refreshCatalog(): Promise<void> {
+    await this.presentation.refresh(this.instances);
   }
   override discover(): AgentProvider[] {
     return [
@@ -61,6 +76,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       customModels: settings?.customModels ?? [],
       version: "agenticdriver.v1",
       connectCommand: null,
+      driverCatalog: this.presentation.describe(info),
     });
   }
   override definition(providerId: string): ProviderDefinition | null {
@@ -92,6 +108,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
 
 export async function agenticDriverCatalogFromEnvironment(
   settings: Record<string, AgentProviderSettings> = {},
+  configuration?: AgenticDriverCatalogConfiguration,
 ): Promise<AgentProviderCatalog> {
   const url = process.env.AGENTICDRIVER_URL,
     token = process.env.AGENTICDRIVER_TOKEN;
@@ -99,7 +116,9 @@ export async function agenticDriverCatalogFromEnvironment(
   if (!url || !token)
     throw new Error("Set both AGENTICDRIVER_URL and AGENTICDRIVER_TOKEN.");
   const client = new AgenticClient({ url, token });
-  return new AgenticDriverCatalog(client, await client.providers(), settings);
+  const catalog = new AgenticDriverCatalog(client, await client.providers(), settings, configuration);
+  if (configuration) await catalog.refreshCatalog();
+  return catalog;
 }
 
 function snapshotContext(input: ProviderRunStartInput) {

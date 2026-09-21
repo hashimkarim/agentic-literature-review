@@ -472,6 +472,67 @@ export const CitationTargetRequestSchema = z.object({
 export type CitationTargetRequest = z.infer<typeof CitationTargetRequestSchema>;
 export type CitationTargetRequestInput = z.input<typeof CitationTargetRequestSchema>;
 
+const catalogAssetPathSchema = z.string().regex(/^\/(?!\/)[A-Za-z0-9_/-]+\/[a-f0-9]{64}\.(svg|png|jpeg|webp|txt)$/);
+
+/** App-facing presentation only; host credentials and administrative metadata stay on the server. */
+export const AgenticDriverCatalogEntrySchema = z.object({
+  provider: z.object({
+    providerId: z.string(),
+    name: z.string(),
+    vendor: z.string(),
+    authMode: z.enum(["api-key", "cli-session", "none"]),
+    account: z.object({ id: z.string(), label: z.string() }).strict().optional(),
+    accountLabel: z.string(),
+    accessibleName: z.string(),
+    brandColor: z.string().regex(/^#[a-f0-9]{6}$/i).optional(),
+    icon: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("fallback"),
+        text: z.string(),
+        alt: z.string(),
+        reason: z.enum(["metadata-missing", "icon-missing", "variant-missing"])
+      }).strict(),
+      z.object({
+        kind: z.literal("asset"),
+        alt: z.string(),
+        asset: z.object({
+          providerId: z.string(),
+          variant: z.enum(["monochrome", "color"]),
+          src: catalogAssetPathSchema,
+          mediaType: z.enum(["image/svg+xml", "image/png", "image/jpeg", "image/webp"]),
+          sha256: z.string().regex(/^[a-f0-9]{64}$/),
+          monochrome: z.boolean(),
+          supportsCurrentColor: z.boolean(),
+          license: z.object({
+            id: z.string(),
+            attribution: z.string(),
+            noticeUrl: catalogAssetPathSchema
+          }).strict()
+        }).strict()
+      }).strict()
+    ])
+  }).strict(),
+  quota: z.object({
+    observation: z.literal("quota-snapshot"),
+    state: z.enum(["fresh", "stale", "unknown", "unbound", "unavailable", "error"]),
+    label: z.string(),
+    quality: z.enum(["reported", "cached", "estimated", "unknown"]),
+    fetchedAt: z.string().optional(),
+    ageMs: z.number().nonnegative().optional(),
+    resources: z.array(z.object({
+      id: z.string(),
+      label: z.string(),
+      used: z.number(),
+      unit: z.string(),
+      limit: z.number().optional(),
+      remaining: z.number().optional(),
+      utilization: z.number().optional(),
+      resetsAt: z.string().optional()
+    }).strict())
+  }).strict()
+}).strict();
+export type AgenticDriverCatalogEntry = z.infer<typeof AgenticDriverCatalogEntrySchema>;
+
 export const AgentProviderSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -486,7 +547,8 @@ export const AgentProviderSchema = z.object({
   models: z.array(z.string()).default([]),
   customModels: z.array(z.string()).default([]),
   lastCheckedAt: isoDateSchema.nullable().default(null),
-  connectCommand: z.string().nullable().default(null)
+  connectCommand: z.string().nullable().default(null),
+  driverCatalog: AgenticDriverCatalogEntrySchema.optional()
 });
 export type AgentProvider = z.infer<typeof AgentProviderSchema>;
 

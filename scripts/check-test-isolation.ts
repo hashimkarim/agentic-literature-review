@@ -16,7 +16,7 @@ const localPackages: Record<string, string> = {
   "@litagent/workflows": "packages/workflows/src/index.ts",
   "@litagent/indexer": "packages/indexer/src/index.ts"
 };
-const sdkPackages = ["agenticdriver", "agenticdriver/client", "agenticdriver/providers", "agenticdriver/server"];
+const sdkPackages = ["agenticdriver", "agenticdriver/client", "agenticdriver/providers", "agenticdriver/server", "agenticdriver/catalog"];
 
 // Resolve through the same config and Vite plugin pipeline as Vitest. This
 // performs no provider execution and does not start an HTTP listener.

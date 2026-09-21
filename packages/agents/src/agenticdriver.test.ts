@@ -2,19 +2,20 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgenticClient } from "agenticdriver/client";
 import { AgenticDriver, type ContextManifest, type RunRequest } from "agenticdriver";
 import { mockProvider } from "agenticdriver/providers";
 import { serve } from "agenticdriver/server";
 import { AgentProviderSchema } from "@litagent/contracts";
-import { AgenticDriverAdapter, AgenticDriverCatalog } from "./agenticdriver";
+import { AgenticDriverAdapter, AgenticDriverCatalog, agenticDriverCatalogFromEnvironment } from "./agenticdriver";
 import { AgentProviderSettingsStore, type ProviderSelectedContext } from "./index";
 
 const token = "litagent-driver-test-token-with-32-characters";
 const directories: string[] = [];
 let close: (() => Promise<void>) | undefined;
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await close?.();
   close = undefined;
   for (const dir of directories.splice(0))
@@ -74,6 +75,35 @@ function manifestClient(change: (sources: ContextManifest[]) => ContextManifest[
 }
 
 describe("AgenticDriver integration", () => {
+  it("adds scoped catalog presentation through the existing environment factory", async () => {
+    const driver = new AgenticDriver({ providers: [mockProvider()] });
+    const server = await serve(driver, { port: 0, tokens: [{ token, subject: "researcher", providers: ["mock"] }] });
+    close = server.close;
+    vi.stubEnv("AGENTICDRIVER_URL", server.url);
+    vi.stubEnv("AGENTICDRIVER_TOKEN", token);
+    const identity = { hostId: "test-host", provider: "mock", accountId: "research-account", subject: "researcher" };
+    const accountLimits = vi.fn(async (scope: typeof identity) => ({
+      identity: scope, upstreamInstanceId: "private-quota-instance",
+      snapshot: {
+        displayName: "private quota catalog", fetchedAt: new Date().toISOString(), source: "api",
+        resources: { daily: { label: "Daily tokens", used: 42, unit: "tokens" } },
+      },
+    }));
+    const catalog = await agenticDriverCatalogFromEnvironment({}, {
+      hostId: identity.hostId, subject: identity.subject, maxAgeMs: 300_000, accountLimits,
+      bindingFor: (providerId) => providerId === "mock" ? { identity, accountLabel: "Research account" } : undefined,
+    });
+    const adapter = catalog.createAdapter("driver.mock")!;
+    expect(accountLimits).toHaveBeenCalledExactlyOnceWith(identity);
+    expect(adapter.provider.label).toBe("Offline demo (AgenticDriver)");
+    expect(adapter.provider.driverCatalog).toMatchObject({
+      provider: { providerId: "mock", account: { id: "research-account", label: "Research account" } },
+      quota: { state: "fresh", resources: [{ used: 42, unit: "tokens" }] },
+    });
+    expect(adapter.provider.enabled).toBe(false);
+    expect(JSON.stringify(adapter.provider)).not.toContain("private-quota-instance");
+  });
+
   it("sends a copied paper revision and validates the real SDK manifest for marked UTF-8 content", async () => {
     const context = selectedContext();
     const original = structuredClone(context);
