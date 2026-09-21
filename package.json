@@ -16,7 +16,8 @@
     "prepare:marker-runtime": "bun scripts/prepare-marker-runtime.ts",
     "build": "bun run --workspaces --if-present build",
     "typecheck": "bunx tsc -b",
-    "test": "bunx vitest run",
+    "test": "bun run test:isolation && bunx vitest run",
+    "test:isolation": "bun scripts/check-test-isolation.ts",
     "test:chat-ui": "bun scripts/check-chat-ui.ts",
     "check": "bun run typecheck && bun run test"
   },
