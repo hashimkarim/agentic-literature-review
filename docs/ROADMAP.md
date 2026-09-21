@@ -133,16 +133,24 @@ Progress (2026-09-21):
   distinct method/result evidence and a labeled non-causal inference. No private
   papers were used. This is not a multi-provider quality benchmark.
 
-- Chat scope isolation: histories, drafts, pending sends and errors now belong to
+- `7bf790c`: histories, drafts, pending sends and errors now belong to
   their paper/project/global scope. Late loads cannot replace another scope,
   duplicate sends are blocked, and opening another paper preserves context-wide
   chat. A failed history refresh retains an already saved answer and offers
   history reload rather than sending it again. Ten store regressions and the
   fixture-only `bun run test:chat-ui` browser check cover these transitions at
   1440px and 1920px. Typecheck and all 88 unit/integration tests pass.
+- Conversation write guards: the local backend rejects concurrent sends and
+  archiving during an active answer. Persisted revisions protect sends and
+  archive requests from stale browser tabs; the client reloads history while
+  retaining the question for an explicit retry. Atomic thread replacement keeps
+  old history intact on a failed write, with archives retained. Nine workflow
+  regressions, two additional client checks and an isolated real-HTTP conflict
+  test bring the suite to 100 passing tests. This assumes one local backend;
+  distributed locking and network-retry idempotency remain separate work.
 
-Gate 1 remains open: next focus is server-side conversation concurrency and
-chat usability with deterministic fixtures. Legacy answer migration, durable
+Gate 1 remains open: next focus is evidence-panel accuracy and chat usability
+with deterministic fixtures. Legacy answer migration, durable
 versioned anchors, representative PDF/table/injection evaluations and measured
 cross-provider quality are not completed by this slice. Live compute work is
 deferred under the execution boundary above.

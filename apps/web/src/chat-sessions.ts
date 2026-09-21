@@ -7,6 +7,7 @@ export interface ChatScope {
 
 interface ChatRequest extends ChatScope {
   question: string;
+  threadRevision: number;
   providerId: string;
   model: string | null;
 }
@@ -14,7 +15,7 @@ interface ChatRequest extends ChatScope {
 interface ChatApi {
   qaThread(scope: ChatScope): Promise<QaThread>;
   qa(request: ChatRequest): Promise<QaResponse>;
-  clearQaThread(scope: ChatScope): Promise<QaThread>;
+  clearQaThread(scope: ChatScope & { threadRevision?: number }): Promise<QaThread>;
 }
 
 export interface ChatSession {
@@ -95,7 +96,7 @@ export class ChatSessions {
     if (!question || !entry.state.thread || entry.state.pending || entry.state.clearing || entry.state.loading) return false;
     ++entry.version;
     entry.loading = null;
-    const request = { ...scope, ...selection, question };
+    const request = { ...scope, ...selection, question, threadRevision: entry.state.thread.revision };
     this.update(entry, { pending: request, error: null, draft: "" });
     try {
       const response = await this.api.qa(request);
@@ -108,6 +109,7 @@ export class ChatSessions {
         pending: null,
         thread: {
           ...thread,
+          revision: response.threadRevision ?? thread.revision,
           messages: [...thread.messages,
             { id: `${messageId}-user`, role: "user", content: question, createdAt: timestamp, response: null },
             { id: messageId, role: "assistant", content: response.answer, createdAt: timestamp, response }
@@ -123,6 +125,7 @@ export class ChatSessions {
         draft: entry.state.draft || question,
         error: { operation: "answer", question, message: errorMessage(error) }
       });
+      void this.load(scope);
       return false;
     }
   }
@@ -134,11 +137,13 @@ export class ChatSessions {
     entry.loading = null;
     this.update(entry, { clearing: true, loading: false, error: null, loadError: null });
     try {
-      const thread = await this.api.clearQaThread(scope);
+      const revision = entry.state.thread?.revision;
+      const thread = await this.api.clearQaThread({ ...scope, ...(revision === undefined ? {} : { threadRevision: revision }) });
       this.update(entry, { thread, draft: "", clearing: false });
       return true;
     } catch (error) {
       this.update(entry, { clearing: false, error: { operation: "archive", question: "", message: errorMessage(error) } });
+      void this.load(scope);
       return false;
     }
   }

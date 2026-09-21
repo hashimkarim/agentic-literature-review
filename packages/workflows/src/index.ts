@@ -8,6 +8,8 @@ import { z } from "zod";
 
 import { AgentHarness, AgentProviderCatalog, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
 import {
+  ClearQaThreadRequestSchema,
+  type ClearQaThreadRequestInput,
   ComparisonArtifactSchema,
   EvidenceRefSchema,
   MetadataFieldNameSchema,
@@ -1834,7 +1836,18 @@ export async function processPaperSetWithMarkerAsync(
   return { ...baseResult, summaryPath };
 }
 
+export class QaThreadConflictError extends Error {
+  constructor(readonly code: "qa_thread_busy" | "qa_thread_changed") {
+    super(code === "qa_thread_busy"
+      ? "An answer is still running in this conversation. Wait for it to finish or cancel it before changing the conversation."
+      : "This conversation changed in another request. Reload its history before sending again.");
+    this.name = "QaThreadConflictError";
+  }
+}
+
 export class WorkflowEngine {
+  private readonly pendingQaThreads = new Set<string>();
+
   constructor(
     private readonly repo: LitAgentRepository,
     private readonly index: SearchIndex,
@@ -1982,18 +1995,29 @@ export class WorkflowEngine {
     });
   }
 
-  clearQaThread(input: QaThreadRequestInput): QaThread {
-    const parsed = qaThreadScope(input);
+  clearQaThread(input: ClearQaThreadRequestInput): QaThread {
+    const request = ClearQaThreadRequestSchema.parse(input);
+    const parsed = qaThreadScope(request);
     const id = qaThreadId(parsed);
+    if (this.pendingQaThreads.has(id)) throw new QaThreadConflictError("qa_thread_busy");
+    const previous = this.readQaThread(parsed);
+    if (request.threadRevision !== undefined && request.threadRevision !== previous.revision) {
+      throw new QaThreadConflictError("qa_thread_changed");
+    }
     const filePath = this.qaThreadPath(id);
-    if (fs.existsSync(filePath)) {
+    if (previous.messages.length && fs.existsSync(filePath)) {
       const archiveDir = this.repo.resolve(".litagent/chat-threads/archive");
       const archiveTimestamp = nowIso().replace(/[:.]/g, "-");
       fs.mkdirSync(archiveDir, { recursive: true });
-      fs.copyFileSync(filePath, path.join(archiveDir, `${id}-${archiveTimestamp}.json`));
-      fs.rmSync(filePath);
+      fs.copyFileSync(filePath, path.join(archiveDir, `${id}-${archiveTimestamp}-${createId("archive")}.json`));
     }
-    return this.readQaThread(parsed);
+    const timestamp = nowIso();
+    const fresh = QaThreadSchema.parse({
+      ...previous, title: this.qaThreadTitle(parsed), revision: previous.revision + 1,
+      messages: [], createdAt: timestamp, updatedAt: timestamp
+    });
+    this.writeQaThread(fresh);
+    return fresh;
   }
 
   recordQaExchange(input: QaThreadRequestInput, response: QaResponse): { thread: QaThread; response: QaResponse } {
@@ -2004,10 +2028,12 @@ export class WorkflowEngine {
     const responseWithThread = QaResponseSchema.parse({
       ...response,
       threadId: thread.id,
+      threadRevision: thread.revision + 1,
       messageId: assistantMessageId
     });
     const updated = QaThreadSchema.parse({
       ...thread,
+      revision: thread.revision + 1,
       messages: [
         ...thread.messages,
         {
@@ -2027,9 +2053,26 @@ export class WorkflowEngine {
       ],
       updatedAt: timestamp
     });
-    fs.mkdirSync(path.dirname(this.qaThreadPath(thread.id)), { recursive: true });
-    fs.writeFileSync(this.qaThreadPath(thread.id), `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+    this.writeQaThread(updated);
     return { thread: updated, response: responseWithThread };
+  }
+
+  async answerQuestionInThread(input: QaRequestInput): Promise<{ thread: QaThread; response: QaResponse }> {
+    const parsed = QaRequestSchema.parse(input);
+    const id = qaThreadId(parsed);
+    if (this.pendingQaThreads.has(id)) throw new QaThreadConflictError("qa_thread_busy");
+    const revision = this.readQaThread(parsed).revision;
+    if (parsed.threadRevision !== undefined && parsed.threadRevision !== revision) {
+      throw new QaThreadConflictError("qa_thread_changed");
+    }
+    this.pendingQaThreads.add(id);
+    try {
+      const response = await this.answerQuestionWithProvider(parsed);
+      if (this.readQaThread(parsed).revision !== revision) throw new QaThreadConflictError("qa_thread_changed");
+      return this.recordQaExchange(parsed, response);
+    } finally {
+      this.pendingQaThreads.delete(id);
+    }
   }
 
   async answerQuestionWithProvider(input: QaRequestInput): Promise<QaResponse> {
@@ -2462,6 +2505,18 @@ export class WorkflowEngine {
 
   private qaThreadPath(threadId: string): string {
     return this.repo.resolve(`.litagent/chat-threads/${threadId}.json`);
+  }
+
+  private writeQaThread(thread: QaThread): void {
+    const filePath = this.qaThreadPath(thread.id);
+    const temporaryPath = `${filePath}.${createId("write")}.tmp`;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    try {
+      fs.writeFileSync(temporaryPath, `${JSON.stringify(thread, null, 2)}\n`, "utf8");
+      fs.renameSync(temporaryPath, filePath);
+    } finally {
+      fs.rmSync(temporaryPath, { force: true });
+    }
   }
 
   private revalidateLegacyQaThread(thread: QaThread, filePath: string): QaThread {

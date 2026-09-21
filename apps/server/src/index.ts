@@ -31,7 +31,7 @@ import { AgentProviderSettingsStore } from "@litagent/agents";
 import { agenticDriverCatalogFromEnvironment } from "@litagent/agents/agenticdriver";
 import { SearchIndex } from "@litagent/indexer";
 import { DEFAULT_REPO_ROOT, LitAgentRepository } from "@litagent/library";
-import { WorkflowEngine, WorkflowStartRequestSchema, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema } from "@litagent/workflows";
+import { WorkflowEngine, WorkflowStartRequestSchema, QaThreadConflictError, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema } from "@litagent/workflows";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.LITAGENT_PORT ?? 3874);
@@ -674,7 +674,10 @@ app.get(
 app.delete(
   "/api/qa/thread",
   asyncHandler((req, res) => {
-    res.json(workflows.clearQaThread(qaThreadScopeFromQuery(req)));
+    const revision = queryString(req, "threadRevision");
+    res.json(workflows.clearQaThread({
+      ...qaThreadScopeFromQuery(req), ...(revision === null ? {} : { threadRevision: Number(revision) })
+    }));
   })
 );
 
@@ -682,8 +685,8 @@ app.post(
   "/api/qa",
   asyncHandler(async (req, res) => {
     const parsed = QaRequestSchema.parse(req.body);
-    const response = await workflows.answerQuestionWithProvider(parsed);
-    res.json(workflows.recordQaExchange(parsed, response).response);
+    const { response } = await workflows.answerQuestionInThread(parsed);
+    res.json(response);
   })
 );
 
@@ -842,6 +845,10 @@ if (fs.existsSync(webDist)) {
 }
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof QaThreadConflictError) {
+    res.status(409).json({ error: error.message, code: error.code });
+    return;
+  }
   const message = error instanceof Error ? error.message : String(error);
   res.status(500).json({ error: message });
 });

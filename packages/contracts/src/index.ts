@@ -552,6 +552,7 @@ export type SearchResult = z.infer<typeof SearchResultSchema>;
 
 export const QaRequestSchema = z.object({
   question: z.string().min(1),
+  threadRevision: z.number().int().nonnegative().optional(),
   projectId: z.string().nullable().default(null),
   paperId: z.string().nullable().default(null),
   paperIds: z.array(z.string()).default([]),
@@ -618,6 +619,7 @@ export const QaResponseSchema = z.object({
   evidence: z.array(EvidenceRefSchema),
   runId: z.string().nullable().default(null),
   threadId: z.string().nullable().default(null),
+  threadRevision: z.number().int().nonnegative().nullable().default(null),
   messageId: z.string().nullable().default(null),
   question: z.string().default(""),
   status: QaStatusSchema.default("answered"),
@@ -643,6 +645,11 @@ export const QaThreadRequestSchema = z.object({
 export type QaThreadRequest = z.infer<typeof QaThreadRequestSchema>;
 export type QaThreadRequestInput = z.input<typeof QaThreadRequestSchema>;
 
+export const ClearQaThreadRequestSchema = QaThreadRequestSchema.extend({
+  threadRevision: z.number().int().nonnegative().optional()
+});
+export type ClearQaThreadRequestInput = z.input<typeof ClearQaThreadRequestSchema>;
+
 export const QaThreadMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["user", "assistant"]),
@@ -654,6 +661,7 @@ export type QaThreadMessage = z.infer<typeof QaThreadMessageSchema>;
 
 export const QaThreadSchema = z.object({
   id: z.string(),
+  revision: z.number().int().nonnegative().default(0),
   title: z.string().default("Q&A thread"),
   projectId: z.string().nullable().default(null),
   paperId: z.string().nullable().default(null),

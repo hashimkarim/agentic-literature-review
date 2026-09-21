@@ -62,13 +62,16 @@ try {
         return;
       }
       if (endpoint === "/api/qa") {
-        const request = route.request().postDataJSON() as { paperId: string; question: string };
+        const request = route.request().postDataJSON() as { paperId: string; question: string; threadRevision: number };
         submitted.push(request.paperId);
         await answers.get(request.paperId)?.promise;
         const thread = getThread(request.paperId);
+        assert.equal(request.threadRevision, thread.revision);
+        thread.revision += 1;
         const response = QaResponseSchema.parse({
           answer: `Saved answer ${request.paperId}`, question: request.question, evidence: [],
           threadId: thread.id, messageId: `answer-${request.paperId}`,
+          threadRevision: thread.revision,
           scope: { type: "paper", paperId: request.paperId }
         });
         thread.messages.push(

@@ -119,6 +119,7 @@ export const api = {
     }),
   qa: (body: {
     question: string;
+    threadRevision?: number;
     projectId: string | null;
     paperId?: string | null;
     paperIds?: string[];
@@ -140,12 +141,13 @@ export const api = {
     const query = params.toString();
     return request<QaThread>(`/api/qa/thread${query ? `?${query}` : ""}`);
   },
-  clearQaThread: (body: { projectId: string | null; paperId?: string | null; paperIds?: string[]; collectionId?: string | null }) => {
+  clearQaThread: (body: { projectId: string | null; paperId?: string | null; paperIds?: string[]; collectionId?: string | null; threadRevision?: number }) => {
     const params = new URLSearchParams();
     if (body.projectId) params.set("projectId", body.projectId);
     if (body.paperId) params.set("paperId", body.paperId);
     if (body.collectionId) params.set("collectionId", body.collectionId);
     if (body.paperIds?.length) params.set("paperIds", body.paperIds.join(","));
+    if (body.threadRevision !== undefined) params.set("threadRevision", String(body.threadRevision));
     const query = params.toString();
     return request<QaThread>(`/api/qa/thread${query ? `?${query}` : ""}`, { method: "DELETE" });
   },

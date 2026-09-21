@@ -133,6 +133,7 @@ describe("scope-owned chat sessions", () => {
     expect(sessions.get(paperA).draft).toBe("Unsent question");
     expect(sessions.get(paperB).draft).toBe("Unrelated draft");
     expect(sessions.get(paperB).error).toBeNull();
+    await sessions.load(paperA);
     api.qaThread.mockRejectedValue(new Error("Offline"));
     await sessions.load(paperA);
     expect(sessions.get(paperA).thread).not.toBeNull();
@@ -158,5 +159,31 @@ describe("scope-owned chat sessions", () => {
     await sessions.load(paperA);
     expect(sessions.get(paperA).thread?.paperId).toBe(paperA.paperId);
     expect(sessions.get(paperA).loadError).toBeNull();
+  });
+
+  it("reloads a conflicting conversation and preserves the question for an explicit retry", async () => {
+    const { api, sessions } = fixture();
+    await sessions.load(paperA);
+    api.qa.mockRejectedValueOnce(new Error("Conversation changed"));
+    api.qaThread.mockResolvedValue({ ...thread(paperA), revision: 3 });
+    await sessions.ask(paperA, "Retry after reload", selection);
+    await sessions.load(paperA);
+    expect(api.qa).toHaveBeenCalledWith(expect.objectContaining({ threadRevision: 0 }));
+    expect(sessions.get(paperA).thread?.revision).toBe(3);
+    expect(sessions.get(paperA).draft).toBe("Retry after reload");
+    expect(api.qa).toHaveBeenCalledTimes(1);
+    await sessions.ask(paperA, sessions.get(paperA).draft, selection);
+    expect(api.qa).toHaveBeenLastCalledWith(expect.objectContaining({ threadRevision: 3 }));
+  });
+
+  it("uses the acknowledged revision even when history refresh fails", async () => {
+    const { api, sessions } = fixture();
+    await sessions.load(paperA);
+    api.qa.mockResolvedValueOnce({ ...response("saved"), threadRevision: 1 });
+    api.qaThread.mockRejectedValue(new Error("History offline"));
+    await sessions.ask(paperA, "saved", selection);
+    await sessions.load(paperA);
+    await sessions.ask(paperA, "next question", selection);
+    expect(api.qa).toHaveBeenLastCalledWith(expect.objectContaining({ threadRevision: 1 }));
   });
 });
