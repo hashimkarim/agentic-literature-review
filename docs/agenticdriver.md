@@ -4,14 +4,10 @@ LitAgent can discover and execute provider instances exposed by an AgenticDriver
 host, alongside its existing local CLI catalog. The integration stays in
 `packages/agents`; workflows continue to consume normalized run events.
 
-Build the sibling SDK first, then install dependencies:
+Install the exact registry SDK and app dependencies from the committed lockfile:
 
 ```bash
-cd ../agenticdriver
-npm install
-npm run build
-cd ../agentic-literature-review
-bun install
+bun install --frozen-lockfile
 ```
 
 Start an SDK host and configure the LitAgent backend:
@@ -52,56 +48,56 @@ one operator-configured host token.
 Run `bun run typecheck` and `bun run test`. New tests cover real host execution,
 artifact creation, cancellation, truncated results, and explicit enablement.
 
-## Scoped Package Migration Preparation
+## Scoped Package Migration
 
-Status: prepared only; dependencies and imports are unchanged. The SDK handoff
-identifies organization migration commit
-`442ca9c627717f0cdb42ad8260a9692357c79a87` in the public source repository
-`https://github.com/agenticdriver/agenticdriver`. npm `@agenticdriver/sdk` 0.1.0
-is not published in this handoff. Wait for verified registry version, integrity
-and release commit; a development archive is not a registry release.
+The active application now pins the published MIT-licensed
+`@agenticdriver/sdk` exactly to `0.1.0`; `bun.lock` records registry integrity.
+No sibling SDK build, checkout-relative dependency or TypeScript alias is needed.
+The external root/client/providers/server imports use the scoped package.
 
-Two application baselines must be reconciled deliberately:
+Verified release provenance:
 
-- Active branch: `packages/agents/package.json` depends on
-  `agenticdriver` via `file:../../../agenticdriver`; `bun.lock` retains that
-  sibling dependency. Do not refresh the install against a moving checkout as
-  a substitute for qualifying the released artifact.
-- Unmerged AD-035 branch `agenticdriver-connection-setup`, commit `4f4be92`:
-  the same dependency points to
-  `vendor/agenticdriver-0.1.0-sdk.dbe847c.tgz`. Preserve that branch and its
-  provenance; integration/publication requires separate coordination.
+- Source/release commit: `442ca9c627717f0cdb42ad8260a9692357c79a87` in
+  `https://github.com/agenticdriver/agenticdriver` (per SDK handoff).
+- Archive: `https://registry.npmjs.org/@agenticdriver/sdk/-/sdk-0.1.0.tgz`.
+- Downloaded archive SHA-256:
+  `bb606cb0a78d5129c2ce341639f4528fedcbb0827c7986bfe362244f27ac4c68`.
+- Downloaded archive and registry/lockfile integrity:
+  `sha512-GuJ+fENsGqF82jPs5/nlnA413/l8y06OiZpd7v1Y2AGI/qa7j3pZFtnhIVUGEooG/IdPzMvdY7nIi7QU594lPA==`.
 
-Once the release is verified, use this sequence in a scoped task branch:
+The SDK requires Node >=22.13; the separate planned Better Auth/AuthYard host
+requires Node 24+. Package migration does not implement application login.
+The internal `@litagent/agents/agenticdriver` export, CLI command `agenticdriver`,
+environment names, `driver.<instance>` IDs, settings and account bindings are
+unchanged. It does not adopt new retrieval, session or job APIs.
 
-1. Coordinate the AD-035 integration baseline. Inspect the exact release's
-   `docs/migrations.md`, `docs/quickstart.md` and compatibility matrix. Record
-   source commit, registry integrity, package version and license; confirm
-   required wire protocol/features instead of assuming them from the rename.
-2. Replace the external dependency with the exact verified
-   `@agenticdriver/sdk` version and regenerate `bun.lock` with Bun. Change imports
-   in `packages/agents/src/agenticdriver.ts` and `agenticdriver.test.ts` from
-   `agenticdriver`, `/client`, `/providers` and `/server` to their
-   `@agenticdriver/sdk` equivalents. Audit the integrated AD-035 tests/scripts
-   for additional imports before changing them.
-3. Preserve the internal `@litagent/agents/agenticdriver` export, local filenames,
-   CLI command `agenticdriver`, environment variable names, `driver.<instance>`
-   IDs, explicit enablement, model selection and host/account/subject bindings.
-   This is not an auth, retrieval or durable-job migration. Future auth imports
-   use `@agenticdriver/sdk/better-auth` and `/pairing`, subject to the separate
-   [authentication plan](AUTH_PLAN.md).
-4. Install from the frozen lockfile in a disposable application checkout with
-   no sibling SDK dependency or path aliases. Verify typecheck, tests and build
-   against the actual installed artifact. Existing adapter fixtures must cover
-   event/usage normalization, draft artifact capture, cancellation, truncated
-   output, persisted settings and disabled cached adapters without generation
-   from a real provider.
-5. After AD-035 integration, also run its actual HTTP connection-settings and
-   installed workflow fixtures: refresh/failure/recovery, offline disablement,
-   secret isolation, reload persistence, source-review evidence/proposals and
-   canonical Markdown unchanged. Run `test:chat-ui` at both desktop sizes and
-   verify source scope, quote/revision guards and annotation behavior. Do not
-   claim those unmerged checks ran on the active branch.
+Verification uses actual installed registry bytes, synthetic providers and
+temporary repositories, never selected real provider accounts:
+
+- Typecheck and all 117 tests pass, including the five adapter tests for remote
+  event/usage/artifact normalization, cancellation, truncation, explicit
+  enablement and persisted settings/disabled cached adapters.
+- A fresh disposable source copy installs with `bun install --frozen-lockfile`,
+  resolves `/node_modules/@agenticdriver/sdk/dist/client.js` locally (not a
+  sibling symlink), and passes typecheck, all 117 tests and the workspace build.
+- Chat browser checks pass at 1440px and 1920px with scoped conversations,
+  evidence selection, stale/out-of-order citation protection and reading position.
+- The initial suite run concurrent with the build hit three fake-CLI discovery
+  failures; the serial rerun and independent clean-install suite pass. Builds
+  retain the existing Vite large-chunk warning.
+
+The unmerged AD-035 `agenticdriver-connection-setup` branch at `4f4be92` still
+pins `vendor/agenticdriver-0.1.0-sdk.dbe847c.tgz`. It is preserved unchanged and
+not part of this migration. During coordinated integration, retain this registry
+pin, audit its additional imports/scripts and run its HTTP settings/workflow
+fixtures (refresh/failure/recovery, offline disablement, secret isolation,
+reload persistence, reviewed proposals and canonical Markdown unchanged).
+Those unmerged tests have not been run as active-branch migration evidence.
+
+Desktop packaging and packaged-runtime checks remain separate from TypeScript
+builds. Development still needs Bun/Node and a configured SDK host for remote
+execution; no SDK source checkout or bundled auth server is required. See the
+[authentication plan](AUTH_PLAN.md) for pairing and credential migration.
 
 Keep Better Auth plus AuthYard on the explicitly qualified connector contract;
 the SDK package rename does not qualify a renamed AuthYard connector. Separate

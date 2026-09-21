@@ -380,6 +380,7 @@ determine release readiness.
 | --- | --- | --- |
 | 2026-07-10 to 2026-07-11 | Accepted research records, cited comparison review and synthesis-to-note workflows implemented | Existing unit/integration coverage and prior feature commits |
 | 2026-09-20 | Shared AgenticDriver SDK integration added alongside existing agent harness | Adapter tests; see [integration setup](agenticdriver.md) |
+| 2026-09-21 | AD-042: migrated active app to exact registry `@agenticdriver/sdk@0.1.0`, scoped imports and Bun lockfile; removed sibling SDK dependency | Archive SHA-256/SHA-512 verified; typecheck, 117 tests, build and both desktop chat checks pass; independent frozen-lockfile install passes typecheck/tests/build. No real provider calls; AD-035 branch unchanged. See [provenance](agenticdriver.md#scoped-package-migration). |
 | 2026-09-21 | Added first-party survey of 43 tools and prioritized feature backlog; corrected existing automation/notes status and reordered delivery around chat reliability | Documentation/link checks, `bun run typecheck`, `bun run test` (51 tests); no runtime behavior changed |
 | 2026-09-21 | CHAT-06/OPS-04: removed interactive Q&A heuristic fallbacks and separated provider/conversion failures from research findings | `bun run typecheck`, `bun run test` (59 tests, including 8 new failure-boundary regressions) |
 

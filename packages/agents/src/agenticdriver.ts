@@ -2,8 +2,8 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { AgenticClient } from "agenticdriver/client";
-import type { ProviderInfo } from "agenticdriver";
+import { AgenticClient } from "@agenticdriver/sdk/client";
+import type { ProviderInfo } from "@agenticdriver/sdk";
 import {
   AgentProviderSchema,
   type AgentProvider,

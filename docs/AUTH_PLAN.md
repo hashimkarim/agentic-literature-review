@@ -35,11 +35,11 @@ Contract references to reread before implementation:
   handoff revision: `agenticdriver/better-auth`'s `betterAuthAuthentication`,
   browser-safe `agenticdriver/pairing`'s `BetterAuthPairingClient`, and
   `AgenticClient.token` per-request resolver.
-- The organization migration renames those external imports to
+- The installed organization package uses external imports
   `@agenticdriver/sdk/better-auth`, `@agenticdriver/sdk/pairing` and
-  `@agenticdriver/sdk/client`. Follow the [package migration checklist](agenticdriver.md#scoped-package-migration-preparation)
-  after the exact registry artifact is verified; this plan does not change
-  installed dependencies or qualify another AuthYard connector.
+  `@agenticdriver/sdk/client`. The [registry migration](agenticdriver.md#scoped-package-migration)
+  pins the verified SDK 0.1.0 artifact. It does not implement this auth plan
+  or qualify another AuthYard connector.
 - AuthYard `/mnt/shared/Git/authyard/README.md`, `docs/connector-protocol.md`,
   `docs/better-auth-compatibility.md` and `docs/authyard-migration.md`.
 - Management control plane: `https://alpha.authyard.dev`.
