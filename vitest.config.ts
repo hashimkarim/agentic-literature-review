@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   test: {
@@ -7,11 +8,12 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@litagent/contracts": "/mnt/shared/Git/agentic-literature-review/packages/contracts/src/index.ts",
-      "@litagent/library": "/mnt/shared/Git/agentic-literature-review/packages/library/src/index.ts",
-      "@litagent/agents": "/mnt/shared/Git/agentic-literature-review/packages/agents/src/index.ts",
-      "@litagent/workflows": "/mnt/shared/Git/agentic-literature-review/packages/workflows/src/index.ts",
-      "@litagent/indexer": "/mnt/shared/Git/agentic-literature-review/packages/indexer/src/index.ts"
+      "@litagent/agents/agenticdriver": fileURLToPath(new URL("./packages/agents/src/agenticdriver.ts", import.meta.url)),
+      "@litagent/contracts": fileURLToPath(new URL("./packages/contracts/src/index.ts", import.meta.url)),
+      "@litagent/library": fileURLToPath(new URL("./packages/library/src/index.ts", import.meta.url)),
+      "@litagent/agents": fileURLToPath(new URL("./packages/agents/src/index.ts", import.meta.url)),
+      "@litagent/workflows": fileURLToPath(new URL("./packages/workflows/src/index.ts", import.meta.url)),
+      "@litagent/indexer": fileURLToPath(new URL("./packages/indexer/src/index.ts", import.meta.url))
     }
   }
 });

@@ -18,7 +18,8 @@
     "typecheck": "bunx tsc -b",
     "test": "bunx vitest run",
     "test:chat-ui": "bun scripts/check-chat-ui.ts",
-    "check": "bun run typecheck && bun run test"
+    "check": "bun run typecheck && bun run test",
+    "test:driver-ui": "bun scripts/check-driver-ui.ts"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -35,5 +36,8 @@
     "typescript": "^5.9.3",
     "vite": "^7.2.4",
     "vitest": "^4.0.14"
+  },
+  "dependencies": {
+    "agenticdriver": "file:vendor/agenticdriver-0.1.0-sdk.dbe847c.tgz"
   }
 }

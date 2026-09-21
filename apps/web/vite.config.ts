@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:3874",
+        target: process.env.LITAGENT_API_URL ?? "http://localhost:3874",
         changeOrigin: true,
         ws: true
       }
