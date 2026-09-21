@@ -140,7 +140,7 @@ Progress (2026-09-21):
   history reload rather than sending it again. Ten store regressions and the
   fixture-only `bun run test:chat-ui` browser check cover these transitions at
   1440px and 1920px. Typecheck and all 88 unit/integration tests pass.
-- Conversation write guards: the local backend rejects concurrent sends and
+- `c67546a`: the local backend rejects concurrent sends and
   archiving during an active answer. Persisted revisions protect sends and
   archive requests from stale browser tabs; the client reloads history while
   retaining the question for an explicit retry. Atomic thread replacement keeps
@@ -148,8 +148,16 @@ Progress (2026-09-21):
   regressions, two additional client checks and an isolated real-HTTP conflict
   test bring the suite to 100 passing tests. This assumes one local backend;
   distributed locking and network-retry idempotency remain separate work.
+- Answer-specific evidence: remove the first-five-passages fallback and its
+  invented 75% score. New replies select their own evidence; manually selected
+  older answers stay selected within their conversation across navigation.
+  The panel names the question, has honest empty states, and supports keyboard
+  citation activation. A current-paper coverage warning no longer represents
+  global/project scope. Four more store tests and browser regressions cover
+  distinct answers, both citation targets, scope switches and unsupported
+  replies (104 tests plus 1440px/1920px browser checks).
 
-Gate 1 remains open: next focus is evidence-panel accuracy and chat usability
+Gate 1 remains open: next focus is chat reading/scroll behavior and usability
 with deterministic fixtures. Legacy answer migration, durable
 versioned anchors, representative PDF/table/injection evaluations and measured
 cross-provider quality are not completed by this slice. Live compute work is

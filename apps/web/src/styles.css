@@ -909,10 +909,15 @@ button { font-family: var(--font-sans); }
 @keyframes la-thinking { 0%, 70%, 100% { opacity: 0.35; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-2px); } }
 
 /* evidence card */
-.la-evcard { margin: 0 12px 10px; background: var(--bg-tertiary); border: 1px solid var(--border-light); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease; }
+.la-evidencebody { padding-top: 12px; }
+.la-evidencehead { display: grid; gap: 5px; padding: 0 12px 12px; font: var(--text-caption); color: var(--text-muted); }
+.la-evidencehead strong { color: var(--text-primary); font: var(--text-body-sm); font-weight: 600; overflow-wrap: anywhere; }
+.la-evcard { display: block; width: calc(100% - 24px); padding: 0; text-align: left; margin: 0 12px 10px; background: var(--bg-tertiary); border: 1px solid var(--border-light); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease; }
 .la-evcard:hover { background: var(--surface-highlight-alt); border-color: var(--accent-primary); }
-.la-evcard .quote { padding: 11px 12px 9px; font: var(--text-body-sm); color: var(--text-primary); font-style: italic; border-left: 3px solid var(--accent-primary); }
+.la-evcard:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.la-evcard .quote { display: block; overflow-wrap: anywhere; padding: 11px 12px 9px; font: var(--text-body-sm); color: var(--text-primary); font-style: italic; border-left: 3px solid var(--accent-primary); }
 .la-evcard .src-title {
+  display: block;
   padding: 8px 12px 0;
   color: var(--text-secondary);
   font: var(--text-caption);
@@ -922,6 +927,8 @@ button { font-family: var(--font-sans); }
   white-space: nowrap;
 }
 .la-evcard .src { display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-top: 1px solid var(--border-light); font: var(--text-caption); color: var(--text-muted); }
+.la-evcard .src > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.la-evcard .src > span:not(:nth-child(2)) { flex-shrink: 0; }
 .la-evcard .src .pg { font-family: var(--font-mono); color: var(--accent-soft); cursor: pointer; }
 .la-evcard .src .spacer { flex: 1; }
 .la-conf { display: inline-flex; align-items: center; gap: 4px; }

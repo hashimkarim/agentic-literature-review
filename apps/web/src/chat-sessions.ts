@@ -20,6 +20,7 @@ interface ChatApi {
 
 export interface ChatSession {
   thread: QaThread | null;
+  selectedAnswerId: string | null;
   draft: string;
   pending: ChatRequest | null;
   error: { operation: "answer" | "archive"; question: string; message: string } | null;
@@ -62,6 +63,13 @@ export class ChatSessions {
     this.update(this.entry(scope), { draft });
   }
 
+  selectAnswer(scope: ChatScope, messageId: string): void {
+    const entry = this.entry(scope);
+    if (entry.state.thread?.messages.some((message) => message.id === messageId && message.role === "assistant" && message.response)) {
+      this.update(entry, { selectedAnswerId: messageId });
+    }
+  }
+
   load(scope: ChatScope): Promise<void> {
     const entry = this.entry(scope);
     if (entry.state.pending || entry.state.clearing) return Promise.resolve();
@@ -75,7 +83,11 @@ export class ChatSessions {
           if (thread.projectId !== scope.projectId || thread.paperId !== scope.paperId) {
             throw new Error("The returned conversation does not match the selected sources.");
           }
-          this.update(entry, { thread });
+          const answers = thread.messages.filter((message) => message.role === "assistant" && message.response);
+          const latestId = answers.at(-1)?.id ?? null;
+          const previousLatestId = entry.state.thread?.messages.filter((message) => message.role === "assistant" && message.response).at(-1)?.id ?? null;
+          const keepSelection = latestId === previousLatestId && answers.some((message) => message.id === entry.state.selectedAnswerId);
+          this.update(entry, { thread, selectedAnswerId: keepSelection ? entry.state.selectedAnswerId : latestId });
         }
       } catch (error) {
         if (entry.version === version) this.update(entry, { loadError: errorMessage(error) });
@@ -107,6 +119,7 @@ export class ChatSessions {
       // following history refresh fails; retrying a successful send duplicates it.
       this.update(entry, {
         pending: null,
+        selectedAnswerId: messageId,
         thread: {
           ...thread,
           revision: response.threadRevision ?? thread.revision,
@@ -139,7 +152,7 @@ export class ChatSessions {
     try {
       const revision = entry.state.thread?.revision;
       const thread = await this.api.clearQaThread({ ...scope, ...(revision === undefined ? {} : { threadRevision: revision }) });
-      this.update(entry, { thread, draft: "", clearing: false });
+      this.update(entry, { thread, selectedAnswerId: null, draft: "", clearing: false });
       return true;
     } catch (error) {
       this.update(entry, { clearing: false, error: { operation: "archive", question: "", message: errorMessage(error) } });
@@ -153,7 +166,7 @@ export class ChatSessions {
     let entry = this.entries.get(key);
     if (!entry) {
       entry = {
-        state: { thread: null, draft: "", pending: null, error: null, loadError: null, loading: false, clearing: false },
+        state: { thread: null, selectedAnswerId: null, draft: "", pending: null, error: null, loadError: null, loading: false, clearing: false },
         version: 0,
         loading: null
       };

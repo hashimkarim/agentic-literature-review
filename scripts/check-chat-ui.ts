@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { chromium } from "playwright";
-import { PaperSchema, QaResponseSchema, QaThreadSchema, type QaThread } from "../packages/contracts/src/index";
+import { CitationTargetSchema, PaperSchema, PassageSchema, QaResponseSchema, QaThreadSchema, type QaThread } from "../packages/contracts/src/index";
 
 // All API traffic is fixture-backed. This test cannot invoke providers or write
 // papers, annotations or chat history in the user's research repository.
@@ -29,6 +29,11 @@ try {
       paper: PaperSchema.parse({ id: label, title: `Synthetic study ${label}`, authors: ["Fixture Author"], filePaths: {}, createdAt: timestamp, updatedAt: timestamp }),
       link: null
     }));
+    const passages = papers.flatMap(({ paper }) => ["method", "result", "limitation"].map((section, index) => PassageSchema.parse({
+      id: `${paper.id}-${section}`, paperId: paper.id, section, page: index + 1,
+      quote: `Study ${paper.id} ${section}: synthetic supporting text.`, markdownStart: 3 + index * 2, markdownEnd: 3 + index * 2
+    })));
+    const openedCitations: string[] = [];
     const threads = new Map<string, QaThread>();
     const initialA = gate();
     const answers = new Map([["A", gate()], ["B", gate()]]);
@@ -68,14 +73,18 @@ try {
         const thread = getThread(request.paperId);
         assert.equal(request.threadRevision, thread.revision);
         thread.revision += 1;
+        const evidence = (thread.revision === 1 ? passages.filter((passage) => passage.paperId === request.paperId).slice(0, 1)
+          : thread.revision === 2 ? passages.filter((passage) => passage.paperId === request.paperId).slice(1) : [])
+          .map((passage) => ({ ...passage, passageId: passage.id, paperTitle: `Synthetic study ${passage.paperId}`, confidence: null }));
         const response = QaResponseSchema.parse({
-          answer: `Saved answer ${request.paperId}`, question: request.question, evidence: [],
-          threadId: thread.id, messageId: `answer-${request.paperId}`,
+          answer: thread.revision === 1 ? `Saved answer ${request.paperId}` : thread.revision === 2 ? `Follow-up answer ${request.paperId} [1] [2].` : "Not found in the selected sources.",
+          question: request.question, evidence, status: evidence.length ? "answered" : "not_found",
+          threadId: thread.id, messageId: `answer-${request.paperId}-${thread.revision}`,
           threadRevision: thread.revision,
           scope: { type: "paper", paperId: request.paperId }
         });
         thread.messages.push(
-          { id: `user-${request.paperId}`, role: "user", content: request.question, createdAt: timestamp, response: null },
+          { id: `user-${request.paperId}-${thread.revision}`, role: "user", content: request.question, createdAt: timestamp, response: null },
           { id: response.messageId!, role: "assistant", content: response.answer, createdAt: timestamp, response }
         );
         await route.fulfill({ json: response });
@@ -86,8 +95,21 @@ try {
         await route.abort();
         return;
       }
+      const citationPath = endpoint.match(/^\/api\/papers\/([^/]+)\/passages\/([^/]+)\/target$/);
+      if (citationPath) {
+        const passage = passages.find((item) => item.paperId === citationPath[1] && item.id === citationPath[2]);
+        assert.ok(passage);
+        openedCitations.push(passage.id);
+        await route.fulfill({ json: CitationTargetSchema.parse({
+          paperId: passage.paperId, passageId: passage.id, paperTitle: `Synthetic study ${passage.paperId}`, quote: passage.quote,
+          page: passage.page, section: passage.section, pdf: { available: false },
+          markdown: { available: true, startLine: passage.markdownStart, endLine: passage.markdownEnd }
+        }) });
+        return;
+      }
       if (endpoint === "/api/papers") await route.fulfill({ json: papers });
-      else if (endpoint.endsWith("/markdown")) await route.fulfill({ contentType: "text/markdown", body: "# Synthetic study\n\nFixture reading copy." });
+      else if (endpoint.endsWith("/markdown")) await route.fulfill({ contentType: "text/markdown", body: `# Synthetic study\n\n${passages.filter((item) => item.paperId === endpoint.split("/")[3]).map((item) => item.quote).join("\n\n")}` });
+      else if (endpoint.endsWith("/passages")) await route.fulfill({ json: passages.filter((item) => item.paperId === endpoint.split("/")[3]) });
       else if (endpoint === "/api/status") await route.fulfill({ json: { repoRoot: "fixture", projects: 0, papers: 2, git: { branch: "fixture", clean: true, lfsAvailable: true }, providers: [] } });
       else await route.fulfill({ json: [] });
     });
@@ -99,8 +121,13 @@ try {
     await page.screenshot({ path: path.join(outputDir, `first-screen-${width}.png`) });
     const selectPaper = (label: string) => page.locator(".la-paper").filter({ hasText: `Synthetic study ${label}` }).click();
     const composer = page.getByRole("textbox", { name: "Question", exact: true });
+    const evidenceTab = page.locator('.la-agenttabs button[title="Evidence"]');
     await selectPaper("B");
     await page.getByText("Conversation B", { exact: true }).waitFor();
+    await evidenceTab.click();
+    await page.getByText("No answer selected", { exact: true }).waitFor();
+    assert.equal(await page.locator(".la-evcard").count(), 0);
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
     delayA = false;
     initialA.release();
     await composer.fill("Draft B");
@@ -131,7 +158,42 @@ try {
     await page.getByRole("button", { name: "Reload", exact: true }).click();
     await page.getByText("History unavailable", { exact: true }).waitFor({ state: "hidden" });
     assert.deepEqual(submitted, ["A", "B"]);
+    await evidenceTab.click();
+    await page.locator(".la-evcard .quote").filter({ hasText: "Study B method:" }).waitFor();
+    assert.equal(await page.locator(".la-evcard").count(), 1);
+    assert.equal(await page.locator(".la-evcard .la-conf").count(), 0);
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await composer.fill("What were the results and limitations?");
+    await page.getByRole("button", { name: "Send question", exact: true }).click();
+    await page.locator(".la-amsg.active").filter({ hasText: "Follow-up answer B" }).waitFor();
+    await evidenceTab.click();
+    await page.locator(".la-evidencehead strong").filter({ hasText: "What were the results and limitations?" }).waitFor();
+    assert.equal(await page.locator(".la-evcard").count(), 2);
+    assert.equal(await page.locator(".la-evcard").filter({ hasText: "Study B method:" }).count(), 0);
+    for (const section of ["result", "limitation"]) {
+      const card = page.locator(".la-evcard").filter({ hasText: `Study B ${section}:` });
+      await card.focus();
+      await card.press("Enter");
+      await page.locator(".la-reader").getByText(`"Study B ${section}: synthetic supporting text."`, { exact: true }).waitFor();
+    }
+    assert.deepEqual(openedCitations, ["B-result", "B-limitation"]);
+    await page.screenshot({ path: path.join(outputDir, `evidence-${width}.png`) });
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await page.locator(".la-amsg").filter({ hasText: "Saved answer B" }).getByRole("button", { name: "Evidence 1", exact: true }).click();
+    await page.locator(".la-evcard .quote").filter({ hasText: "Study B method:" }).waitFor();
     await selectPaper("A");
+    await page.locator(".la-evcard .quote").filter({ hasText: "Study A method:" }).waitFor();
+    await selectPaper("B");
+    await page.locator(".la-evcard .quote").filter({ hasText: "Study B method:" }).waitFor();
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await composer.fill("A question without supporting sources");
+    await page.getByRole("button", { name: "Send question", exact: true }).click();
+    await page.locator(".la-amsg.active").filter({ hasText: "Not found in the selected sources." }).waitFor();
+    await evidenceTab.click();
+    await page.getByText("No evidence for this answer", { exact: true }).waitFor();
+    assert.equal(await page.locator(".la-evcard").count(), 0);
+    await selectPaper("A");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
     await page.getByText("Saved answer A", { exact: true }).waitFor();
     assert.equal(await page.getByText("Saved answer B", { exact: true }).count(), 0);
     await page.locator(".la-qascope").getByRole("button", { name: "Global", exact: true }).click();
@@ -140,9 +202,11 @@ try {
     await selectPaper("B");
     assert.equal(await composer.inputValue(), "Global draft");
     assert.equal(await page.getByText("Conversation global", { exact: true }).count(), 1);
+    assert.equal(await page.locator(".la-chat-source-warning").count(), 0);
     await page.screenshot({ path: path.join(outputDir, `scoped-chat-${width}.png`) });
     assert.deepEqual(errors, []);
-    console.log(`PASS ${width}px: delayed loads, separate drafts, concurrent scopes, saved-answer recovery, context scope preserved`);
+    assert.deepEqual(submitted, ["A", "B", "B", "B"]);
+    console.log(`PASS ${width}px: scoped chat, saved-answer recovery, answer-specific evidence, keyboard citation targets, empty evidence states`);
     await page.close();
   }
   console.log(`Screenshots: ${outputDir}`);

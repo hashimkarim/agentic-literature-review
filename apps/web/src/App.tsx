@@ -2529,7 +2529,6 @@ function AgentPanel({
 }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
   const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
   const [qaScope, setQaScope] = useState<"paper" | "context">("paper");
-  const [activeQaMessageId, setActiveQaMessageId] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -2550,7 +2549,7 @@ function AgentPanel({
   const providerLabel = selectedProvider?.label ?? runningProviderId;
   const markdownCharacters = markdown?.length ?? 0;
   const markdownLooksLikePlaceholder = Boolean(markdown && /literal abstract excerpt used for the local citation demo|markdown conversion has not been run yet|replace this placeholder/i.test(markdown));
-  const sourceCoverageLimited = Boolean(selectedPaper && (markdownLooksLikePlaceholder || markdownCharacters < 1_500 || passages.length < 5));
+  const sourceCoverageLimited = Boolean(askPaperId && (markdownLooksLikePlaceholder || markdownCharacters < 1_500 || passages.length < 5));
   const conversionRunning = Boolean(selectedPaper && workflows.some((run) =>
     run.type === "pdf-markdown-processing"
     && (run.status === "running" || run.status === "queued")
@@ -2567,10 +2566,6 @@ function AgentPanel({
         "Where do the selected sources disagree?",
         "What evidence best answers the research question?"
       ];
-  useEffect(() => {
-    const latest = assistantMessages.at(-1);
-    setActiveQaMessageId((current) => current && assistantMessages.some((message) => message.id === current) ? current : latest?.id ?? null);
-  }, [assistantMessages.map((message) => message.id).join(":")]);
   const qaMessageSignature = qaThread?.messages.map((message) => message.id).join(":") ?? "";
   useEffect(() => {
     const scrollRoot = chatScrollRef.current;
@@ -2592,19 +2587,9 @@ function AgentPanel({
     await chatSessions.ask(chatScope, trimmed, { providerId: selectedProviderId, model: selectedModel });
   };
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
-  const activeQaMessage = assistantMessages.find((message) => message.id === activeQaMessageId) ?? assistantMessages.at(-1) ?? null;
+  const activeQaMessage = assistantMessages.find((message) => message.id === chat.selectedAnswerId) ?? assistantMessages.at(-1) ?? null;
   const activeQa = activeQaMessage?.response ?? null;
-  const evidence: EvidenceRef[] = activeQa
-    ? activeQa.evidence
-    : passages.slice(0, 5).map((passage) => ({
-        passageId: passage.id,
-        paperId: passage.paperId,
-        paperTitle: selectedPaper?.title ?? passage.paperId,
-        section: passage.section,
-        page: passage.page,
-        quote: passage.quote,
-        confidence: 0.75
-      }));
+  const evidence = activeQa?.evidence ?? [];
   const queueWorkflows = workflows.filter((run) => workflowMatchesContext(run, selectedPaper, scopeProjectId));
   const queueRunning = queueWorkflows.filter((run) => run.status === "running" || run.status === "queued").length;
   const renderTab = (
@@ -2718,7 +2703,7 @@ function AgentPanel({
                     <article
                       key={message.id}
                       className={`la-amsg${response.status === "not_found" ? " notfound" : ""}${isActive ? " active" : ""}`}
-                      onClick={() => setActiveQaMessageId(message.id)}
+                      onClick={() => chatSessions.selectAnswer(chatScope, message.id)}
                       title="Use this answer's evidence stack"
                     >
                       <div className="la-chatmessage-meta assistant">
@@ -2734,7 +2719,7 @@ function AgentPanel({
                           answer={response.answer}
                           evidence={response.evidence}
                           onOpenEvidence={(item) => {
-                            setActiveQaMessageId(message.id);
+                            chatSessions.selectAnswer(chatScope, message.id);
                             setTab("evidence");
                             onOpenCitation(item, scopeProjectId);
                           }}
@@ -2748,7 +2733,7 @@ function AgentPanel({
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                setActiveQaMessageId(message.id);
+                                chatSessions.selectAnswer(chatScope, message.id);
                                 setTab("evidence");
                                 onOpenCitation(item, scopeProjectId);
                               }}
@@ -2777,7 +2762,7 @@ function AgentPanel({
                           {copiedMessageId === message.id ? "Copied" : "Copy"}
                         </button>
                         {response.evidence.length ? (
-                          <button type="button" onClick={(event) => { event.stopPropagation(); setActiveQaMessageId(message.id); setTab("evidence"); }}>
+                          <button type="button" onClick={(event) => { event.stopPropagation(); chatSessions.selectAnswer(chatScope, message.id); setTab("evidence"); }}>
                             <Icon name="library-big" size={12} /> Evidence {response.evidence.length}
                           </button>
                         ) : null}
@@ -2886,26 +2871,26 @@ function AgentPanel({
         </>
       ) : null}
       {tab === "evidence" ? (
-        <div className="la-agentbody fade-in" style={{ paddingTop: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px 10px" }}>
-            <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>Selected answer evidence · {evidence.length} linked</span>
-            <Btn variant="ghost" sm icon="download">Export</Btn>
+        <div className="la-agentbody la-evidencebody fade-in">
+          <div className="la-evidencehead">
+            <span>{evidence.length} linked source{evidence.length === 1 ? "" : "s"}</span>
+            {activeQa?.question ? <strong>{activeQa.question}</strong> : null}
           </div>
           {evidence.length ? evidence.map((item, index) => (
-            <div key={`${item.paperId}-${item.passageId}`} className="la-evcard" onClick={() => onOpenCitation(item, scopeProjectId)} title="Open citation target">
-              <div className="quote">"{item.quote}"</div>
-              <div className="src-title">{item.paperTitle || item.paperId}</div>
-              <div className="src">
+            <button key={`${item.paperId}-${item.passageId}`} type="button" className="la-evcard" onClick={() => onOpenCitation(item, scopeProjectId)} title={`Open source ${index + 1}: ${item.paperTitle || item.paperId}`}>
+              <span className="quote">"{item.quote}"</span>
+              <span className="src-title">{item.paperTitle || item.paperId}</span>
+              <span className="src">
                 <span className="cite">{index + 1}</span>
                 <span>{item.section || "Passage"}</span>
-                <span className="pg">p.{item.page ?? "?"}</span>
+                <span className="pg">{item.page ? `p.${item.page}` : "Page unmapped"}</span>
                 <span className="spacer" />
                 {item.confidence === null
                   ? <span title="A source link is not a calibrated confidence score">Source linked</span>
                   : <ConfBar value={Math.round(item.confidence * 100)} />}
-              </div>
-            </div>
-          )) : <Empty icon="quote" title="No evidence yet" desc="Convert and index papers, then ask a cited question." />}
+              </span>
+            </button>
+          )) : <Empty icon="quote" title={activeQa ? "No evidence for this answer" : "No answer selected"} desc={activeQa ? "No supporting sources were returned." : "No cited answers in this conversation."} />}
         </div>
       ) : null}
       {tab === "annotations" ? (

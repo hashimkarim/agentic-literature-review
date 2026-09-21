@@ -22,6 +22,14 @@ function response(question: string) {
   return QaResponseSchema.parse({ answer: `Answer: ${question}`, question, evidence: [], messageId: `reply-${question}` });
 }
 
+function history(scope: ChatScope, questions: string[]) {
+  const saved = thread(scope);
+  return { ...saved, messages: questions.map((question) => ({
+    id: `reply-${question}`, role: "assistant" as const, content: `Answer: ${question}`,
+    createdAt: saved.createdAt, response: response(question)
+  })) };
+}
+
 function fixture() {
   const api = {
     qaThread: vi.fn(async (scope: ChatScope) => thread(scope)),
@@ -185,5 +193,55 @@ describe("scope-owned chat sessions", () => {
     await sessions.load(paperA);
     await sessions.ask(paperA, "next question", selection);
     expect(api.qa).toHaveBeenLastCalledWith(expect.objectContaining({ threadRevision: 1 }));
+  });
+
+  it("keeps evidence selection in its own scope across history reloads", async () => {
+    const { api, sessions } = fixture();
+    api.qaThread.mockImplementation(async (scope) => history(scope, ["method", "result"]));
+    await sessions.load(paperA);
+    expect(sessions.get(paperA).selectedAnswerId).toBe("reply-result");
+    sessions.selectAnswer(paperA, "reply-method");
+    await sessions.load(paperB);
+    await sessions.load(paperA);
+    expect(sessions.get(paperA).selectedAnswerId).toBe("reply-method");
+    expect(sessions.get(paperB).selectedAnswerId).toBe("reply-result");
+    sessions.selectAnswer(paperA, "missing-answer");
+    expect(sessions.get(paperA).selectedAnswerId).toBe("reply-method");
+  });
+
+  it("selects a newly saved answer even when refreshing history fails", async () => {
+    const { api, sessions } = fixture();
+    api.qaThread.mockResolvedValue(history(paperA, ["method", "result"]));
+    await sessions.load(paperA);
+    sessions.selectAnswer(paperA, "reply-method");
+    api.qaThread.mockRejectedValue(new Error("History offline"));
+    await sessions.ask(paperA, "limitations", selection);
+    await sessions.load(paperA);
+    expect(sessions.get(paperA).selectedAnswerId).toBe("reply-limitations");
+  });
+
+  it("selects newer answers from another tab and clears removed evidence", async () => {
+    const { api, sessions } = fixture();
+    api.qaThread.mockResolvedValue(history(paperA, ["method", "result"]));
+    await sessions.load(paperA);
+    sessions.selectAnswer(paperA, "reply-method");
+    api.qaThread.mockResolvedValue(history(paperA, ["method", "result", "limitations"]));
+    await sessions.load(paperA);
+    expect(sessions.get(paperA).selectedAnswerId).toBe("reply-limitations");
+    api.qaThread.mockResolvedValue(thread(paperA));
+    await sessions.load(paperA);
+    expect(sessions.get(paperA).selectedAnswerId).toBeNull();
+  });
+
+  it("clears evidence selection only after the conversation is archived", async () => {
+    const { api, sessions } = fixture();
+    api.qaThread.mockResolvedValue(history(paperA, ["method"]));
+    await sessions.load(paperA);
+    api.clearQaThread.mockRejectedValueOnce(new Error("Archive failed"));
+    expect(await sessions.clear(paperA)).toBe(false);
+    await sessions.load(paperA);
+    expect(sessions.get(paperA).selectedAnswerId).toBe("reply-method");
+    expect(await sessions.clear(paperA)).toBe(true);
+    expect(sessions.get(paperA).selectedAnswerId).toBeNull();
   });
 });
