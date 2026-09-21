@@ -179,6 +179,7 @@ export const WorkflowRunSchema = z.object({
 export type WorkflowRun = z.infer<typeof WorkflowRunSchema>;
 
 export const EvidenceRefSchema = z.object({
+  markdownHash: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
   paperId: z.string(),
   passageId: z.string(),
   page: z.number().int().positive().nullable().default(null),
@@ -462,6 +463,8 @@ export const CitationTargetSchema = z.object({
 export type CitationTarget = z.infer<typeof CitationTargetSchema>;
 
 export const CitationTargetRequestSchema = z.object({
+  expectedQuote: z.string().optional(),
+  expectedMarkdownHash: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
   paperId: z.string(),
   passageId: z.string(),
   projectId: z.string().nullable().default(null)

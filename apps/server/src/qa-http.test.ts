@@ -44,6 +44,12 @@ it("returns HTTP conflicts for stale chat writes without starting a provider", a
     expect(await runs.json()).toEqual([]);
     const current = await fetch(`${url}/api/qa/thread`);
     expect(await current.json()).toMatchObject({ revision: 1, messages: [] });
+    const citation = await fetch(`${url}/api/papers/missing/passages/old/target`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedQuote: "Previously cited text" })
+    });
+    expect(citation.status).toBe(409);
+    expect(await citation.json()).toMatchObject({ code: "citation_source_changed" });
   } finally {
     server.kill("SIGTERM");
     await exited;

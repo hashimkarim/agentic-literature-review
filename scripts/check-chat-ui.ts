@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,6 +35,11 @@ try {
       quote: `Study ${paper.id} ${section}: synthetic supporting text.`, markdownStart: 3 + index * 2, markdownEnd: 3 + index * 2
     })));
     const openedCitations: string[] = [];
+    const markdownFor = (paperId: string) => `# Synthetic study\n\n${passages.filter((item) => item.paperId === paperId).map((item) => item.quote).join("\n\n")}`;
+    const hashFor = (paperId: string) => crypto.createHash("sha256").update(markdownFor(paperId)).digest("hex");
+    let rejectCitation = false;
+    let delayCitation = false;
+    const lateCitation = gate();
     const threads = new Map<string, QaThread>();
     const initialA = gate();
     const answers = new Map<string | null, ReturnType<typeof gate>>([["A", gate()], ["B", gate()], [null, gate()]]);
@@ -75,7 +81,7 @@ try {
         thread.revision += 1;
         const evidence = (thread.revision === 1 ? passages.filter((passage) => passage.paperId === request.paperId).slice(0, 1)
           : thread.revision === 2 ? passages.filter((passage) => passage.paperId === request.paperId).slice(1) : [])
-          .map((passage) => ({ ...passage, passageId: passage.id, paperTitle: `Synthetic study ${passage.paperId}`, confidence: null }));
+          .map((passage) => ({ ...passage, passageId: passage.id, paperTitle: `Synthetic study ${passage.paperId}`, confidence: null, markdownHash: hashFor(passage.paperId) }));
         const response = QaResponseSchema.parse({
           answer: request.paperId === null ? "New global reply" : thread.revision === 1 ? `Saved answer ${request.paperId}` : thread.revision === 2 ? `Follow-up answer ${request.paperId} [1] [2].` : "Not found in the selected sources.",
           question: request.question, evidence, status: evidence.length ? "answered" : "not_found",
@@ -90,16 +96,22 @@ try {
         await route.fulfill({ json: response });
         return;
       }
-      if (route.request().method() !== "GET") {
-        errors.push(`Unexpected mutation: ${route.request().method()} ${endpoint}`);
-        await route.abort();
-        return;
-      }
       const citationPath = endpoint.match(/^\/api\/papers\/([^/]+)\/passages\/([^/]+)\/target$/);
       if (citationPath) {
         const passage = passages.find((item) => item.paperId === citationPath[1] && item.id === citationPath[2]);
         assert.ok(passage);
+        assert.equal(route.request().method(), "POST");
+        assert.deepEqual(route.request().postDataJSON(), { expectedQuote: passage.quote, expectedMarkdownHash: hashFor(passage.paperId) });
         openedCitations.push(passage.id);
+        if (rejectCitation) {
+          rejectCitation = false;
+          await route.fulfill({ status: 409, json: { error: "This citation no longer matches the current document.", code: "citation_source_changed" } });
+          return;
+        }
+        if (delayCitation && passage.id === "B-result") {
+          delayCitation = false;
+          await lateCitation.promise;
+        }
         await route.fulfill({ json: CitationTargetSchema.parse({
           paperId: passage.paperId, passageId: passage.id, paperTitle: `Synthetic study ${passage.paperId}`, quote: passage.quote,
           page: passage.page, section: passage.section, pdf: { available: false },
@@ -107,8 +119,13 @@ try {
         }) });
         return;
       }
+      if (route.request().method() !== "GET") {
+        errors.push(`Unexpected mutation: ${route.request().method()} ${endpoint}`);
+        await route.abort();
+        return;
+      }
       if (endpoint === "/api/papers") await route.fulfill({ json: papers });
-      else if (endpoint.endsWith("/markdown")) await route.fulfill({ contentType: "text/markdown", body: `# Synthetic study\n\n${passages.filter((item) => item.paperId === endpoint.split("/")[3]).map((item) => item.quote).join("\n\n")}` });
+      else if (endpoint.endsWith("/markdown")) await route.fulfill({ contentType: "text/markdown", body: markdownFor(endpoint.split("/")[3]!) });
       else if (endpoint.endsWith("/passages")) await route.fulfill({ json: passages.filter((item) => item.paperId === endpoint.split("/")[3]) });
       else if (endpoint === "/api/status") await route.fulfill({ json: { repoRoot: "fixture", projects: 0, papers: 2, git: { branch: "fixture", clean: true, lfsAvailable: true }, providers: [] } });
       else await route.fulfill({ json: [] });
@@ -178,6 +195,21 @@ try {
     }
     assert.deepEqual(openedCitations, ["B-result", "B-limitation"]);
     await page.screenshot({ path: path.join(outputDir, `evidence-${width}.png`) });
+    rejectCitation = true;
+    await page.locator(".la-evcard").first().click();
+    await page.getByRole("alert").filter({ hasText: "This citation no longer matches" }).waitFor();
+    assert.equal(await page.locator(".la-citationtarget").count(), 0);
+    await page.screenshot({ path: path.join(outputDir, `stale-citation-${width}.png`) });
+    await page.getByRole("button", { name: "Dismiss citation error" }).click();
+    delayCitation = true;
+    const lateResponse = page.waitForResponse((response) => response.url().includes("/passages/B-result/target"));
+    await page.locator(".la-evcard").first().click();
+    await page.locator(".la-evcard").last().click();
+    await page.locator(".ct-quote").filter({ hasText: "Study B limitation:" }).waitFor();
+    lateCitation.release();
+    await (await lateResponse).finished();
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await page.locator(".ct-quote").filter({ hasText: "Study B limitation:" }).waitFor();
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await page.locator(".la-amsg").filter({ hasText: "Saved answer B" }).getByRole("button", { name: "Evidence 1", exact: true }).click();
     await page.locator(".la-evcard .quote").filter({ hasText: "Study B method:" }).waitFor();
@@ -248,7 +280,7 @@ try {
     await atLatest();
     assert.deepEqual(errors, []);
     assert.deepEqual(submitted, ["A", "B", "B", "B", null]);
-    console.log(`PASS ${width}px: scoped chat, answer-specific evidence, citation targets, preserved reading position, jump to latest`);
+    console.log(`PASS ${width}px: scoped chat, evidence, stale/out-of-order citations, preserved reading position, jump to latest`);
     await page.close();
   }
   console.log(`Screenshots: ${outputDir}`);

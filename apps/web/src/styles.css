@@ -912,6 +912,8 @@ button { font-family: var(--font-sans); }
 @keyframes la-thinking { 0%, 70%, 100% { opacity: 0.35; transform: translateY(0); } 35% { opacity: 1; transform: translateY(-2px); } }
 
 /* evidence card */
+.la-citation-error { display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 8px 12px; border-bottom: 1px solid var(--state-warning); background: var(--bg-secondary); color: var(--text-primary); font: var(--text-body-sm); }
+.la-citation-error-message { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .la-evidencebody { padding-top: 12px; }
 .la-evidencehead { display: grid; gap: 5px; padding: 0 12px 12px; font: var(--text-caption); color: var(--text-muted); }
 .la-evidencehead strong { color: var(--text-primary); font: var(--text-body-sm); font-weight: 600; overflow-wrap: anywhere; }

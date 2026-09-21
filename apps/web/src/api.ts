@@ -105,11 +105,11 @@ export const api = {
     return response.text();
   },
   passages: (paperId: string) => request<Passage[]>(`/api/papers/${paperId}/passages`),
-  citationTarget: (paperId: string, passageId: string, projectId: string | null) =>
+  citationTarget: (paperId: string, passageId: string, projectId: string | null, expectedQuote: string, expectedMarkdownHash?: string | null) =>
     request<CitationTarget>(
       `/api/papers/${encodeURIComponent(paperId)}/passages/${encodeURIComponent(passageId)}/target${
         projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""
-      }`
+      }`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expectedQuote, expectedMarkdownHash }) }
     ),
   search: (body: { query: string; projectId: string | null; paperId?: string | null; limit?: number }) =>
     request<SearchResult[]>("/api/search", {

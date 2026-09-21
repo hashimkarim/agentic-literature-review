@@ -204,6 +204,14 @@ function writeNoteMarkdown(root: string, note: Note, content: string): void {
   fs.writeFileSync(filePath, `---\n${frontmatter}\n---\n${content}`, "utf8");
 }
 
+export class CitationSourceChangedError extends Error {
+  readonly code = "citation_source_changed";
+  constructor() {
+    super("This citation no longer matches the current document. The source may have been reconverted or removed. Ask again using the current sources.");
+    this.name = "CitationSourceChangedError";
+  }
+}
+
 export class LitAgentRepository {
   readonly root: string;
 
@@ -1153,9 +1161,19 @@ export class LitAgentRepository {
   resolveCitationTarget(input: CitationTargetRequestInput): CitationTarget {
     const parsed = CitationTargetRequestSchema.parse(input);
     const paper = this.readPaper(parsed.paperId);
+    const guarded = parsed.expectedQuote !== undefined || Boolean(parsed.expectedMarkdownHash);
+    if (!paper && guarded) throw new CitationSourceChangedError();
     if (!paper) throw new Error(`Paper not found: ${parsed.paperId}`);
+    if (parsed.expectedMarkdownHash) {
+      const markdown = this.readMarkdown(parsed.paperId);
+      if (markdown === null || crypto.createHash("sha256").update(markdown).digest("hex") !== parsed.expectedMarkdownHash) {
+        throw new CitationSourceChangedError();
+      }
+    }
     const passage = this.readPassages(parsed.paperId).find((candidate) => candidate.id === parsed.passageId);
+    if (!passage && guarded) throw new CitationSourceChangedError();
     if (!passage) throw new Error(`Passage not found: ${parsed.paperId}/${parsed.passageId}`);
+    if (parsed.expectedQuote !== undefined && parsed.expectedQuote !== passage.quote) throw new CitationSourceChangedError();
 
     const annotations = parsed.projectId
       ? this.listAnnotations(parsed.projectId, parsed.paperId).filter(

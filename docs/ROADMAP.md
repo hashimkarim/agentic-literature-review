@@ -156,16 +156,24 @@ Progress (2026-09-21):
   global/project scope. Four more store tests and browser regressions cover
   distinct answers, both citation targets, scope switches and unsupported
   replies (104 tests plus 1440px/1920px browser checks).
-- Chat reading position: follow incoming replies only while pinned to the end.
+- `765a0c2`: follow incoming replies only while pinned to the end.
   Restore positions across paper/context scope and inspector-tab switches;
   sending or the explicit latest-message control resumes following. Resize
   observation handles composer/content changes without timed forced scrolling.
   The browser regression now uses long fixture histories and an incoming reply
   while reading an older answer. Typecheck, all 104 tests and both desktop
   browser sizes pass; no live generation is used.
+- Saved citation guards: new Q&A evidence records the exact supplied Markdown
+  SHA-256. Citation resolution compares that revision and the saved quote before
+  returning a target; reused IDs and changed/removed sources produce HTTP 409.
+  Legacy evidence without a hash gets quote-identity checks, not a fabricated
+  historical revision. The UI clears old highlights, shows failures and ignores
+  out-of-order navigation responses. Typecheck, 108 tests and fixture browser
+  checks at 1440px/1920px pass. Historical document retention and migration are
+  still needed; this is identity validation, not proof of claim support.
 
-Gate 1 remains open: next focus is saved-source revision checks and recovery
-when citations no longer match reconverted documents. Legacy answer migration, durable
+Gate 1 remains open: next focus is historical source recovery and regression
+coverage for reconverted documents. Legacy answer migration, durable
 versioned anchors, representative PDF/table/injection evaluations and measured
 cross-provider quality are not completed by this slice. Live compute work is
 deferred under the execution boundary above.

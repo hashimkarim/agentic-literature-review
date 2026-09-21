@@ -2210,7 +2210,9 @@ export class WorkflowEngine {
           }
         }
         const linked = renderGroundedAnswer(draft, sources);
-        const evidence = linked.evidence;
+        const evidence = linked.evidence.map((item) => ({
+          ...item, markdownHash: context.sources.find((source) => source.paperId === item.paperId)?.markdownHash ?? null
+        }));
         for (const item of evidence) {
           appendEvent(
             absoluteEventsPath,

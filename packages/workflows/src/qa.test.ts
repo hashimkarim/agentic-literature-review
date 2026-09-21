@@ -143,6 +143,10 @@ describe("Q&A claim-specific grounding", () => {
     expect(start.mock.calls[2]?.[0].prompt).toContain("User: Which model was used?");
     expect(second.answer).toBe("Accuracy was 0.92. [1]");
     expect(second.evidence[0]?.confidence).toBeNull();
+    expect(second.evidence[0]?.markdownHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(second.evidence[0]?.markdownHash).toBe(second.diagnostics.sources[0]?.markdownHash);
+    const savedEvidence = engine.readQaThread(request).messages.at(-1)?.response?.evidence[0];
+    expect(savedEvidence?.markdownHash).toBe(second.evidence[0]?.markdownHash);
     expect(engine.readQaThread(request).messages).toHaveLength(4);
   });
 

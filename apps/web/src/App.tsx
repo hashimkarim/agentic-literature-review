@@ -457,6 +457,8 @@ function App() {
   const [researchFindingProposals, setResearchFindingProposals] = useState<ResearchFindingProposal[]>([]);
   const [researchRecords, setResearchRecords] = useState<ResearchRecord[]>([]);
   const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
+  const [citationError, setCitationError] = useState<string | null>(null);
+  const citationRequest = useRef(0);
   const [citationActivation, setCitationActivation] = useState(0);
   const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([]);
   const [activePdfAnnotation, setActivePdfAnnotation] = useState<{ id: string; version: number } | null>(null);
@@ -854,14 +856,25 @@ function App() {
     });
   }, []);
 
+  useEffect(() => {
+    citationRequest.current += 1;
+    setCitationError(null);
+  }, [screen, selectedPaperId, activeProjectId]);
+
   const openCitation = useCallback((ref: EvidenceRef, scopeProjectId: string | null) => {
-    startTransition(() => {
-      void api.citationTarget(ref.paperId, ref.passageId, scopeProjectId).then((target) => {
+    const request = ++citationRequest.current;
+    setCitationError(null);
+    setCitationTarget(null);
+    void api.citationTarget(ref.paperId, ref.passageId, scopeProjectId, ref.quote, ref.markdownHash).then((target) => {
+      if (request !== citationRequest.current) return;
+      startTransition(() => {
         setCitationTarget(target);
         setCitationActivation((current) => current + 1);
         if (screen === "library") setLibraryPaperId(target.paperId);
         else setProjectPaperId(target.paperId);
       });
+    }).catch((error: unknown) => {
+      if (request === citationRequest.current) setCitationError(error instanceof Error ? error.message : "Citation could not be opened.");
     });
   }, [screen]);
 
@@ -932,6 +945,13 @@ function App() {
         </div>
       </div>
 
+      {citationError ? (
+        <div className="la-citation-error" role="alert">
+          <Icon name="alert-circle" size={16} color="var(--state-warning)" />
+          <span className="la-citation-error-message">{citationError}</span>
+          <button type="button" className="la-iconbtn" title="Dismiss citation error" onClick={() => setCitationError(null)}><Icon name="x" size={15} /></button>
+        </div>
+      ) : null}
       <div className="la-body">
         <nav className="la-nav" aria-label="Primary">
           {nav.map(([key, icon, label, wip]) => (

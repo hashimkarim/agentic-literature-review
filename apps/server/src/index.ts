@@ -30,7 +30,7 @@ import {
 import { AgentProviderSettingsStore } from "@litagent/agents";
 import { agenticDriverCatalogFromEnvironment } from "@litagent/agents/agenticdriver";
 import { SearchIndex } from "@litagent/indexer";
-import { DEFAULT_REPO_ROOT, LitAgentRepository } from "@litagent/library";
+import { CitationSourceChangedError, DEFAULT_REPO_ROOT, LitAgentRepository } from "@litagent/library";
 import { WorkflowEngine, WorkflowStartRequestSchema, QaThreadConflictError, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema } from "@litagent/workflows";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -622,13 +622,13 @@ app.get(
   })
 );
 
-app.get(
-  "/api/papers/:id/passages/:passageId/target",
-  asyncHandler((req, res) => {
+const citationTargetHandler = asyncHandler((req, res) => {
     const paperId = routeParam(req, "id");
     const passageId = routeParam(req, "passageId");
     const projectId = typeof req.query.projectId === "string" && req.query.projectId ? req.query.projectId : null;
-    const target = repo.resolveCitationTarget({ paperId, passageId, projectId });
+    const target = repo.resolveCitationTarget({
+      ...(req.method === "POST" ? req.body : {}), paperId, passageId, projectId
+    });
     res.json({
       ...target,
       pdf: {
@@ -646,8 +646,9 @@ app.get(
           : null
       }
     });
-  })
-);
+});
+app.get("/api/papers/:id/passages/:passageId/target", citationTargetHandler);
+app.post("/api/papers/:id/passages/:passageId/target", citationTargetHandler);
 
 app.post(
   "/api/index/rebuild",
@@ -845,6 +846,10 @@ if (fs.existsSync(webDist)) {
 }
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof CitationSourceChangedError) {
+    res.status(409).json({ error: error.message, code: error.code });
+    return;
+  }
   if (error instanceof QaThreadConflictError) {
     res.status(409).json({ error: error.message, code: error.code });
     return;
