@@ -89,6 +89,13 @@ try {
           threadRevision: thread.revision,
           scope: { type: request.paperId ? "paper" : "global", paperId: request.paperId }
         });
+        // Older saved answers stored revisions only in diagnostics.
+        if (thread.revision === 2 && request.paperId) {
+          response.diagnostics.sources = [{ paperId: request.paperId, paperTitle: request.paperId,
+            markdownHash: hashFor(request.paperId), totalChars: 100, includedChars: 100,
+            totalPassages: 2, includedPassages: 2, coverage: "full", readiness: "ready" }];
+          response.evidence.forEach((item) => { delete item.markdownHash; });
+        }
         thread.messages.push(
           { id: `user-${request.paperId}-${thread.revision}`, role: "user", content: request.question, createdAt: timestamp, response: null },
           { id: response.messageId!, role: "assistant", content: response.answer, createdAt: timestamp, response }

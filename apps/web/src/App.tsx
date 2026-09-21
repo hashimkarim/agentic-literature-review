@@ -33,6 +33,7 @@ import { workflowLabels } from "@litagent/ui";
 
 import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
 import { ChatSessions } from "./chat-sessions";
+import { savedCitationHash, type SavedCitationSources } from "./citation-revision";
 import { useChatScroll } from "./use-chat-scroll";
 
 type Screen = "library" | "projects" | "search" | "settings" | "presets";
@@ -861,11 +862,11 @@ function App() {
     setCitationError(null);
   }, [screen, selectedPaperId, activeProjectId]);
 
-  const openCitation = useCallback((ref: EvidenceRef, scopeProjectId: string | null) => {
+  const openCitation = useCallback((ref: EvidenceRef, scopeProjectId: string | null, sources?: SavedCitationSources) => {
     const request = ++citationRequest.current;
     setCitationError(null);
     setCitationTarget(null);
-    void api.citationTarget(ref.paperId, ref.passageId, scopeProjectId, ref.quote, ref.markdownHash).then((target) => {
+    void Promise.resolve().then(() => api.citationTarget(ref.paperId, ref.passageId, scopeProjectId, ref.quote, savedCitationHash(ref, sources))).then((target) => {
       if (request !== citationRequest.current) return;
       startTransition(() => {
         setCitationTarget(target);
@@ -1211,7 +1212,7 @@ interface WorkspaceProps {
   onCancelWorkflow: (runId: string) => void;
   onConvert: (paperId: string) => void;
   onImportPapers: (projectId: string | null) => void;
-  onOpenCitation: (ref: EvidenceRef, projectId: string | null) => void;
+  onOpenCitation: (ref: EvidenceRef, projectId: string | null, sources?: SavedCitationSources) => void;
 }
 
 function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: UiProject; activeProjectId: string | null; onProjectChange: (projectId: string) => void }) {
@@ -2732,7 +2733,7 @@ function AgentPanel({
                           onOpenEvidence={(item) => {
                             chatSessions.selectAnswer(chatScope, message.id);
                             setTab("evidence");
-                            onOpenCitation(item, scopeProjectId);
+                            onOpenCitation(item, scopeProjectId, response.diagnostics.sources);
                           }}
                         />
                       </div>
@@ -2746,7 +2747,7 @@ function AgentPanel({
                                 event.stopPropagation();
                                 chatSessions.selectAnswer(chatScope, message.id);
                                 setTab("evidence");
-                                onOpenCitation(item, scopeProjectId);
+                                onOpenCitation(item, scopeProjectId, response.diagnostics.sources);
                               }}
                               title={item.paperTitle || item.paperId}
                             >
@@ -2895,7 +2896,7 @@ function AgentPanel({
             {activeQa?.question ? <strong>{activeQa.question}</strong> : null}
           </div>
           {evidence.length ? evidence.map((item, index) => (
-            <button key={`${item.paperId}-${item.passageId}`} type="button" className="la-evcard" onClick={() => onOpenCitation(item, scopeProjectId)} title={`Open source ${index + 1}: ${item.paperTitle || item.paperId}`}>
+            <button key={`${item.paperId}-${item.passageId}`} type="button" className="la-evcard" onClick={() => onOpenCitation(item, scopeProjectId, activeQa?.diagnostics.sources)} title={`Open source ${index + 1}: ${item.paperTitle || item.paperId}`}>
               <span className="quote">"{item.quote}"</span>
               <span className="src-title">{item.paperTitle || item.paperId}</span>
               <span className="src">

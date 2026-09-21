@@ -171,6 +171,13 @@ Progress (2026-09-21):
   out-of-order navigation responses. Typecheck, 108 tests and fixture browser
   checks at 1440px/1920px pass. Historical document retention and migration are
   still needed; this is identity validation, not proof of claim support.
+- Legacy answer revision recovery: citation navigation now uses the cited
+  paper's hash already saved in answer diagnostics when the evidence predates
+  per-citation hashes. Conflicting or malformed saved revisions fail closed;
+  no current document hash is substituted for a missing historical revision.
+  Unit regressions cover paper isolation, missing hashes and conflicts; the
+  browser fixture exercises diagnostic-only revisions through citation links.
+  Typecheck, all 113 tests and 1440px/1920px browser checks pass.
 
 Gate 1 remains open: next focus is historical source recovery and regression
 coverage for reconverted documents. Legacy answer migration, durable
