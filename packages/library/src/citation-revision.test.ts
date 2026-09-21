@@ -46,3 +46,54 @@ it("rejects removed passages and missing Markdown without remapping to another p
   fs.rmSync(repo.resolve(`library/markdown/${paper.id}/paper.md`));
   expect(() => repo.resolveCitationTarget(request)).toThrow(CitationSourceChangedError);
 });
+
+function annotationFixture() {
+  const fixtureData = fixture();
+  const { repo, paper, passage, request } = fixtureData;
+  const project = repo.createProject({ name: "Citation geometry" });
+  const add = (quote: string, page = passage.page ?? 1, x = 10) => repo.createAnnotation({
+    projectId: project.id, paperId: paper.id, page, quote,
+    rects: [{ page, x, y: 20, width: 30, height: 10 }]
+  });
+  return { ...fixtureData, project, add, resolve: () => repo.resolveCitationTarget({ ...request, projectId: project.id }) };
+}
+
+it("does not borrow unrelated, empty or partial annotation text on the cited page", () => {
+  const { add, resolve } = annotationFixture();
+  add("A separate limitation.");
+  add("");
+  add("Accuracy");
+  add("Accuracy was 0.92. More text that is not part of the citation.");
+  const target = resolve();
+  expect(target.annotations).toEqual([]);
+  expect(target.pdf.rects).toEqual([]);
+  expect(target.pdf.rectSource).toBe("none");
+});
+
+it("uses only matching quote geometry on the citation page", () => {
+  const { passage, add, resolve } = annotationFixture();
+  const matching = add(`  ${passage.quote.replaceAll(" ", "\n")}  `);
+  add(passage.quote, (passage.page ?? 1) + 1);
+  add("Unrelated paragraph", passage.page ?? 1, 80);
+  const target = resolve();
+  expect(target.annotations.map((item) => item.id)).toEqual([matching.id]);
+  expect(target.pdf.rects).toEqual(matching.rects);
+  expect(target.pdf.rectSource).toBe("annotation");
+});
+
+it("filters off-page rectangles from a matching legacy annotation", () => {
+  const { repo, paper, project, passage, resolve } = annotationFixture();
+  repo.createAnnotation({ projectId: project.id, paperId: paper.id, page: passage.page ?? 1,
+    quote: passage.quote, rects: [{ page: (passage.page ?? 1) + 1, x: 1, y: 1, width: 10, height: 10 }] });
+  expect(resolve().pdf.rects).toEqual([]);
+  expect(resolve().pdf.rectSource).toBe("none");
+});
+
+it("keeps passage geometry authoritative over matching annotation rectangles", () => {
+  const { repo, paper, passage, add, resolve } = annotationFixture();
+  const rects = [{ page: passage.page ?? 1, x: 50, y: 50, width: 20, height: 10 }];
+  repo.writePassages(paper.id, [{ ...passage, rects }]);
+  add(passage.quote);
+  expect(resolve().pdf.rects).toEqual(rects);
+  expect(resolve().pdf.rectSource).toBe("passage");
+});

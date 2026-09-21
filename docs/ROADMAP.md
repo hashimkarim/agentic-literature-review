@@ -178,6 +178,13 @@ Progress (2026-09-21):
   Unit regressions cover paper isolation, missing hashes and conflicts; the
   browser fixture exercises diagnostic-only revisions through citation links.
   Typecheck, all 113 tests and 1440px/1920px browser checks pass.
+- Citation geometry fallback: annotation rectangles are eligible only when the
+  nonempty full quote matches the passage (whitespace normalized) on the same
+  page. Unrelated shapes, partial quotes and off-page rectangles cannot supply
+  citation highlights. Passage-owned rectangles retain precedence; without a
+  trustworthy rectangle the viewer retains its quote/page fallback. Typecheck
+  and all 117 tests pass, including four new repository regressions. This does
+  not add historical PDF geometry or retained document versions.
 
 Gate 1 remains open: next focus is historical source recovery and regression
 coverage for reconverted documents. Legacy answer migration, durable

@@ -175,11 +175,10 @@ function quoteBibTeX(value: string | number | null | undefined): string {
   return String(value ?? "").replace(/[{}]/g, "");
 }
 
-function quotesOverlap(first: string, second: string): boolean {
-  const a = first.toLowerCase().replace(/\s+/g, " ").trim();
-  const b = second.toLowerCase().replace(/\s+/g, " ").trim();
-  if (!a || !b) return true;
-  return a.includes(b) || b.includes(a);
+function quotesMatch(first: string, second: string): boolean {
+  const a = first.replace(/\s+/g, " ").trim();
+  const b = second.replace(/\s+/g, " ").trim();
+  return Boolean(a && b && a === b);
 }
 
 const noteFrontmatterPattern = /^---\n(?<json>[\s\S]*?)\n---\n?/;
@@ -1179,11 +1178,10 @@ export class LitAgentRepository {
       ? this.listAnnotations(parsed.projectId, parsed.paperId).filter(
           (annotation) =>
             annotation.page === passage.page &&
-            (quotesOverlap(annotation.quote, passage.quote) ||
-              annotation.rects.some((rect) => rect.page === passage.page))
+            quotesMatch(annotation.quote, passage.quote)
         )
       : [];
-    const annotationRects = annotations.flatMap((annotation) => annotation.rects);
+    const annotationRects = annotations.flatMap((annotation) => annotation.rects.filter((rect) => rect.page === passage.page));
     const rects = passage.rects.length > 0 ? passage.rects : annotationRects;
     const rectSource = passage.rects.length > 0 ? "passage" : annotationRects.length > 0 ? "annotation" : "none";
 
