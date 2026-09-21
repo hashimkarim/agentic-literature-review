@@ -148,7 +148,7 @@ Progress (2026-09-21):
   regressions, two additional client checks and an isolated real-HTTP conflict
   test bring the suite to 100 passing tests. This assumes one local backend;
   distributed locking and network-retry idempotency remain separate work.
-- Answer-specific evidence: remove the first-five-passages fallback and its
+- `25fc217`: remove the first-five-passages fallback and its
   invented 75% score. New replies select their own evidence; manually selected
   older answers stay selected within their conversation across navigation.
   The panel names the question, has honest empty states, and supports keyboard
@@ -156,9 +156,16 @@ Progress (2026-09-21):
   global/project scope. Four more store tests and browser regressions cover
   distinct answers, both citation targets, scope switches and unsupported
   replies (104 tests plus 1440px/1920px browser checks).
+- Chat reading position: follow incoming replies only while pinned to the end.
+  Restore positions across paper/context scope and inspector-tab switches;
+  sending or the explicit latest-message control resumes following. Resize
+  observation handles composer/content changes without timed forced scrolling.
+  The browser regression now uses long fixture histories and an incoming reply
+  while reading an older answer. Typecheck, all 104 tests and both desktop
+  browser sizes pass; no live generation is used.
 
-Gate 1 remains open: next focus is chat reading/scroll behavior and usability
-with deterministic fixtures. Legacy answer migration, durable
+Gate 1 remains open: next focus is saved-source revision checks and recovery
+when citations no longer match reconverted documents. Legacy answer migration, durable
 versioned anchors, representative PDF/table/injection evaluations and measured
 cross-provider quality are not completed by this slice. Live compute work is
 deferred under the execution boundary above.

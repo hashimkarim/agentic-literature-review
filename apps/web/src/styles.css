@@ -698,6 +698,9 @@ button { font-family: var(--font-sans); }
 
 /* Q&A */
 .la-chatbody { background: var(--bg-deep); scrollbar-gutter: stable; }
+.la-chatjump { display: flex; justify-content: center; padding-bottom: 8px; }
+.la-chatjump button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-line); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-primary); padding: 5px 9px; cursor: pointer; font: var(--text-caption); }
+.la-chatjump button:hover { background: var(--surface-hover); border-color: var(--accent-primary); }
 .la-chathead {
   position: sticky;
   top: 0;

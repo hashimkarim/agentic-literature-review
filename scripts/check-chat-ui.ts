@@ -36,8 +36,8 @@ try {
     const openedCitations: string[] = [];
     const threads = new Map<string, QaThread>();
     const initialA = gate();
-    const answers = new Map([["A", gate()], ["B", gate()]]);
-    const submitted: string[] = [];
+    const answers = new Map<string | null, ReturnType<typeof gate>>([["A", gate()], ["B", gate()], [null, gate()]]);
+    const submitted: Array<string | null> = [];
     let delayA = true;
     let failHistoryB = false;
     const getThread = (paperId: string | null) => {
@@ -67,7 +67,7 @@ try {
         return;
       }
       if (endpoint === "/api/qa") {
-        const request = route.request().postDataJSON() as { paperId: string; question: string; threadRevision: number };
+        const request = route.request().postDataJSON() as { paperId: string | null; question: string; threadRevision: number };
         submitted.push(request.paperId);
         await answers.get(request.paperId)?.promise;
         const thread = getThread(request.paperId);
@@ -77,11 +77,11 @@ try {
           : thread.revision === 2 ? passages.filter((passage) => passage.paperId === request.paperId).slice(1) : [])
           .map((passage) => ({ ...passage, passageId: passage.id, paperTitle: `Synthetic study ${passage.paperId}`, confidence: null }));
         const response = QaResponseSchema.parse({
-          answer: thread.revision === 1 ? `Saved answer ${request.paperId}` : thread.revision === 2 ? `Follow-up answer ${request.paperId} [1] [2].` : "Not found in the selected sources.",
+          answer: request.paperId === null ? "New global reply" : thread.revision === 1 ? `Saved answer ${request.paperId}` : thread.revision === 2 ? `Follow-up answer ${request.paperId} [1] [2].` : "Not found in the selected sources.",
           question: request.question, evidence, status: evidence.length ? "answered" : "not_found",
           threadId: thread.id, messageId: `answer-${request.paperId}-${thread.revision}`,
           threadRevision: thread.revision,
-          scope: { type: "paper", paperId: request.paperId }
+          scope: { type: request.paperId ? "paper" : "global", paperId: request.paperId }
         });
         thread.messages.push(
           { id: `user-${request.paperId}-${thread.revision}`, role: "user", content: request.question, createdAt: timestamp, response: null },
@@ -196,6 +196,17 @@ try {
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await page.getByText("Saved answer A", { exact: true }).waitFor();
     assert.equal(await page.getByText("Saved answer B", { exact: true }).count(), 0);
+    const globalThread = getThread(null);
+    globalThread.revision = 12;
+    for (let index = 0; index < 12; index++) {
+      const response = QaResponseSchema.parse({
+        question: `Previous question ${index}`, answer: `Previous answer ${index}. ${"A synthetic explanation for testing conversation reading position. ".repeat(12)}`, evidence: []
+      });
+      globalThread.messages.push(
+        { id: `global-user-${index}`, role: "user", content: response.question, createdAt: timestamp, response: null },
+        { id: `global-answer-${index}`, role: "assistant", content: response.answer, createdAt: timestamp, response }
+      );
+    }
     await page.locator(".la-qascope").getByRole("button", { name: "Global", exact: true }).click();
     await page.getByText("Conversation global", { exact: true }).waitFor();
     await composer.fill("Global draft");
@@ -204,9 +215,40 @@ try {
     assert.equal(await page.getByText("Conversation global", { exact: true }).count(), 1);
     assert.equal(await page.locator(".la-chat-source-warning").count(), 0);
     await page.screenshot({ path: path.join(outputDir, `scoped-chat-${width}.png`) });
+    const chatBody = page.locator(".la-chatbody");
+    const atLatest = () => page.waitForFunction(() => {
+      const body = document.querySelector(".la-chatbody")!;
+      return body.scrollHeight - body.scrollTop - body.clientHeight < 2;
+    });
+    const atReadingPosition = () => page.waitForFunction(() => Math.abs(document.querySelector(".la-chatbody")!.scrollTop - 300) < 2);
+    await atLatest();
+    await chatBody.evaluate((element) => { element.scrollTop = 300; });
+    await page.getByRole("button", { name: "Jump to latest message", exact: true }).waitFor();
+    await evidenceTab.click();
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await atReadingPosition();
+    await page.locator(".la-qascope").getByRole("button", { name: "Paper", exact: true }).click();
+    await page.getByText("Conversation B", { exact: true }).waitFor();
+    await page.locator(".la-qascope").getByRole("button", { name: "Global", exact: true }).click();
+    await page.getByText("Conversation global", { exact: true }).waitFor();
+    await atReadingPosition();
+    await page.getByRole("button", { name: "Send question", exact: true }).click();
+    await page.locator(".la-chatthinking").waitFor();
+    await atLatest();
+    await chatBody.evaluate((element) => { element.scrollTop = 300; });
+    await page.getByRole("button", { name: "Jump to latest message", exact: true }).waitFor();
+    answers.get(null)!.release();
+    await page.getByText("New global reply", { exact: true }).waitFor();
+    await page.getByText("Loading conversation", { exact: true }).waitFor({ state: "hidden" });
+    await atReadingPosition();
+    await page.screenshot({ path: path.join(outputDir, `reading-position-${width}.png`) });
+    await page.getByRole("button", { name: "Jump to latest message", exact: true }).click();
+    await atLatest();
+    await composer.fill("A longer\nmultiline\ncomposer\ndraft\nfor layout");
+    await atLatest();
     assert.deepEqual(errors, []);
-    assert.deepEqual(submitted, ["A", "B", "B", "B"]);
-    console.log(`PASS ${width}px: scoped chat, saved-answer recovery, answer-specific evidence, keyboard citation targets, empty evidence states`);
+    assert.deepEqual(submitted, ["A", "B", "B", "B", null]);
+    console.log(`PASS ${width}px: scoped chat, answer-specific evidence, citation targets, preserved reading position, jump to latest`);
     await page.close();
   }
   console.log(`Screenshots: ${outputDir}`);

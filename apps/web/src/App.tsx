@@ -33,6 +33,7 @@ import { workflowLabels } from "@litagent/ui";
 
 import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
 import { ChatSessions } from "./chat-sessions";
+import { useChatScroll } from "./use-chat-scroll";
 
 type Screen = "library" | "projects" | "search" | "settings" | "presets";
 type WorkspaceTool = "papers" | "workflows" | "map" | "notes" | "exports";
@@ -2531,7 +2532,6 @@ function AgentPanel({
   const [qaScope, setQaScope] = useState<"paper" | "context">("paper");
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
-  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const effectiveQaScope = selectedPaper ? qaScope : "context";
   const askPaperId = effectiveQaScope === "paper" ? selectedPaper?.id ?? null : null;
   const contextScopeLabel = scopeProjectId ? "Project" : "Global";
@@ -2567,23 +2567,14 @@ function AgentPanel({
         "What evidence best answers the research question?"
       ];
   const qaMessageSignature = qaThread?.messages.map((message) => message.id).join(":") ?? "";
-  useEffect(() => {
-    const scrollRoot = chatScrollRef.current;
-    if (!scrollRoot) return;
-    const frame = requestAnimationFrame(() => {
-      scrollRoot.scrollTop = scrollRoot.scrollHeight;
-    });
-    const settleTimer = window.setTimeout(() => {
-      scrollRoot.scrollTop = scrollRoot.scrollHeight;
-    }, 80);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.clearTimeout(settleTimer);
-    };
-  }, [qaMessageSignature, qaThread?.updatedAt, qaPendingHere?.question, qaErrorHere?.message]);
+  const chatScroll = useChatScroll(
+    JSON.stringify([scopeProjectId, askPaperId]),
+    JSON.stringify([qaMessageSignature, qaThread?.updatedAt, qaPendingHere?.question, qaErrorHere?.message, chat.loadError, chat.loading])
+  );
   const submitQuestion = async (question = input) => {
     const trimmed = question.trim();
     if (!trimmed || chatBusy) return;
+    chatScroll.scrollToLatest();
     await chatSessions.ask(chatScope, trimmed, { providerId: selectedProviderId, model: selectedModel });
   };
   if (collapsed) return <CollapsedRail title="Evidence & agent" icon="sparkles" side="right" onExpand={() => setCollapsed(false)} />;
@@ -2643,7 +2634,7 @@ function AgentPanel({
       ) : null}
       {tab === "ask" ? (
         <>
-          <div className="la-agentbody la-chatbody fade-in" ref={chatScrollRef}>
+          <div className="la-agentbody la-chatbody fade-in" ref={chatScroll.viewportRef}>
             <div className="la-chathead">
               <div className="la-chathead-copy">
                 <strong>{qaThread?.title ?? `${contextLabel} Q&A`}</strong>
@@ -2677,7 +2668,7 @@ function AgentPanel({
                 </button>
               </div>
             ) : null}
-            <div className="la-chatthread">
+            <div className="la-chatthread" ref={chatScroll.contentRef}>
               {chat.loading ? <div className="la-chat-loading" role="status"><Icon name="loader-circle" size={14} className="spin" /> Loading conversation</div> : null}
               {chat.loadError ? (
                 <div className="la-chaterror" role="alert">
@@ -2823,6 +2814,13 @@ function AgentPanel({
             </div>
           </div>
           <div className="la-qabar">
+            {chatScroll.awayFromLatest ? (
+              <div className="la-chatjump">
+                <button type="button" onClick={chatScroll.scrollToLatest} aria-label="Jump to latest message" title="Jump to latest message">
+                  <Icon name="arrow-down" size={13} /> Latest message
+                </button>
+              </div>
+            ) : null}
             <div className="la-qascope" aria-label="Question scope">
               <button
                 type="button"
