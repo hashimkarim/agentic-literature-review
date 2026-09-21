@@ -8,6 +8,8 @@ state, tags, collections, notes, questions, and generated research artifacts.
 
 ## Planning Documents
 
+- [Authentication plan](AUTH_PLAN.md): Better Auth/AuthYard ownership, SDK pairing
+  contracts, compatibility gates and application migration acceptance checks.
 - [Competitive research](COMPETITIVE_RESEARCH.md): 43 products and adjacent tools,
   documented features, first-party sources, aliases and coverage limits.
 - [Feature backlog](FEATURE_BACKLOG.md): deduplicated requirements with stable
