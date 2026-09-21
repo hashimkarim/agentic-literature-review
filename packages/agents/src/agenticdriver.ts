@@ -1,9 +1,10 @@
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import fs from "node:fs";
 import path from "node:path";
 import { AgenticClient } from "agenticdriver/client";
-import type { ProviderInfo } from "agenticdriver";
+import { ContextAttachmentSchema, ContextManifestSchema, type ContextManifest, type ProviderInfo } from "agenticdriver";
 import {
   AgentProviderSchema,
   type AgentProvider,
@@ -101,6 +102,53 @@ export async function agenticDriverCatalogFromEnvironment(
   return new AgenticDriverCatalog(client, await client.providers(), settings);
 }
 
+function snapshotContext(input: ProviderRunStartInput) {
+  const selected = input.selectedContext;
+  if (!selected) return { attachments: undefined, manifests: [] as ContextManifest[] };
+  if (selected.sources.length === 0 || selected.sources.length > 16)
+    throw new Error("AgenticDriver context requires 1–16 supplied papers. Select a smaller source scope.");
+  const attachments = selected.sources.map((source) => {
+    const attachment = ContextAttachmentSchema.parse({
+      type: "text",
+      mediaType: "text/markdown",
+      source: {
+        id: source.id,
+        revision: source.revision,
+        title: source.title.slice(0, 256),
+        location: { documentId: source.id },
+      },
+      text: source.text,
+    });
+    if (attachment.type !== "text") throw new Error("Expected a Markdown snapshot.");
+    return attachment;
+  });
+  const manifests: ContextManifest[] = attachments.map(({ source, text, mediaType }) => ({
+    ...source,
+    mediaType,
+    bytes: Buffer.byteLength(text, "utf8"),
+    sha256: createHash("sha256").update(text, "utf8").digest("hex"),
+    origin: "inline",
+  }));
+  if (new Set(manifests.map((source) => source.id)).size !== manifests.length)
+    throw new Error("Selected context must contain each paper exactly once.");
+  if (manifests.some((source) => source.bytes > 256 * 1024) ||
+      manifests.reduce((sum, source) => sum + source.bytes, 0) > 512 * 1024)
+    throw new Error("Selected Markdown exceeds AgenticDriver's inline byte budget. Select a smaller source scope.");
+  return { attachments, manifests };
+}
+
+function matchesContextManifest(actual: unknown, expected: ContextManifest[]): boolean {
+  if (actual === undefined) return expected.length === 0;
+  if (!Array.isArray(actual) || actual.length !== expected.length) return false;
+  const remaining = new Map(expected.map((source) => [source.id, source]));
+  for (const value of actual) {
+    const parsed = ContextManifestSchema.safeParse(value);
+    if (!parsed.success || !isDeepStrictEqual(parsed.data, remaining.get(parsed.data.id))) return false;
+    remaining.delete(parsed.data.id);
+  }
+  return remaining.size === 0;
+}
+
 export class AgenticDriverAdapter implements ProviderAdapter {
   private readonly sessions = new Map<
     string,
@@ -123,6 +171,10 @@ export class AgenticDriverAdapter implements ProviderAdapter {
       throw new Error(
         "Enable this AgenticDriver provider before running a workflow.",
       );
+    // Copy source metadata and text now, before a caller can mutate the selection.
+    const { attachments, manifests } = snapshotContext(input);
+    const prompt = input.selectedContext?.prompt ?? input.prompt;
+    const isContextCurrent = input.selectedContext?.isCurrent;
     const controller = new AbortController(),
       events = new EventEmitter(),
       captured: NormalizedRunEvent[] = [];
@@ -170,15 +222,23 @@ export class AgenticDriverAdapter implements ProviderAdapter {
         let transcript = "",
           failureClass: ProviderFailureClass | null = null;
         const artifacts: string[] = [];
+        const checkCurrentContext = () => {
+          if (isContextCurrent && !isContextCurrent()) {
+            failureClass = "source_changed";
+            throw new Error("Selected paper access or Markdown changed during the run.");
+          }
+        };
         try {
           controller.signal.throwIfAborted();
+          checkCurrentContext();
           session.status = "running";
           emit("run.started", "AgenticDriver session started", { sessionId });
           for await (const event of this.client.stream(
             {
               provider: this.instanceId,
               model,
-              input: input.prompt,
+              input: prompt,
+              ...(attachments ? { attachments } : {}),
               instructions:
                 "Use only supplied research context. Return the proposed artifact as your final response; the application saves it locally. Cite supplied paper and passage identifiers. Do not invent citations or claim to have read local files.",
               metadata: { app: "literature-review", runId: input.runId },
@@ -196,6 +256,11 @@ export class AgenticDriverAdapter implements ProviderAdapter {
             }
             if (event.type === "run.completed") {
               controller.signal.throwIfAborted();
+              if (!matchesContextManifest(event.result.sources, manifests)) {
+                failureClass = "source_mismatch";
+                throw new Error("AgenticDriver returned a different source manifest.");
+              }
+              checkCurrentContext();
               transcript = event.result.text;
               if (event.result.finishReason === "length")
                 throw new Error("The provider reached its output limit.");
@@ -223,6 +288,7 @@ export class AgenticDriverAdapter implements ProviderAdapter {
               emit("run.completed", "AgenticDriver run completed", {
                 sessionId,
                 usage: event.result.usage,
+                ...(attachments ? { sources: manifests } : {}),
               });
             }
           }

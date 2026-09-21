@@ -1,10 +1,13 @@
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentHarness, AgentProviderCatalog, AgentProviderSettingsStore, type ProviderRunResult, type ProviderRunStartInput } from "@litagent/agents";
+import { AgenticDriverAdapter } from "@litagent/agents/agenticdriver";
+import { AgentProviderSchema } from "@litagent/contracts";
 import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
 import { WorkflowEngine } from "./index";
@@ -72,6 +75,136 @@ function reviewReply(input: ProviderRunStartInput, supported = true, reason = "C
 function contextIds(input: ProviderRunStartInput): string[] {
   return [...new Set([...input.prompt.matchAll(/\[\[passage:([^\]\s]+)\]\]/g)].map((match) => match[1]!))];
 }
+
+type DriverFixtureClient = ConstructorParameters<typeof AgenticDriverAdapter>[2];
+type DriverFixtureRequest = Parameters<DriverFixtureClient["stream"]>[0];
+
+// The real adapter handles this typed client fixture. HTTP and SDK runtime
+// round-trips are covered in the agents package that owns the SDK dependency.
+function driverAdapterFixture(reply?: (request: DriverFixtureRequest, base: ReturnType<typeof fixture>) => { text: string }) {
+  const base = fixture();
+  base.start.mockRestore();
+  const client: DriverFixtureClient = {
+    async *stream(request) {
+      const reviewing = request.input.startsWith("LitAgent Q&A source review");
+      const result = reply?.(request, base) ?? { text: JSON.stringify(reviewing
+        ? { supported: true, reason: "The selected passage states 0.92.", claims: [{ index: 0, supported: true, reason: "The value matches." }] }
+        : { status: "answered", claims: [{ text: "Accuracy was 0.92.", kind: "reported", passageIds: [base.repo.readPassages(base.paper.id)[0]!.id] }] }) };
+      const sources = (request.attachments ?? []).map((attachment) => {
+        if (attachment.type !== "text") throw new Error("Expected an inline paper snapshot.");
+        return {
+          ...attachment.source, mediaType: attachment.mediaType, origin: "inline" as const,
+          sha256: createHash("sha256").update(attachment.text).digest("hex"), bytes: Buffer.byteLength(attachment.text),
+        };
+      });
+      yield { type: "run.completed", runId: "driver-fixture", sequence: 1, timestamp: new Date().toISOString(),
+        result: { ...result, runId: "driver-fixture", provider: request.provider, model: request.model,
+          usage: {}, steps: 1, finishReason: "stop", sources } };
+    },
+  };
+  const adapter = new AgenticDriverAdapter(AgentProviderSchema.parse({
+    id: "qa-test", label: "SDK adapter fixture", command: "", installed: true, enabled: true,
+    connected: true, authStatus: "authenticated", defaultModel: "demo",
+  }), "mock", client);
+  vi.spyOn(base.catalog, "createAdapter").mockReturnValue(adapter);
+  const originalStream = client.stream.bind(client);
+  const stream = vi.spyOn(client, "stream");
+  return { ...base, client, stream, originalStream, request: { ...base.request, model: "demo" } };
+}
+
+describe("Q&A selected context through the optional SDK adapter", () => {
+  it("uses the same authorized revision for draft and source review and retains navigable citations", async () => {
+    const { engine, request, repo, paper, stream } = driverAdapterFixture();
+    const other = repo.importPaper({ metadata: { title: "Unselected study" } }).paper;
+    repo.writeMarkdown(other.id, "# Results\n\nThis unselected paper reports accuracy of 0.99.");
+    const result = await engine.answerQuestionInThread(request);
+    expect(result.response.answer).toBe("Accuracy was 0.92. [1]");
+    expect(result.thread.messages).toHaveLength(2);
+    expect(stream).toHaveBeenCalledTimes(2);
+    const first = stream.mock.calls[0]![0], review = stream.mock.calls[1]![0];
+    const markdown = repo.readMarkdown(paper.id)!;
+    const revision = createHash("sha256").update(markdown).digest("hex");
+    expect(first.attachments).toHaveLength(1);
+    expect(first.attachments).toEqual(review.attachments);
+    expect(first.attachments?.[0]).toMatchObject({
+      type: "text", mediaType: "text/markdown",
+      source: { id: paper.id, revision, location: { documentId: paper.id } },
+    });
+    expect(JSON.stringify(first.attachments)).toContain(repo.readPassages(paper.id)[0]!.id);
+    expect(JSON.stringify(first)).not.toContain(other.id);
+    expect(first.input).not.toContain(markdown);
+    expect(review.input).toContain("source attachments");
+    const evidence = result.response.evidence[0]!;
+    expect(evidence.markdownHash).toBe(revision);
+    expect(evidence.paperId).toBe(paper.id);
+    expect(evidence.passageId).toBe(repo.readPassages(paper.id)[0]!.id);
+    expect(evidence.quote).toBe(repo.readPassages(paper.id)[0]!.quote);
+    expect(engine.listRuns()[0]?.status).toBe("completed");
+  });
+
+  it("rejects an altered SDK completion manifest without saving an answer or draft artifact", async () => {
+    const { engine, request, repo, stream, client, originalStream } = driverAdapterFixture();
+    stream.mockRestore();
+    vi.spyOn(client, "stream").mockImplementation(async function* (input, options) {
+      for await (const event of originalStream(input, options)) {
+        if (event.type === "run.completed") yield { ...event, result: { ...event.result, sources: [] } };
+        else yield event;
+      }
+    });
+    await expect(engine.answerQuestionInThread(request)).rejects.toThrow("source_mismatch");
+    expect(engine.readQaThread(request).messages).toEqual([]);
+    const run = engine.listRuns()[0]!;
+    expect(run.status).toBe("failed");
+    expect(fs.existsSync(repo.resolve(`.litagent/cache/provider-runs/${run.id}/qa-draft.json`))).toBe(false);
+  });
+
+  it.each(["draft", "review"])("rejects project unlinking during %s even when collection membership and Markdown remain", async (stage) => {
+    let projectId = "";
+    let calls = 0;
+    const { engine, request, repo, paper } = driverAdapterFixture((providerRequest, base) => {
+      calls += 1;
+      const reviewing = providerRequest.input.startsWith("LitAgent Q&A source review");
+      if (reviewing === (stage === "review")) base.repo.writePaperLinks(projectId, []);
+      return { text: JSON.stringify(reviewing
+        ? { supported: true, reason: "Supported.", claims: [{ index: 0, supported: true, reason: "Supported." }] }
+        : { status: "answered", claims: [{ text: "Accuracy was 0.92.", kind: "reported", passageIds: [base.repo.readPassages(base.paper.id)[0]!.id] }] }) };
+    });
+    const project = repo.createProject({ name: "Selected project" });
+    projectId = project.id;
+    const collection = repo.createCollection({ projectId, name: "Selected collection" });
+    repo.linkPaperToProject(paper.id, { projectId, subcollectionIds: [collection.id] });
+    const selectedRequest = { ...request, projectId, collectionId: collection.id };
+    const markdown = repo.readMarkdown(paper.id);
+    await expect(engine.answerQuestionInThread(selectedRequest)).rejects.toThrow("left the selected scope");
+    expect(calls).toBe(stage === "draft" ? 1 : 2);
+    expect(repo.readMarkdown(paper.id)).toBe(markdown);
+    expect(repo.readCollection(projectId, collection.id)?.paperIds).toContain(paper.id);
+    expect(engine.readQaThread(selectedRequest).messages).toEqual([]);
+    const run = engine.listRuns()[0]!;
+    expect(run.status).toBe("failed");
+    const output = stage === "draft" ? "qa-draft.json" : "qa-review-1.json";
+    expect(fs.existsSync(repo.resolve(`.litagent/cache/provider-runs/${run.id}/${output}`))).toBe(false);
+  });
+
+  it("does not widen a project selection if new papers are linked while a draft is pending", async () => {
+    let projectId = "", otherPaperId = "";
+    const { engine, request, repo, paper, stream } = driverAdapterFixture((_request, base) => {
+      base.repo.linkPaperToProject(otherPaperId, { projectId });
+      return { text: JSON.stringify({ status: "not_found", claims: [] }) };
+    });
+    const project = repo.createProject({ name: "Changing project" });
+    projectId = project.id;
+    repo.linkPaperToProject(paper.id, { projectId });
+    const other = repo.importPaper({ metadata: { title: "Newly linked study" } }).paper;
+    otherPaperId = other.id;
+    repo.writeMarkdown(other.id, "# Findings\n\nNewly selected source content.");
+    const selectedRequest = { ...request, paperId: null, projectId };
+    await expect(engine.answerQuestionInThread(selectedRequest)).rejects.toThrow("selected scope");
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(stream.mock.calls[0]![0].attachments)).not.toContain(other.id);
+    expect(engine.readQaThread(selectedRequest).messages).toEqual([]);
+  });
+});
 
 describe("Q&A failure boundaries", () => {
   it.each(["local-heuristic", "missing-provider"])("does not answer with heuristics when %s is selected", async (providerId) => {
@@ -295,7 +428,7 @@ describe("Q&A source coverage", () => {
   });
 
   it("records missing sources and does not claim to have searched them", async () => {
-    const { engine, request, repo, paper } = fixture((input) => input.prompt.startsWith("LitAgent Q&A source review")
+    const { engine, request, repo, paper, start } = fixture((input) => input.prompt.startsWith("LitAgent Q&A source review")
       ? reviewReply(input) : draftReply([]));
     const missing = repo.importPaper({ metadata: { title: "Unconverted study" } }).paper;
     const response = await engine.answerQuestionWithProvider({ ...request, paperId: null, paperIds: [paper.id, missing.id] });
@@ -306,6 +439,22 @@ describe("Q&A source coverage", () => {
     expect(response.diagnostics.sources[0]?.markdownHash).toMatch(/^[a-f0-9]{64}$/);
     expect(response.answer).toContain("not a conclusion about all selected sources");
     expect(response.diagnostics.message).toContain("Unconverted study (missing)");
+    expect(start.mock.calls[0]?.[0].selectedContext?.sources.map((source) => source.id)).toEqual([paper.id]);
+  });
+
+  it("rejects a deleted collection even if its project links retain the collection ID", async () => {
+    const { engine, request, repo, paper, start } = fixture((input) => {
+      fs.rmSync(repo.resolve(`projects/${project.id}/collections/${collection.id}.json`));
+      return draftReply([{ text: "Accuracy was 0.92.", kind: "reported", passageIds: contextIds(input) }]);
+    });
+    const project = repo.createProject({ name: "Research project" });
+    const collection = repo.createCollection({ projectId: project.id, name: "Selected collection" });
+    repo.linkPaperToProject(paper.id, { projectId: project.id, subcollectionIds: [collection.id] });
+    const selectedRequest = { ...request, projectId: project.id, collectionId: collection.id };
+    await expect(engine.answerQuestionInThread(selectedRequest)).rejects.toThrow("selected scope");
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(repo.listPaperLinks(project.id)[0]?.subcollectionIds).toContain(collection.id);
+    expect(engine.readQaThread(selectedRequest).messages).toEqual([]);
   });
 
   it("does not cite stale passage text after an external Markdown edit", async () => {

@@ -25,6 +25,8 @@ export type ProviderFailureClass =
   | "cancelled"
   | "spawn_error"
   | "process_exit"
+  | "source_mismatch"
+  | "source_changed"
   | "unknown";
 
 export interface ProviderRunResult {
@@ -54,6 +56,22 @@ export interface ProviderRuntimeSession {
   finished: Promise<ProviderRunResult>;
 }
 
+/** An app-authorized snapshot; revision identifies canonical Markdown, text is the sent excerpt. */
+export interface ProviderContextSource {
+  id: string;
+  revision: string;
+  title: string;
+  text: string;
+}
+
+export interface ProviderSelectedContext {
+  /** Prompt for adapters that send the source snapshots separately. */
+  prompt: string;
+  sources: readonly ProviderContextSource[];
+  /** Recheck app access, scope and canonical revisions before dispatch and accepting output. */
+  isCurrent?: () => boolean;
+}
+
 export interface ProviderRunStartInput {
   cwd: string;
   prompt: string;
@@ -64,6 +82,7 @@ export interface ProviderRunStartInput {
   outputPath?: string;
   env?: NodeJS.ProcessEnv;
   onEvent?: (event: NormalizedRunEvent) => void;
+  selectedContext?: ProviderSelectedContext;
 }
 
 export interface ProviderAdapter {
