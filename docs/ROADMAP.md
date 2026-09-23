@@ -1,6 +1,6 @@
 # LitAgent Roadmap And Progress
 
-Updated: 2026-09-21
+Updated: 2026-09-23
 
 LitAgent is a local-first, project-centered literature review workspace. Papers
 are canonical global records; projects reference them with their own screening
@@ -8,6 +8,8 @@ state, tags, collections, notes, questions, and generated research artifacts.
 
 ## Planning Documents
 
+- [Writing Mode](WRITING_MODE.md): project TeX editor, attached code/results and
+  literature, storyline/drafting, citation finder and audience controls.
 - [Authentication plan](AUTH_PLAN.md): Better Auth/AuthYard ownership, SDK pairing
   contracts, compatibility gates and application migration acceptance checks.
 - [Competitive research](COMPETITIVE_RESEARCH.md): 43 products and adjacent tools,
@@ -49,6 +51,7 @@ using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENT
 | Discovery and screening | Partial | Local search, project relevance decisions and proposal review | Online discovery adapters, search histories, staged screening and auditable PRISMA counts |
 | Structured extraction | Working MVP | Accepted findings/method/dataset/result/limitation/reproducibility records | Configurable extraction schemas, editable literature sheets and per-cell provenance UI |
 | Notes | Backend foundation | Markdown note CRUD, annotation links and synthesis-to-note flow | General editor/browser, backlinks, evidence ledger and note search UI |
+| Writing Mode | Planned | Existing accepted records and synthesis-to-note are reusable foundations, not a manuscript editor | Multi-file TeX/preview, attached code/results, outline/storyline, reviewed drafting, citation finder and audience slider |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
 | Git and LFS | Foundation | Repository bootstrap, LFS policy and status display | Commit/sync UI, conflict handling and recovery guidance |
@@ -256,20 +259,40 @@ Exit: round-trip a project bibliography and research artifacts, restore a repo
 with rebuilt indexes, and intentionally commit/sync changes without silently
 publishing local PDFs, credentials or generated caches.
 
-### 6. Grounded Writing And Concept Maps
+### 6. Writing Mode And Concept Maps
 
-Priority: P1 core, P2 exploratory views. Status: prototype/foundation.
-Backlog: WRITE-03/04, MAP-01/02/03; then MAP-04 through MAP-07 and WRITE-05/07/09.
+Priority: P1 writing/core graph, P2 advanced authoring/exploration.
+Status: Writing Mode planned; note/synthesis and graph foundations exist.
+Backlog: WRITE-03/04/05, WRITE-10 through WRITE-15, MAP-01/02/03;
+then WRITE-06/07/09/16/17 and MAP-04 through MAP-07.
 
-- Add citation-needed suggestions that verify support before inserting a citekey.
+Writing is a first-class project workspace, specified in [Writing Mode](WRITING_MODE.md).
+Start its W1 editor/preview foundation after gate 2, alongside gate 3; it does
+not wait for online discovery, Zotero sync or concept-map completion. W2-W4
+reuse gate 1 source guards and the notes/evidence foundation.
+
+- Add a local multi-file TeX editor, restricted packaged compiler, PDF preview,
+  citation/label completion, recovery and source-to-preview navigation.
+- Attach selected read-only code, experiment/result records and literature with
+  exact revisions, context permissions and meaningful source types.
+- Build outline/storyline and paragraph/section commands with reviewable diffs.
+  Offer a layperson-to-doctoral/specialist slider with independent concision,
+  terminology and mathematical detail; preserve facts, citations and uncertainty.
+- Find citation support/counterevidence for individual claims, insert stable
+  citekeys only after review, and leave unsupported claims explicitly unresolved.
+- Add grammar/style suggestions and revision-safe patch acceptance before
+  advanced result-to-prose, consistency checks and reviewer response workflows.
 - Build actual graph edges from citations, project membership, accepted records
   and research questions; distinguish citation from similarity and inference.
 - Add filters, paper/evidence selection, accessible table views and saved layouts.
 - Later add foundational/follow-on/bridge views, timelines and map-to-outline.
 
-Exit: every displayed relationship has a defined meaning and source; selecting
-a graph node opens the right paper/claim, and a drafted claim links to support or
-remains visibly unsupported.
+Writing exit: W1-W4 complete; edit/build/reopen a manuscript, attach approved
+work, generate and review an outline/paragraph at a chosen audience level, trace
+each claim to support or an explicit gap, and export a portable TeX project/PDF.
+Graph exit: every displayed relationship has a defined meaning and source;
+selecting a node opens the right paper/claim. Neither exit certifies agent quality
+without its separate representative/live evaluations.
 
 ### 7. Reliable Automation And Living Research
 
@@ -357,6 +380,9 @@ The local MVP is complete when a clean desktop install can:
 10. Run a reviewed automatic import/conversion recipe with selected providers,
     visible failures and restart-safe execution; no page reload is required to
     see changed Markdown, jobs or evidence.
+11. Use core Writing Mode (W1-W4): edit/compile/recover a TeX manuscript, attach
+    code/results/literature, review a source-grounded outline and draft at a
+    chosen audience level, insert supported citations and export sources/PDF.
 
 Advanced visual automation, proprietary data integrations, vector retrieval,
 meta-analysis, mobile, cloud/team features and multimedia outputs are not MVP
@@ -378,6 +404,7 @@ determine release readiness.
 
 | Date | Change | Verification |
 | --- | --- | --- |
+| 2026-09-23 | Added project Writing Mode specification, W1-W5 delivery slices and WRITE-10 through WRITE-17; expanded outline/citation/revision requirements and core MVP gate | Planning only; documentation consistency checks. No editor, compiler or agent workflow implemented by this change. |
 | 2026-07-10 to 2026-07-11 | Accepted research records, cited comparison review and synthesis-to-note workflows implemented | Existing unit/integration coverage and prior feature commits |
 | 2026-09-20 | Shared AgenticDriver SDK integration added alongside existing agent harness | Adapter tests; see [integration setup](agenticdriver.md) |
 | 2026-09-21 | AD-042: migrated active app to exact registry `@agenticdriver/sdk@0.1.0`, scoped imports and Bun lockfile; removed sibling SDK dependency | Archive SHA-256/SHA-512 verified; typecheck, 117 tests, build and both desktop chat checks pass; independent frozen-lockfile install passes typecheck/tests/build. No real provider calls; AD-035 branch unchanged. See [provenance](agenticdriver.md#scoped-package-migration). |
