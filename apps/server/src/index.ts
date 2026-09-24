@@ -32,6 +32,7 @@ import { agenticDriverCatalogFromEnvironment } from "@litagent/agents/agenticdri
 import { SearchIndex } from "@litagent/indexer";
 import { CitationSourceChangedError, DEFAULT_REPO_ROOT, LitAgentRepository, ManuscriptStore } from "@litagent/library";
 import { manuscriptRoutes } from "./manuscript-routes";
+import { WritingContextService } from "@litagent/workflows";
 import { TexBuildService } from "@litagent/workflows";
 import { WorkflowEngine, WorkflowStartRequestSchema, QaThreadConflictError, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema, WritingCandidateService, writingTargetValidator } from "@litagent/workflows";
 
@@ -83,8 +84,9 @@ app.use(express.json({ limit: "10mb" }));
 const manuscripts = new ManuscriptStore(repo.root);
 const writingCandidates = new WritingCandidateService(manuscripts, new AgentHarness({ catalog: providers }), writingTargetValidator(providers, () => providerSettings.read()));
 const texBuilds = new TexBuildService(manuscripts);
-app.use("/api/manuscripts", manuscriptRoutes(manuscripts, writingCandidates, texBuilds));
-app.use("/api/projects/:id/manuscripts", manuscriptRoutes(manuscripts, writingCandidates, texBuilds));
+const writingContext = new WritingContextService(manuscripts, repo);
+app.use("/api/manuscripts", manuscriptRoutes(manuscripts, writingCandidates, texBuilds, writingContext));
+app.use("/api/projects/:id/manuscripts", manuscriptRoutes(manuscripts, writingCandidates, texBuilds, writingContext));
 
 function asyncHandler(
   handler: (req: Request, res: Response, next: NextFunction) => Promise<void> | void

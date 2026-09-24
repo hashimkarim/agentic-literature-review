@@ -8,10 +8,33 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { zipSync, strToU8, unzipSync } from "fflate";
 import { LitAgentRepository, ManuscriptStore } from "@litagent/library";
-import { WritingCandidateService, TexBuildService } from "@litagent/workflows";
+import { WritingCandidateService, TexBuildService, WritingContextService } from "@litagent/workflows";
 import type { WritingCandidateBatch } from "@litagent/contracts";
 import { ManuscriptImportPreviewSchema, type TexRuntimeStatus } from "@litagent/contracts";
 import { manuscriptRoutes } from "./manuscript-routes";
+
+it("keeps writing attachment selection and exact context app-owned over HTTP", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-context-http-"));
+  const repo = new LitAgentRepository(root); repo.init();
+  const store = new ManuscriptStore(root), document = store.create({ name: "Context test" });
+  const context = new WritingContextService(store, repo);
+  const app = express(); app.use(express.json()); app.use("/api/manuscripts", manuscriptRoutes(store, undefined, undefined, context));
+  const server = http.createServer(app); await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts/${document.id}`;
+  const post = (suffix: string, body: unknown) => fetch(`${url}/${suffix}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    expect((await post("sources", { path: "secrets.json", kind: "notes", content: "secret" })).status).toBe(400);
+    const sourceResponse = await post("sources", { path: "metrics.csv", kind: "results", content: "accuracy\n0.72" });
+    expect(sourceResponse.status).toBe(201);
+    const source = await sourceResponse.json() as { id: string };
+    expect(await (await fetch(`${url}/sources`)).json()).toMatchObject({ attachments: [{ id: source.id, kind: "results" }] });
+    const preview = await post("context", { attachmentIds: [source.id] });
+    expect(await preview.json()).toMatchObject({ sources: [{ sourceId: source.id, quote: "accuracy\n0.72" }], coverage: [{ status: "complete" }] });
+    expect((await fetch(`${url}/sources/${source.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await post("context", { attachmentIds: [source.id] })).status).toBe(409);
+    expect(store.read(document.id)).toEqual(document);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 it("reports the actual compiler capability when previewing imported requirements", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-import-runtime-http-"));

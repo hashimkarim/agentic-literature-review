@@ -4050,3 +4050,4 @@ export class WorkflowEngine {
 export { WritingCandidateService, writingCandidatePrompt, writingTargetValidator } from "./writing-candidates";
 export { TexBuildService, texDiagnostics } from "./tex-builds";
 export { TectonicCompiler, type TexCompiler } from "./tex-runtime";
+export { WritingContextService } from "./writing-context";

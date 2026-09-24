@@ -3,9 +3,9 @@ import multer from "multer";
 import { zip } from "fflate";
 import { z } from "zod";
 import { ManuscriptError, ManuscriptStore, inspectManuscriptZip, manuscriptLimits, ManuscriptTreeError } from "@litagent/library";
-import type { WritingCandidateService, TexBuildService } from "@litagent/workflows";
+import type { WritingCandidateService, TexBuildService, WritingContextService } from "@litagent/workflows";
 
-export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCandidateService, builds?: TexBuildService): Router {
+export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCandidateService, builds?: TexBuildService, context?: WritingContextService): Router {
   const router = Router({ mergeParams: true });
   const param = (params: Record<string, unknown>, name: string) => z.string().parse(params[name]);
   const project = (params: Record<string, unknown>) => z.string().optional().parse(params.id);
@@ -73,6 +73,12 @@ export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCan
   router.get("/:manuscriptId/history/:versionId", (req, res) => res.json(store.historicalFile(param(req.params, "manuscriptId"), z.string().parse(req.query.path), param(req.params, "versionId"))));
   router.post("/:manuscriptId/checkpoints", (req, res) => res.status(201).json(store.checkpoint(param(req.params, "manuscriptId"), req.body)));
   router.post("/:manuscriptId/restore", (req, res) => res.json(store.restore(param(req.params, "manuscriptId"), req.body)));
+  if (context) {
+    router.get("/:manuscriptId/sources", (req, res) => res.json(context.catalog(param(req.params, "manuscriptId"))));
+    router.post("/:manuscriptId/sources", (req, res) => res.status(201).json(store.attachWritingSource(param(req.params, "manuscriptId"), req.body)));
+    router.delete("/:manuscriptId/sources/:sourceId", (req, res) => { store.removeWritingSource(param(req.params, "manuscriptId"), param(req.params, "sourceId")); res.json({ ok: true }); });
+    router.post("/:manuscriptId/context", (req, res) => res.json(context.preview(param(req.params, "manuscriptId"), req.body)));
+  }
   if (builds) {
     router.get("/:manuscriptId/builds", (req, res) => res.json(builds.get(param(req.params, "manuscriptId"))));
     router.post("/:manuscriptId/builds", (req, res) => res.status(202).json(builds.start(param(req.params, "manuscriptId"), req.body)));

@@ -9,6 +9,7 @@ import {
   ManuscriptProjectIdSchema, UpdateManuscriptProjectsRequestSchema,
   ManuscriptNodePathSchema, ManuscriptAssetPathSchema, ManuscriptTreeRequestSchema, ImportManuscriptRequestSchema,
   WritingCandidateBatchSchema, type WritingCandidateBatch, type WritingCandidateSummary,
+  WritingAttachmentSchema, WritingAttachmentInputSchema, type WritingAttachment,
   type Manuscript, type ManuscriptDocument, type ManuscriptFile,
   type WriteManuscriptFileRequest, type ManuscriptHistoryEntry
 } from "@litagent/contracts";
@@ -141,6 +142,42 @@ export class ManuscriptStore {
   }
 
   describe(manuscriptId: string): Manuscript { return this.metadata(manuscriptId); }
+
+  writingAttachments(manuscriptId: string): WritingAttachment[] {
+    this.metadata(manuscriptId);
+    const directory = this.safePath(`${this.directory(manuscriptId)}/.sources`);
+    if (!fs.existsSync(directory)) return [];
+    return fs.readdirSync(directory).filter((name) => /^source_[a-f0-9]{24}\.json$/.test(name)).map((name) => {
+      const item = WritingAttachmentSchema.parse(JSON.parse(fs.readFileSync(this.safePath(`${this.directory(manuscriptId)}/.sources/${name}`), "utf8")));
+      if (`${item.id}.json` !== name || revision(item.content) !== item.revision) throw new ManuscriptError(409, "source_changed", "An attached source has changed. Remove and attach it again.");
+      return item;
+    }).sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  attachWritingSource(manuscriptId: string, input: unknown): WritingAttachment {
+    const parsed = WritingAttachmentInputSchema.parse(input);
+    const name = parsed.path.toLowerCase();
+    if (!/\.(ts|tsx|js|jsx|py|rs|go|c|h|cpp|java|r|jl|sql|md|txt|csv|tsv|json|yaml|yml|toml|tex|bib)$/.test(name) ||
+      /(?:^|\/)(?:node_modules|vendor|dist|build|credentials?|secrets?)(?:\/|\.|$)/.test(name) || /(?:password|token|private[-_]?key|api[-_]?key)/.test(name)) {
+      throw new ManuscriptError(400, "unsafe_source", "Choose a text, code or result file without credentials, hidden files or generated dependencies.");
+    }
+    if (/\u0000|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b|(?:api[_-]?key|access[_-]?token|password|secret)\s*["']?\s*[:=]\s*["'][^"'\s]{8,}["']/i.test(parsed.content)) {
+      throw new ManuscriptError(400, "sensitive_source", "This file may contain credentials or binary data. Redact it before attaching.");
+    }
+    const items = this.writingAttachments(manuscriptId);
+    const id = `source_${revision(JSON.stringify(parsed)).slice(0, 24)}`;
+    const existing = items.find((item) => item.id === id);
+    if (existing) return existing;
+    if (items.length >= 100 || items.reduce((sum, item) => sum + Buffer.byteLength(item.content), Buffer.byteLength(parsed.content)) > 8_000_000) throw new ManuscriptError(413, "source_limit", "Attached sources exceed 100 files or 8 MB.");
+    const item = WritingAttachmentSchema.parse({ ...parsed, id, revision: revision(parsed.content), createdAt: new Date().toISOString() });
+    atomicWrite(this.safePath(`${this.directory(manuscriptId)}/.sources/${id}.json`, true), `${JSON.stringify(item, null, 2)}\n`);
+    return item;
+  }
+
+  removeWritingSource(manuscriptId: string, sourceId: string): void {
+    this.metadata(manuscriptId); WritingAttachmentSchema.shape.id.parse(sourceId);
+    fs.rmSync(this.safePath(`${this.directory(manuscriptId)}/.sources/${sourceId}.json`), { force: true });
+  }
 
   create(input: z.input<typeof CreateManuscriptRequestSchema>): ManuscriptDocument {
     const { name, projectIds } = CreateManuscriptRequestSchema.parse(input);
