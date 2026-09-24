@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { ManuscriptError, ManuscriptStore } from "@litagent/library";
-import type { WritingCandidateService } from "@litagent/workflows";
+import type { WritingCandidateService, TexBuildService } from "@litagent/workflows";
 
-export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCandidateService): Router {
+export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCandidateService, builds?: TexBuildService): Router {
   const router = Router({ mergeParams: true });
   const param = (params: Record<string, unknown>, name: string) => z.string().parse(params[name]);
   const project = (params: Record<string, unknown>) => z.string().optional().parse(params.id);
@@ -28,6 +28,15 @@ export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCan
   router.get("/:manuscriptId/history/:versionId", (req, res) => res.json(store.historicalFile(param(req.params, "manuscriptId"), z.string().parse(req.query.path), param(req.params, "versionId"))));
   router.post("/:manuscriptId/checkpoints", (req, res) => res.status(201).json(store.checkpoint(param(req.params, "manuscriptId"), req.body)));
   router.post("/:manuscriptId/restore", (req, res) => res.json(store.restore(param(req.params, "manuscriptId"), req.body)));
+  if (builds) {
+    router.get("/:manuscriptId/builds", (req, res) => res.json(builds.get(param(req.params, "manuscriptId"))));
+    router.post("/:manuscriptId/builds", (req, res) => res.status(202).json(builds.start(param(req.params, "manuscriptId"), req.body)));
+    router.post("/:manuscriptId/builds/:buildId/cancel", (req, res) => res.json(builds.cancel(param(req.params, "manuscriptId"), param(req.params, "buildId"))));
+    router.get("/:manuscriptId/builds/:buildId/pdf", (req, res) => {
+      const pdf = builds.pdf(param(req.params, "manuscriptId"), param(req.params, "buildId"));
+      res.set({ "Content-Type": "application/pdf", "Cache-Control": "private, no-store", "Content-Disposition": "inline; filename=manuscript.pdf", "X-Content-Type-Options": "nosniff" }).send(pdf);
+    });
+  }
   if (candidates) {
     router.get("/:manuscriptId/candidates", (req, res) => res.json(candidates.list(param(req.params, "manuscriptId"))));
     router.post("/:manuscriptId/candidates", (req, res) => res.status(202).json(candidates.start(param(req.params, "manuscriptId"), req.body)));

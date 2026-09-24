@@ -26,5 +26,8 @@ resources/converters/**
 !resources/converters/
 !resources/converters/README.md
 
+# Prepared TeX engine and offline support files.
+resources/tex/
+
 # OS/editor
 .DS_Store

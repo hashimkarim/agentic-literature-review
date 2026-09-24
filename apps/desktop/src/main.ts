@@ -21,7 +21,8 @@ function startBackend() {
     stdio: "inherit",
     env: {
       ...process.env,
-      LITAGENT_CONVERTER_DIR: converterDir()
+      LITAGENT_CONVERTER_DIR: converterDir(),
+      LITAGENT_TEX_RUNTIME_DIR: process.env.LITAGENT_TEX_RUNTIME_DIR ?? (app.isPackaged ? path.join(process.resourcesPath, "tex") : path.join(repoRoot, "resources/tex"))
     }
   });
 }

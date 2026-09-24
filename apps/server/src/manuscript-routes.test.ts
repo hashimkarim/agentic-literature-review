@@ -7,9 +7,37 @@ import { expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { LitAgentRepository, ManuscriptStore } from "@litagent/library";
-import { WritingCandidateService } from "@litagent/workflows";
+import { WritingCandidateService, TexBuildService } from "@litagent/workflows";
 import type { WritingCandidateBatch } from "@litagent/contracts";
 import { manuscriptRoutes } from "./manuscript-routes";
+
+it("serves revision-checked builds, diagnostics, and last-good PDFs over HTTP", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-tex-http-"));
+  const store = new ManuscriptStore(root);
+  const document = store.create({ name: "HTTP compilation" });
+  let fail = false;
+  const service = new TexBuildService(store, { status: () => ({ available: true, version: "fixture", message: "synthetic" }),
+    compile: async () => ({ log: fail ? "error: main.tex:2: Invalid command" : "", pdf: fail ? null : Buffer.from("%PDF-1.7\nfixture") }) });
+  const app = express(); app.use(express.json()); app.use("/api/manuscripts", manuscriptRoutes(store, undefined, service));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts/${document.id}/builds`;
+  const post = (body: unknown) => fetch(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    expect((await post({})).status).toBe(400);
+    const input = { requestId: randomUUID(), revisions: Object.fromEntries(document.files.map((file) => [file.path, file.revision])) };
+    expect((await post({ ...input, revisions: { "main.tex": "0".repeat(64) } })).status).toBe(409);
+    expect((await post(input)).status).toBe(202); await service.idle();
+    const pdf = await fetch(`${base}/${input.requestId}/pdf`);
+    expect(pdf.headers.get("Content-Type")).toContain("application/pdf");
+    expect(await pdf.text()).toBe("%PDF-1.7\nfixture");
+    fail = true;
+    expect((await post({ ...input, requestId: randomUUID() })).status).toBe(202); await service.idle();
+    expect(await (await fetch(base)).json()).toMatchObject({ latest: { status: "failed", diagnostics: [{ path: "main.tex", line: 2 }] }, lastSuccessful: { id: input.requestId } });
+    expect((await fetch(`${base}/${input.requestId}/pdf`)).status).toBe(200);
+    expect((await fetch(`${base}/${randomUUID()}/pdf`)).status).toBe(404);
+  } finally { await service.idle(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 it("serves real manuscript CRUD, validation and conflict responses without a provider", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-writing-http-"));
