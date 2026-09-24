@@ -14,7 +14,13 @@ filters and link/unlink controls for multiple projects, a CodeMirror source edit
 creation/deletion, autosave/recovery, side-by-side history review and source ZIP
 export. Selected-text alternatives include explicit model/output-count controls,
 an audience slider, context preview, saved batches, comparison and acceptance.
-Compilation, bibliography insertion and evidence-grounded new prose remain open.
+Restricted offline Linux compilation, source/split/PDF views, PDF download,
+revision labels, build logs, cancellation and guarded file/line error navigation
+are implemented. Failed builds retain the last successful preview. The prepared
+runtime does not require host TeX Live; see [TeX Runtime](TEX_RUNTIME.md) for
+supported packages, isolation and installer prerequisites. Cross-platform build
+packaging, bidirectional source/PDF navigation, bibliography insertion and
+evidence-grounded new prose remain open.
 History is per-file, not yet a grouped multi-file document timeline.
 
 The candidate API uses explicitly enabled AgenticDriver targets only, with an

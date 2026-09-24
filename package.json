@@ -20,6 +20,7 @@
     "test": "bunx vitest run",
     "test:chat-ui": "bun scripts/check-chat-ui.ts",
     "test:writing-ui": "bunx tsx scripts/check-writing-ui.ts",
+    "test:writing-build-ui": "bunx tsx scripts/check-writing-build-ui.ts",
     "check": "bun run typecheck && bun run test"
   },
   "devDependencies": {

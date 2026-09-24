@@ -37,6 +37,14 @@ Each document provides a multi-file TeX/BibTeX editor with autosave, local
 draft recovery, version history, named checkpoints, diff review and source ZIP
 export. History is per-file and independent of Git commits.
 
+Compile saved sources locally and view the PDF beside the editor or on its own.
+Build errors link to source lines; cancellation and failed builds retain the last
+successful PDF. The preview labels earlier revisions and supports PDF download.
+Linux uses an isolated offline Tectonic runtime prepared with
+`bun run prepare:tex-runtime`; it does not need a system TeX Live installation.
+See [TeX Runtime](docs/TEX_RUNTIME.md) for sandbox prerequisites, supported packages
+and remaining desktop packaging work.
+
 Select TeX prose to request alternatives from explicitly enabled AgenticDriver
 connections, including several outputs from the same model. Preview the supplied
 context, choose an audience level, compare drafts and explicitly accept one.
@@ -44,8 +52,9 @@ Generation never automatically replaces text, and changed source revisions block
 stale suggestions. These editing drafts are not evidence-verified claims.
 
 Project links organize documents; they do not yet feed project sources into
-generation. Packaged TeX compilation/PDF preview and internal/literature evidence attachment
-are still pending. See [Writing Mode](docs/WRITING_MODE.md) for the full scope.
+generation. Internal/literature evidence attachment, citation insertion,
+bidirectional source/PDF navigation and cross-platform compiler packaging remain
+pending. See [Writing Mode](docs/WRITING_MODE.md) for the full scope.
 
 ## Useful Commands
 
