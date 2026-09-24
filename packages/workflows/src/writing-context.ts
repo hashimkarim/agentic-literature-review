@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ManuscriptError, ManuscriptStore, type LitAgentRepository } from "@litagent/library";
+import { ManuscriptError, ManuscriptStore, assertWritingSourceSafe, type LitAgentRepository } from "@litagent/library";
 import {
   WritingContextSchema, WritingContextSelectionSchema,
   type WritingContext, type WritingContextSelection, type WritingSourceRef, type Paper
@@ -72,12 +72,14 @@ export class WritingContextService {
     for (const id of [...new Set(selected.attachmentIds)].sort()) {
       const source = attachments.find((item) => item.id === id);
       if (!source) throw new ManuscriptError(409, "writing_source_missing", "An attached source was removed. Refresh the source selection.");
+      assertWritingSourceSafe(source.path, source.content);
       documents.push({ ...base, sourceId: source.id, kind: source.kind, title: source.path, path: source.path, originUrl: source.originUrl, revision: source.revision, text: source.content });
     }
     for (const name of [...new Set(selected.manuscriptPaths)].sort()) {
       if (/\.bib$/i.test(name)) throw new ManuscriptError(400, "bibliography_context", "Select paper full text as evidence; bibliography files are citation metadata, not factual sources.");
       const file = document.files.find((item) => item.path === name);
       if (!file) throw new ManuscriptError(409, "writing_source_missing", "A selected manuscript file was removed.");
+      assertWritingSourceSafe(file.path, file.content);
       documents.push({ ...base, sourceId: `manuscript:${name}`, kind: "manuscript", title: name, path: name, revision: file.revision, text: file.content });
     }
     const sources: WritingSourceRef[] = [];

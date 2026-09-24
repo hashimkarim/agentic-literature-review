@@ -67,6 +67,15 @@ it("drafts at the cursor, reviews exact evidence, inserts bibliography explicitl
   expect(f.store.history(f.document.id, f.file.path)[0]?.reason).toBe("candidate");
 });
 
+it("blocks credential-bearing selection or surrounding context before any model call", () => {
+  const f = fixture();
+  const file = f.store.writeFile(f.document.id, { path: f.file.path, expectedRevision: f.file.revision, content: 'Some prose.\n% api_key = "not-a-real-secret-but-sensitive"\n' });
+  const request = { ...f.request(), expectedRevision: file.revision, from: 0, to: 11 };
+  expect(() => f.service.start(f.document.id, request)).toThrow(/credentials/);
+  expect(f.runtime.startRun).not.toHaveBeenCalled();
+  expect(f.store.candidateBatches(f.document.id)).toEqual([]);
+});
+
 it("rejects fabricated evidence/quotes and unselected citation keys before review", async () => {
   for (const change of ["quote", "source", "citekey"] as const) {
     const f = fixture();

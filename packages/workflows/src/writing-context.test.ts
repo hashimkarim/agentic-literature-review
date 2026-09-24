@@ -65,3 +65,13 @@ it("deduplicates immutable uploads, rejects credential paths/content and preserv
   expect(f.store.read(f.document.id)).toEqual(original);
   expect(new ManuscriptStore(f.root).writingAttachments(f.document.id)).toEqual([first]);
 });
+
+it("applies credential guards to explicitly selected imported manuscript files", () => {
+  const f = fixture();
+  f.store.writeFile(f.document.id, { path: "config.json", content: '{"api_key":"not-a-real-secret-but-sensitive"}', expectedRevision: null });
+  f.store.writeFile(f.document.id, { path: "credentials.json", content: '{"value":"opaque-fixture"}', expectedRevision: null });
+  const selection = { paperIds: [], attachmentIds: [], manuscriptPaths: [] as string[] };
+  expect(f.context.preview(f.document.id, selection).sources).toEqual([]);
+  for (const name of ["config.json", "credentials.json"]) expect(() => f.context.preview(f.document.id, { ...selection, manuscriptPaths: [name] })).toThrow(/credentials/);
+  expect(f.store.read(f.document.id).files.find((file) => file.path === "config.json")?.content).toContain("not-a-real-secret-but-sensitive");
+});

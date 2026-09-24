@@ -27,6 +27,19 @@ export class ManuscriptError extends Error {
   }
 }
 
+export function assertWritingTextSafe(content: string): void {
+  if (/\u0000|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b|(?:api[_-]?key|access[_-]?token|password|secret)\s*["']?\s*[:=]\s*["'][^"'\s]{8,}["']/i.test(content)) {
+    throw new ManuscriptError(400, "sensitive_source", "Selected context may contain credentials or binary data. Redact it before sending to a model.");
+  }
+}
+
+export function assertWritingSourceSafe(name: string, content: string): void {
+  if (/(?:^|\/)(?:\.[^/]+|node_modules|vendor|dist|build|credentials?|secrets?)(?:\/|\.|$)/i.test(name) || /(?:password|token|private[-_]?key|api[-_]?key)/i.test(name)) {
+    throw new ManuscriptError(400, "unsafe_source", "Choose a source without credentials, hidden files or generated dependencies.");
+  }
+  assertWritingTextSafe(content);
+}
+
 function revision(content: string): string {
   return sourceRevision(content);
 }
@@ -157,13 +170,10 @@ export class ManuscriptStore {
   attachWritingSource(manuscriptId: string, input: unknown): WritingAttachment {
     const parsed = WritingAttachmentInputSchema.parse(input);
     const name = parsed.path.toLowerCase();
-    if (!/\.(ts|tsx|js|jsx|py|rs|go|c|h|cpp|java|r|jl|sql|md|txt|csv|tsv|json|yaml|yml|toml|tex|bib)$/.test(name) ||
-      /(?:^|\/)(?:node_modules|vendor|dist|build|credentials?|secrets?)(?:\/|\.|$)/.test(name) || /(?:password|token|private[-_]?key|api[-_]?key)/.test(name)) {
+    if (!/\.(ts|tsx|js|jsx|py|rs|go|c|h|cpp|hpp|java|r|jl|sql|md|txt|csv|tsv|json|yaml|yml|toml|tex|bib)$/.test(name)) {
       throw new ManuscriptError(400, "unsafe_source", "Choose a text, code or result file without credentials, hidden files or generated dependencies.");
     }
-    if (/\u0000|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b|(?:api[_-]?key|access[_-]?token|password|secret)\s*["']?\s*[:=]\s*["'][^"'\s]{8,}["']/i.test(parsed.content)) {
-      throw new ManuscriptError(400, "sensitive_source", "This file may contain credentials or binary data. Redact it before attaching.");
-    }
+    assertWritingSourceSafe(name, parsed.content);
     const items = this.writingAttachments(manuscriptId);
     const id = `source_${revision(JSON.stringify(parsed)).slice(0, 24)}`;
     const existing = items.find((item) => item.id === id);

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { AgentHarness, AgentProviderCatalog } from "@litagent/agents";
-import { ManuscriptError, ManuscriptStore } from "@litagent/library";
+import { ManuscriptError, ManuscriptStore, assertWritingTextSafe } from "@litagent/library";
 import {
   AcceptWritingCandidateSchema, CreateWritingCandidatesSchema,
   ManuscriptPathSchema, ManuscriptRevisionSchema,
@@ -91,6 +91,7 @@ export class WritingCandidateService {
       throw new ManuscriptError(400, "invalid_writing_selection", "Select non-empty prose in a TeX file.");
     }
     request.targets.forEach(this.validateTarget);
+    assertWritingTextSafe(file.content.slice(Math.max(0, request.from - 1500), request.to + 1500));
     let context: WritingCandidateBatch["context"];
     if (request.assistant) {
       if (!this.context) throw new ManuscriptError(409, "writing_context_unavailable", "Writing context is unavailable.");
