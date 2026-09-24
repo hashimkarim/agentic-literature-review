@@ -11,9 +11,9 @@ Current slice: project manuscript CRUD and revision-checked `.tex`/`.bib` saves
 are implemented, with automatic per-file history, named checkpoints and guarded
 restore. The project Writing tab now includes a CodeMirror source editor, file
 creation/deletion, autosave/recovery, side-by-side history review and source ZIP
-export. Selected-text candidate storage/orchestration and acceptance APIs are
-implemented; the comparison/generation UI is the next slice. Compilation,
-bibliography insertion and evidence-grounded new prose remain open.
+export. Selected-text alternatives include explicit model/output-count controls,
+an audience slider, context preview, saved batches, comparison and acceptance.
+Compilation, bibliography insertion and evidence-grounded new prose remain open.
 History is per-file, not yet a grouped multi-file document timeline.
 
 The candidate API uses explicitly enabled AgenticDriver targets only, with an
@@ -255,6 +255,7 @@ projects/{projectId}/manuscripts/{manuscriptId}/
   suggestions/{suggestionId}.json
   .history/{filePathHash}.json
   .history/blobs/{contentHash}.json
+  .candidates/{batchId}.json
 ```
 
 Local attachment-root mappings/credentials and compilation caches stay outside

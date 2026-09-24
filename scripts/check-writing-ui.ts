@@ -7,17 +7,46 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chromium, type Page } from "playwright";
 import { unzipSync, strFromU8 } from "fflate";
-import type { ManuscriptDocument, ManuscriptFile } from "../packages/contracts/src/index";
+import { AgenticDriver } from "@agenticdriver/sdk";
+import { mockProvider } from "@agenticdriver/sdk/providers";
+import { serve } from "@agenticdriver/sdk/server";
+import { AgentProviderSchema, type ManuscriptDocument, type ManuscriptFile, type WritingCandidateBatch } from "../packages/contracts/src/index";
 
-// Real manuscript HTTP/storage, isolated synthetic data, and no provider requests.
+// Real app + installed SDK HTTP/storage, synthetic adapters only. No account-backed inference.
 const output = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-writing-ui-"));
+const sdkCalls: Array<{ model: string; prompt: string }> = [];
+let holdGeneration = false;
+let cancellations = 0;
+const synthetic = (id: string, name: string, models: string[]) => {
+  const provider = mockProvider(async (request, context) => {
+    assert.equal(request.tools.length, 0);
+    const prompt = request.messages.map((message) => message.content).join("\n");
+    sdkCalls.push({ model: request.model, prompt });
+    if (holdGeneration) await new Promise<void>((_resolve, reject) => {
+      const cancel = () => { cancellations++; reject(context.signal.reason); };
+      if (context.signal.aborted) cancel(); else context.signal.addEventListener("abort", cancel, { once: true });
+    });
+    if (prompt.includes("Alternative number: 2")) return { text: "Deliberately malformed fixture output" };
+    return { text: JSON.stringify({ text: `Synthetic ${request.model} revision preserves uncertainty.` }) };
+  });
+  provider.info = { ...provider.info, id, name, models };
+  return provider;
+};
+const fixtureProviders = [synthetic("writing-a", "Synthetic Alpha", ["fixture-a", "fixture-b"]), synthetic("writing-b", "Synthetic Beta", ["fixture-c"])];
+const token = "synthetic-writing-test-token-not-an-account-credential";
+const sdk = await serve(new AgenticDriver({ providers: fixtureProviders }), { port: 0, tokens: [{ token, subject: "writing-fixture", providers: fixtureProviders.map((provider) => provider.info.id) }] });
+const descriptors = fixtureProviders.map((provider) => AgentProviderSchema.parse({ id: `driver.${provider.info.id}`, label: provider.info.name, command: "", installed: true, enabled: true, connected: true, authStatus: "authenticated", models: provider.info.models }));
+fs.mkdirSync(path.join(output, "research/.litagent"), { recursive: true });
+fs.writeFileSync(path.join(output, "research/.litagent/provider-settings.json"), JSON.stringify(Object.fromEntries(descriptors.map((provider) => [provider.id, {
+  providerId: provider.id, enabled: true, connected: true, command: "", defaultModel: null, customModels: [], lastCheckedAt: null, updatedAt: new Date().toISOString()
+}]))));
 const reservation = http.createServer();
 await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
 const port = (reservation.address() as import("node:net").AddressInfo).port;
 await new Promise<void>((resolve) => reservation.close(() => resolve()));
 const backend = spawn("bunx", ["tsx", "apps/server/src/index.ts"], {
   cwd: fileURLToPath(new URL("../", import.meta.url)),
-  env: { ...process.env, LITAGENT_REPO: path.join(output, "research"), LITAGENT_PORT: String(port), AGENTICDRIVER_URL: "", AGENTICDRIVER_TOKEN: "" },
+  env: { ...process.env, LITAGENT_REPO: path.join(output, "research"), LITAGENT_PORT: String(port), AGENTICDRIVER_URL: sdk.url, AGENTICDRIVER_TOKEN: token },
   stdio: ["ignore", "pipe", "pipe"], detached: true
 });
 let backendLog = "";
@@ -32,9 +61,9 @@ async function request<T>(endpoint: string, method = "GET", body?: unknown): Pro
   assert.equal(response.ok, true, `${method} ${endpoint}: ${await response.clone().text()}`);
   return response.json() as Promise<T>;
 }
-async function waitFor<T>(get: () => Promise<T>, check: (value: T) => boolean): Promise<T> {
+async function waitFor<T>(get: () => Promise<T>, check: (value: T) => boolean, description = "saved writing state"): Promise<T> {
   for (let i = 0; i < 150; i++) { const value = await get(); if (check(value)) return value; await new Promise((resolve) => setTimeout(resolve, 100)); }
-  throw new Error("Timed out waiting for saved writing state");
+  throw new Error(`Timed out waiting for ${description}`);
 }
 async function openWriting(page: Page, projectId: string) {
   await page.getByRole("button", { name: "Projects", exact: true }).click();
@@ -49,7 +78,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.ok(ready, backendLog);
-  for (const width of [1440, 1920, 860]) {
+  for (const width of [1440, 1920, 860, 390]) {
     const { project } = await request<{ project: { id: string } }>("/projects", "POST", { name: `Writing test ${width}` });
     const page = await browser.newPage({ viewport: { width, height: 1000 }, acceptDownloads: true });
     const errors: string[] = [];
@@ -58,7 +87,7 @@ try {
     let offlineSaves = false;
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
-      if (url.pathname.includes("provider")) { await route.fulfill({ json: [] }); return; }
+      if (url.pathname.includes("provider")) { await route.fulfill({ json: descriptors }); return; }
       if (route.request().method() !== "GET" && !url.pathname.includes("/manuscripts")) {
         errors.push(`Unexpected mutation: ${url.pathname}`); await route.abort(); return;
       }
@@ -91,7 +120,7 @@ try {
     await waitFor(current, (file) => file.content === second);
     await page.getByRole("button", { name: /Before supervisor review/ }).click();
     await page.getByRole("button", { name: "Restore this version", exact: true }).waitFor();
-    assert.equal(await page.locator(".writing-comparison .cm-content").count(), 2);
+    assert.equal(await page.locator(".writing-comparison .cm-content").count(), width <= 600 ? 1 : 2);
     await page.screenshot({ path: path.join(output, `history-${width}.png`) });
     await page.getByRole("button", { name: "Restore this version", exact: true }).click();
     await waitFor(current, (file) => file.content === first);
@@ -134,9 +163,78 @@ try {
     await openWriting(page, project.id);
     await page.getByRole("textbox", { name: "TeX source", exact: true }).waitFor();
     assert.match(await page.getByRole("textbox", { name: "TeX source", exact: true }).innerText(), /Recovered local work/);
+    const source = page.getByRole("textbox", { name: "TeX source", exact: true });
+    await source.click(); await source.press("ControlOrMeta+a");
+    await page.getByRole("button", { name: "Generate alternatives", exact: true }).click();
+    await page.getByRole("combobox", { name: "Connection 1", exact: true }).selectOption("driver.writing-a");
+    await page.getByRole("combobox", { name: "Model 1", exact: true }).selectOption("fixture-a");
+    await page.getByRole("slider", { name: "Audience", exact: true }).fill("0");
+    await page.getByRole("button", { name: "Add model", exact: true }).click();
+    await page.getByRole("combobox", { name: "Connection 2", exact: true }).selectOption("driver.writing-b");
+    await page.getByRole("combobox", { name: "Model 2", exact: true }).selectOption("fixture-c");
+    await page.getByText("Context sent to models", { exact: true }).click();
+    assert.match(await page.locator(".writing-sent-context").innerText(), /Recovered local work/);
+    await page.screenshot({ path: path.join(output, `candidate-request-${width}.png`) });
+    const beforeCalls = sdkCalls.length;
+    await page.getByRole("button", { name: "Generate 3 alternatives", exact: true }).click();
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page.getByRole("complementary", { name: "Writing alternatives" }).getByRole("status").filter({ hasText: /^completed$/ }).waitFor();
+    assert.equal(sdkCalls.length - beforeCalls, 3);
+    assert.deepEqual(sdkCalls.slice(beforeCalls).map((call) => call.model), ["fixture-a", "fixture-a", "fixture-c"]);
+    assert.ok(sdkCalls.slice(beforeCalls).every((call) => call.prompt.includes("Audience: Layperson") && call.prompt.includes("Recovered local work")));
+    assert.equal((await current()).content, "Recovered local work");
+    await page.getByRole("button", { name: "Compare candidate 3", exact: true }).click();
+    assert.equal(await page.locator(".writing-comparison .cm-content").count(), width <= 600 ? 1 : 2);
+    await page.screenshot({ path: path.join(output, `candidates-${width}.png`) });
+    await page.getByRole("button", { name: "Accept candidate 3", exact: true }).click();
+    await waitFor(current, (file) => file.content === "Synthetic fixture-c revision preserves uncertainty.");
+    await page.getByText("Selection accepted", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "File history", exact: true }).click();
+    await page.getByRole("button", { name: /Accepted candidate/ }).waitFor();
+    await page.getByRole("button", { name: "Saved alternatives", exact: true }).click();
+    await page.getByText("Selection accepted", { exact: true }).waitFor();
+    const batches = await request<Array<{ id: string }>>(`${base}/candidates`);
+    const accepted = await request<WritingCandidateBatch>(`${base}/candidates/${batches[0]!.id}`);
+    assert.deepEqual(accepted.candidates.map((candidate) => candidate.status), ["completed", "failed", "completed"]);
+    assert.equal(accepted.accepted?.candidateId, accepted.candidates[2]!.id);
+    await source.click(); await source.press("ControlOrMeta+a");
+    await page.getByRole("button", { name: "Generate alternatives", exact: true }).click();
+    await page.getByRole("combobox", { name: "Connection 1", exact: true }).selectOption("driver.writing-a");
+    await page.getByRole("combobox", { name: "Model 1", exact: true }).selectOption("fixture-a");
+    await page.getByRole("spinbutton", { name: "Outputs 1", exact: true }).fill("1");
+    const nextBatchResponse = page.waitForResponse((response) => response.url().endsWith(`${base}/candidates`) && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Generate 1 alternative", exact: true }).click();
+    const nextBatch = await (await nextBatchResponse).json() as WritingCandidateBatch;
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page.locator(`.writing-candidates[data-batch-id="${nextBatch.id}"]`).getByRole("status").filter({ hasText: /^completed$/ }).waitFor();
+    await source.fill("New manual wording after generation.");
+    await waitFor(current, (file) => file.content === "New manual wording after generation.");
+    await page.getByText("Source changed. These alternatives cannot replace the current draft.", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Accept candidate 1", exact: true }).isDisabled(), true);
+    const cancelledBefore = cancellations;
+    holdGeneration = true;
+    await source.click(); await source.press("ControlOrMeta+a");
+    await page.getByRole("button", { name: "Generate alternatives", exact: true }).click();
+    await page.getByRole("combobox", { name: "Connection 1", exact: true }).selectOption("driver.writing-a");
+    await page.getByRole("combobox", { name: "Model 1", exact: true }).selectOption("fixture-b");
+    await page.getByRole("button", { name: "Generate 2 alternatives", exact: true }).click();
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await waitFor(async () => sdkCalls.length, (count) => count === beforeCalls + 5);
+    await page.getByRole("button", { name: "Stop generation", exact: true }).click();
+    await page.getByRole("complementary", { name: "Writing alternatives" }).getByRole("status").filter({ hasText: /^cancelled$/ }).waitFor();
+    await waitFor(async () => cancellations, (count) => count === cancelledBefore + 1, "SDK cancellation acknowledgement");
+    holdGeneration = false;
+    assert.equal(sdkCalls.length - beforeCalls, 5, "Cancellation must not start queued candidates");
+    assert.equal((await current()).content, "New manual wording after generation.");
+    await page.reload(); await openWriting(page, project.id);
+    await page.getByRole("textbox", { name: "TeX source", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Saved alternatives", exact: true }).click();
+    await page.getByRole("combobox", { name: "Generation batch", exact: true }).selectOption(accepted.id);
+    await page.getByText("Selection accepted", { exact: true }).waitFor();
+    assert.equal(sdkCalls.length - beforeCalls, 5, "Reload must not replay generation");
     assert.deepEqual(errors, []);
     await page.close();
-    console.log(`PASS ${width}px: create, edit, autosave, checkpoint, diff, restore, conflict review, recovery, multi-file and ZIP export`);
+    console.log(`PASS ${width}px: editor/history/recovery/export, multi-model alternatives, partial failure, comparison, acceptance, cancellation and reload`);
   }
   console.log(`Artifacts: ${output}`);
 } catch (error) {
@@ -147,5 +245,6 @@ try {
   await browser.close();
   if (backend.pid) { try { process.kill(-backend.pid, "SIGTERM"); } catch { backend.kill("SIGTERM"); } }
   await exited;
+  await sdk.close();
   fs.writeFileSync(path.join(output, "server.log"), backendLog);
 }

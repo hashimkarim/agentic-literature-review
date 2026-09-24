@@ -55,7 +55,7 @@ using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENT
 | Structured extraction | Working MVP | Accepted findings/method/dataset/result/limitation/reproducibility records | Configurable extraction schemas, editable literature sheets and per-cell provenance UI |
 | Notes | Backend foundation | Markdown note CRUD, annotation links and synthesis-to-note flow | General editor/browser, backlinks, evidence ledger and note search UI |
 | Internal/external evidence finder | Planned | Paper evidence and accepted research records are foundations, not code/run connectors | Search own repositories/results/W&B and public code/benchmarks with typed provenance, source permissions and comparability checks |
-| Writing Mode | Partial | Project multi-file TeX/BibTeX editor, autosave/recovery, conflict review, per-file text history/checkpoints/diffs/restore and source ZIP export | Safe packaged compilation/preview, source/citation attachment, outline/storyline, reviewed generation and audience slider |
+| Writing Mode | Partial | Multi-file TeX editor, autosave/recovery, per-file history/checkpoints/diffs/restore, source ZIP, selected-text multi-model alternatives with audience slider/context preview and revision-safe acceptance | Safe packaged compilation/preview, source/citation attachment, outline/storyline, evidence-grounded new prose and live generation quality |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
 | Git and LFS | Foundation | Repository bootstrap, LFS policy and status display | Commit/sync UI, conflict handling and recovery guidance |
@@ -273,7 +273,7 @@ publishing local PDFs, credentials or generated caches.
 ### 6. Writing Mode And Concept Maps
 
 Priority: P1 writing/core graph, P2 advanced authoring/exploration.
-Status: source editor and per-file history implemented; compiler and agentic writing open.
+Status: editor/history and selected-text alternatives implemented; compiler and evidence-grounded new prose open.
 Backlog: WRITE-03/04/05, WRITE-10 through WRITE-15, MAP-01/02/03;
 shared evidence: EVID-09 through EVID-14; then WRITE-06/07/09/16/17 and
 MAP-04 through MAP-07.
@@ -428,6 +428,7 @@ determine release readiness.
 
 | Date | Change | Verification |
 | --- | --- | --- |
+| 2026-09-24 | Candidate UI: explicit connections/models/output counts, audience slider, exact context preview, persistent alternatives, comparison and acceptance; narrow screens use inline diffs | Typecheck, 150 tests, build and existing chat checks; isolated app plus installed SDK synthetic HTTP checks at 1440/1920/860/390px cover repeated/multiple models, invalid output, cancellation acknowledgement, stale drafts, history and reload without replay. No real account calls or evidence-quality certification. |
 | 2026-09-24 | Writing candidate backend: selected-text/model/count requests, bounded context, persisted alternatives, partial failures, cancellation, restart interruption and recoverable revision-checked acceptance | Typecheck and 150 tests, including HTTP candidate review and fixture execution; no live inference, provider runtime changes or automatic file acceptance. Candidate UI follows. |
 | 2026-09-24 | Project Writing tab: CodeMirror editor, file management, autosave/recovery and conflict review; named text versions with visual diffs/restore and source ZIP export | Typecheck, 139 tests and build; real isolated HTTP/browser writing workflow at 1440/1920/860px, plus existing chat checks at 1440/1920px. No TeX compiler or live model calls. |
 | 2026-09-24 | Writing foundation: project-owned TeX/BibTeX files, safe paths, atomic revision-checked saves, per-file automatic history, named checkpoints and restore APIs; added multi-candidate drafting requirement | Typecheck and 132 tests pass, including real HTTP CRUD/conflicts and history/integrity tests. Editor UI, compilation and generation are not completed by this slice. |

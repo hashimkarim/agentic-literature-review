@@ -25,6 +25,21 @@ workspace under `~/.litagent/research-repo`.
 Project roadmap and implementation progress are tracked in
 [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+## Writing
+
+Projects > Writing provides a multi-file TeX/BibTeX editor with autosave, local
+draft recovery, version history, named checkpoints, diff review and source ZIP
+export. History is per-file and independent of Git commits.
+
+Select TeX prose to request alternatives from explicitly enabled AgenticDriver
+connections, including several outputs from the same model. Preview the supplied
+context, choose an audience level, compare drafts and explicitly accept one.
+Generation never automatically replaces text, and changed source revisions block
+stale suggestions. These editing drafts are not evidence-verified claims.
+
+Packaged TeX compilation/PDF preview and internal/literature evidence attachment
+are still pending. See [Writing Mode](docs/WRITING_MODE.md) for the full scope.
+
 ## Useful Commands
 
 ```bash
@@ -34,6 +49,7 @@ bun run --filter @litagent/web build
 bun run dev:server
 bun run dev:web
 bun run prepare:marker-runtime
+bun run test:writing-ui
 ```
 
 `prepare:marker-runtime` creates an ignored local Marker runtime under
@@ -43,6 +59,12 @@ builds should include `resources/converters` as app resources so PDF-to-Markdown
 works without a user-global `uvx`/Marker install. In development, LitAgent still
 falls back to `uvx --from marker-pdf marker_single` when no bundled runtime is
 present.
+
+`test:writing-ui` expects the web dev server and starts an isolated application
+backend plus the installed SDK's synthetic HTTP host. It uses Bun's `tsx`
+launcher with Node (the SDK-supported host runtime), temporary research files,
+and no real provider accounts. It checks history, recovery, alternative review,
+cancellation and reloads at desktop and narrow viewport sizes.
 
 ## Repository Model
 
@@ -64,6 +86,11 @@ projects/{projectId}/
   paper-links.json
   notes/*.md
   outputs/*.md
+  manuscripts/{manuscriptId}/main.tex
+  manuscripts/{manuscriptId}/sections/*.tex
+  manuscripts/{manuscriptId}/references.bib
+  manuscripts/{manuscriptId}/.history/
+  manuscripts/{manuscriptId}/.candidates/
 workflows/{runId}.jsonl
 exports/{projectId}.bib
 .litagent/index.sqlite

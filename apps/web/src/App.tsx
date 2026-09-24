@@ -1232,7 +1232,7 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
       primaryAction={tool !== "writing" ? <Btn variant="primary" sm icon="plus" onClick={() => props.onImportPapers(props.activeProjectId)} disabled={!props.activeProjectId}>Add papers</Btn> : undefined}
       secondaryAction={tool !== "writing" ? <Btn variant="ghost" sm icon="users">Share</Btn> : undefined}
     >
-      {tool === "writing" && props.activeProjectId ? <Suspense fallback={<div className="la-readerbody">Loading writing workspace...</div>}><WritingWorkspace key={props.activeProjectId} projectId={props.activeProjectId} projects={props.projects} onProjectChange={props.onProjectChange} /></Suspense> : tool === "papers" ? (
+      {tool === "writing" && props.activeProjectId ? <Suspense fallback={<div className="la-readerbody">Loading writing workspace...</div>}><WritingWorkspace key={props.activeProjectId} projectId={props.activeProjectId} projects={props.projects} providers={props.providers} onProjectChange={props.onProjectChange} /></Suspense> : tool === "papers" ? (
         <div className="la-content">
           <ProjectContext
             project={props.project}

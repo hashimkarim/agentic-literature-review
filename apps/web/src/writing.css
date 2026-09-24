@@ -62,8 +62,45 @@
 .writing-dialog footer { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
 .writing-error { color:var(--state-error); font-size:13px; }
 .writing-mobile-files { display:none; }
+.writing-body.has-candidates { grid-template-columns:190px minmax(0,1fr) 330px; }
+.writing-candidates { min-height:0; min-width:0; display:flex; flex-direction:column; background:var(--bg-secondary); border-left:1px solid var(--border-line); overflow:auto; }
+.writing-candidates > header { display:flex; align-items:center; padding:8px 12px; gap:6px; }
+.writing-candidates h2 { font-size:14px; margin:0; flex:1; }
+.writing-candidate-batch-picker { padding:0 12px 10px; }
+.writing-candidate-batch-picker select { width:100%; text-overflow:ellipsis; }
+.writing-candidates select, .writing-candidate-dialog select, .writing-candidate-dialog textarea { color:var(--text-primary); background:var(--surface-input); border:1px solid var(--border-line); border-radius:4px; padding:7px; min-width:0; font:inherit; }
+.writing-candidate-context { padding:10px 12px; font-size:12px; border-top:1px solid var(--border-line); }
+.writing-candidate-context > span[role="status"] { float:right; color:var(--text-secondary); }
+.writing-candidate-context p { margin:8px 0; overflow-wrap:anywhere; }
+.writing-candidate-context small { color:var(--text-muted); display:block; margin-bottom:8px; }
+.writing-candidates ol { list-style:none; margin:0; padding:0; }
+.writing-candidates li { border-top:1px solid var(--border-line); padding:12px; }
+.writing-candidates li header { display:flex; justify-content:space-between; gap:10px; font-size:12px; }
+.writing-candidates li header span { color:var(--text-secondary); }
+.writing-candidate-model { font-size:13px; margin-top:8px; overflow-wrap:anywhere; color:var(--accent-bright); }
+.writing-candidate-model small { display:block; font-size:11px; color:var(--text-muted); margin-top:3px; }
+.writing-candidate-excerpt { font-size:13px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; }
+.writing-candidates li footer { display:flex; gap:8px; margin-top:10px; }
+.writing-candidates > .writing-error { padding:0 12px; }
+.writing-candidate-dialog { width:min(650px, calc(100vw - 32px)); max-height:calc(100dvh - 36px); overflow:auto; }
+.writing-candidate-scope { display:flex; justify-content:space-between; gap:10px; color:var(--text-secondary); font-size:12px; margin-bottom:18px; flex-wrap:wrap; }
+.writing-candidate-dialog textarea { resize:vertical; }
+.writing-candidate-dialog .writing-audience { margin:18px 0; display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.writing-audience output { text-align:right; color:var(--accent-bright); }
+.writing-audience input { grid-column:1 / -1; padding:0; accent-color:var(--accent-primary); }
+.writing-audience > span { grid-column:1 / -1; display:flex; justify-content:space-between; color:var(--text-secondary); font-size:11px; }
+.writing-targets { padding:0; border:0; margin:18px 0; min-width:0; }
+.writing-targets legend { font-size:13px; font-weight:600; margin-bottom:10px; }
+.writing-target { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 65px 32px; align-items:end; gap:8px; margin-bottom:10px; }
+.writing-target label { font-size:11px; }
+.writing-target input { padding:7px; width:100%; }
+.writing-sent-context { border-top:1px solid var(--border-line); border-bottom:1px solid var(--border-line); padding:12px 0; font-size:12px; }
+.writing-sent-context summary { cursor:pointer; }
+.writing-sent-context h3 { font-size:12px; margin:16px 0 8px; color:var(--text-secondary); }
+.writing-sent-context pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; font-size:12px; }
+.writing-draft-notice { color:var(--state-warning); font-size:12px; }
 @media(max-width:1100px) {
-  .writing-body, .writing-body.has-history { grid-template-columns:minmax(0,1fr); }
+  .writing-body, .writing-body.has-history, .writing-body.has-candidates { grid-template-columns:minmax(0,1fr); }
   .writing-files { display:none; }
   .writing-mobile-files { display:block; max-width:220px; }
   .writing-current-path { display:none; }
@@ -73,4 +110,6 @@
   .writing-history li { min-width:180px; max-width:240px; }
   .writing-heading { padding:10px; gap:8px; }
   .writing-heading select { max-width:180px; }
+  .writing-body.has-candidates { grid-template-rows:minmax(180px,1fr) minmax(200px,38%); }
+  .writing-candidates { border-left:0; border-top:1px solid var(--border-line); }
 }

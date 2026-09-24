@@ -225,7 +225,7 @@ Inspiration: [Jenni](COMPETITIVE_RESEARCH.md#c31-jenni),
 | WRITE-02 | Capture and backlinks: Partial | P1 | Save annotations, selected quotes, chat turns and workflow outputs as notes with durable backlinks to sources, runs and questions. | C02, C17, C35 |
 | WRITE-03 | Citation finder and claim support: Planned | P1 | Reuse EVID-13 to discover internal and external support/counterevidence, inspect exact quotes/lines/result cells and revisions, abstain when unsupported and insert reviewed citations or internal evidence links; external search is explicit. | C05, C32, C33, Core |
 | WRITE-04 | Outlines, storylines and drafts: Partial foundation | P1 | Extend accepted-comparison synthesis into section briefs, reorderable argument/evidence blocks, alternative storylines and reverse outlines; proposed edits preserve labels and require acceptance. | C03, C31, C37, Core |
-| WRITE-05 | Bounded writing commands: Planned | P1 | Generate/expand/shorten/clarify/paraphrase/translate a selected passage with diffs and undo; retain citations and flag changes to quantities, negation, uncertainty or claim strength. | C23, C32, C34, Core |
+| WRITE-05 | Bounded writing commands: Partial | P1 | Selected-text editing instructions, bounded context and reviewed alternatives implemented; evidence-grounded new prose, automatic semantic-change checks and fine-grained grammar suggestions remain open. | C23, C32, C34, Core |
 | WRITE-06 | Optional source-grounded autocomplete: Planned | P2 | Suggestions use approved sources, can be disabled and never insert claims or citations before explicit acceptance. | C31, C34 |
 | WRITE-07 | Figures, tables and cross-references: Planned | P2 | Insert permitted assets with captions, attribution and stable references; renumber outputs without breaking links to extracted evidence. | C34, C43 |
 | WRITE-08 | Academic/submission checks: Research | P3 | Optional style/structure/reference checks report their limits; external similarity checking requires consent and licensed access. | C08, C32, C34 |
@@ -233,17 +233,17 @@ Inspiration: [Jenni](COMPETITIVE_RESEARCH.md#c31-jenni),
 | WRITE-10 | Project TeX writing workspace: Partial | P1 | Multi-file CodeMirror editor, search, autosave/recovery, conflict review and source ZIP export implemented; citation/label completion, source import and compiled preview remain open. Manual authoring needs no provider/account. | Core |
 | WRITE-11 | Restricted compilation and PDF preview: Planned | P1 | Packaged TeX build with isolation, no default shell/network access, resource limits, file/line errors, last-good preview and bidirectional source navigation; test clean installs. | Core |
 | WRITE-12 | Searchable code and experiment context: Planned | P1 | Attach approved roots/collections or find relevant evidence via EVID-10/11/13; retain commit/hash/line/run/metric/row provenance, secret exclusions and context preview; never equate code with measurements or execute it. | Core |
-| WRITE-13 | Audience/complexity slider: Planned | P1 | Layperson through doctoral/specialist presets with separate concision, jargon and math detail; preview-only until accepted, retaining facts, citations and uncertainty at every level. | Core |
+| WRITE-13 | Audience/complexity slider: Partial | P1 | Four audience levels persisted with selected-text generation and explicit review; independent concision/jargon/math controls and real-provider semantic preservation evaluation remain open. | Core |
 | WRITE-14 | Grammar, style and terminology review: Planned | P1 | Scoped accept/reject suggestions, glossary and editable style profiles; distinguish linguistic quality from evidence validity and preserve TeX commands. | Core |
-| WRITE-15 | Revision-safe suggestions and provenance: Planned | P1 | Persist source/manuscript revisions, provider/model and accepted/rejected patches; concurrent edits or changed sources require review rather than overwriting or retaining a stale support badge. | Core |
+| WRITE-15 | Revision-safe suggestions and provenance: Partial | P1 | Candidate batches preserve selected manuscript text/context/revision, models, failures and acceptance with history; stale edits are blocked. External evidence revisions and finer-grained patch review remain open. | Core |
 | WRITE-16 | Results and manuscript consistency: Planned | P2 | Result-to-prose cites approved internal/W&B/external rows, units and uncertainty using EVID-14 comparisons; check abstract/body/conclusions, metrics, notation and figures; incompatible runs and missing facts remain flagged. | Core |
 | WRITE-17 | Reviewer response workspace: Planned | P2 | Anchor local/imported feedback to manuscript revisions, track decisions and propose response letters citing actual edits; no hosted collaboration required. | Core |
 | WRITE-18 | Text history beyond Git: Working per-file MVP | P1 | Automatic versions, named checkpoints, side-by-side diffs and conflict-checked restore preserve replaced text independently of Git; grouped manuscript checkpoints and authorship attribution remain open. | Core |
-| WRITE-19 | Multi-model draft candidates: Backend implemented | P1 | Selected-text alternatives with explicit SDK model targets/counts, bounded context, durable drafts, cancellation, partial failure and revision-safe acceptance; comparison UI next, evidence-grounded new prose remains open. | Core |
+| WRITE-19 | Multi-model draft candidates: Working selected-text MVP | P1 | Explicit SDK models/counts, same-model variants, context preview, durable batches, comparison, cancellation, partial failure and revision-safe selection implemented with synthetic SDK tests; evidence-grounded new prose and live quality validation remain open. | Core |
 
 Writing Mode's core scope is WRITE-03/04/05 and WRITE-10 through WRITE-15,
 delivered as W1-W4 in the linked specification. WRITE-06/07/09/16/17 extend that
-foundation. This is a roadmap addition, not newly implemented functionality.
+foundation. States above distinguish implemented slices from planned functionality.
 
 ## Concept Maps And Visual Discovery
 

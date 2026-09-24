@@ -4,7 +4,7 @@ import { Compartment, EditorState } from "@codemirror/state";
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
-import { MergeView } from "@codemirror/merge";
+import { MergeView, unifiedMergeView } from "@codemirror/merge";
 
 const theme = EditorView.theme({
   "&": { height: "100%", color: "var(--text-primary)", backgroundColor: "var(--bg-primary)", fontSize: "14px" },
@@ -27,13 +27,14 @@ const highlightStyle = HighlightStyle.define([
 ]);
 const extensions = [basicSetup, StreamLanguage.define(stex), syntaxHighlighting(highlightStyle), EditorView.lineWrapping, theme];
 
-export function TexEditor({ filePath, content, onChange, onView, disabled }: {
+export function TexEditor({ filePath, content, onChange, onView, onSelection, disabled }: {
   filePath: string; content: string; onChange: (content: string) => void; onView: (view: EditorView | null) => void; disabled: boolean;
+  onSelection?: (range: { from: number; to: number }) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const callbacks = useRef({ onChange, onView });
-  callbacks.current = { onChange, onView };
+  const callbacks = useRef({ onChange, onView, onSelection });
+  callbacks.current = { onChange, onView, onSelection };
   const states = useRef(new Map<string, EditorState>());
   const editable = useRef(new Compartment());
   const initial = useRef(content); initial.current = content;
@@ -45,11 +46,15 @@ export function TexEditor({ filePath, content, onChange, onView, disabled }: {
       state: old?.doc.toString() === initial.current ? old : EditorState.create({ doc: initial.current, extensions: [
         ...extensions, EditorView.contentAttributes.of({ "aria-label": "TeX source", spellcheck: "false" }),
         editable.current.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]),
-        EditorView.updateListener.of((update) => { if (update.docChanged) callbacks.current.onChange(update.state.doc.toString()); })
+        EditorView.updateListener.of((update) => {
+          if (update.docChanged) callbacks.current.onChange(update.state.doc.toString());
+          if (update.selectionSet || update.docChanged) callbacks.current.onSelection?.(update.state.selection.main);
+        })
       ] })
     });
     view.current = editor;
     callbacks.current.onView(editor);
+    callbacks.current.onSelection?.(editor.state.selection.main);
     return () => { states.current.set(filePath, editor.state); editor.destroy(); view.current = null; callbacks.current.onView(null); };
   }, [filePath]);
   useLayoutEffect(() => {
@@ -65,8 +70,17 @@ export function TextComparison({ before, after }: { before: string; after: strin
   useEffect(() => {
     if (!host.current) return;
     const readOnly = [...extensions, EditorState.readOnly.of(true), EditorView.editable.of(false)];
-    const view = new MergeView({ parent: host.current, a: { doc: before, extensions: readOnly }, b: { doc: after, extensions: readOnly }, gutter: true, highlightChanges: true });
-    return () => view.destroy();
+    const media = window.matchMedia("(max-width: 600px)");
+    let view: MergeView | EditorView;
+    const render = () => {
+      view?.destroy();
+      if (!host.current) return;
+      view = media.matches
+        ? new EditorView({ parent: host.current, state: EditorState.create({ doc: after, extensions: [...readOnly, unifiedMergeView({ original: before, mergeControls: false, highlightChanges: true })] }) })
+        : new MergeView({ parent: host.current, a: { doc: before, extensions: readOnly }, b: { doc: after, extensions: readOnly }, gutter: true, highlightChanges: true });
+    };
+    render(); media.addEventListener("change", render);
+    return () => { media.removeEventListener("change", render); view?.destroy(); };
   }, [before, after]);
   return <div className="writing-comparison" ref={host} />;
 }
