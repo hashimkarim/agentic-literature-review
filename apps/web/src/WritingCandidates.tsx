@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, Columns2, Plus, RefreshCw, Sparkles, Square, Trash2, X } from "lucide-react";
-import type { AgentProvider, ManuscriptFile, WritingCandidateBatch, WritingCandidateSummary, WritingTarget } from "@litagent/contracts";
-import { api } from "./api";
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
+import { BookPlus, Check, Columns2, Copy, ExternalLink, FileText, Plus, Quote, RefreshCw, RotateCcw, Sparkles, Square, Trash2, X } from "lucide-react";
+import type { AgentProvider, ManuscriptFile, WritingCandidateBatch, WritingCandidateSummary, WritingSourceRef, WritingTarget } from "@litagent/contracts";
+import { api, API_BASE } from "./api";
+
+const PdfReader = lazy(async () => ({ default: (await import("@litagent/pdf")).PdfReader }));
 
 export interface WritingSelection { file: ManuscriptFile; from: number; to: number }
 const audiences = ["Layperson", "Undergraduate", "Graduate", "Doctoral / specialist"];
@@ -58,11 +60,12 @@ export function WritingCandidatesDialog({ manuscriptId, selection, providers, on
   </dialog>;
 }
 
-export function WritingCandidatesPanel({ manuscriptId, file, initialBatchId, busy, onCompare, onClearComparison, onAccept, onClose }: {
+export function WritingCandidatesPanel({ manuscriptId, file, initialBatchId, busy, onCompare, onClearComparison, onAccept, onClose, bibliographyPaths = [], onReferences }: {
   manuscriptId: string; file: ManuscriptFile; initialBatchId: string | null; busy: boolean;
   onCompare: (batch: WritingCandidateBatch, candidateId: string) => void;
   onClearComparison: () => void;
   onAccept: (batch: WritingCandidateBatch, candidateId: string) => Promise<void>; onClose: () => void;
+  bibliographyPaths?: string[]; onReferences?: (batch: WritingCandidateBatch, candidateId: string, path: string) => Promise<void>;
 }) {
   const [summaries, setSummaries] = useState<WritingCandidateSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(initialBatchId);
@@ -71,6 +74,10 @@ export function WritingCandidatesPanel({ manuscriptId, file, initialBatchId, bus
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [pending, setPending] = useState(false);
+  const [evidence, setEvidence] = useState<WritingSourceRef | null>(null);
+  const [bibPath, setBibPath] = useState("");
+  const [notice, setNotice] = useState("");
+  useEffect(() => { if (!bibliographyPaths.includes(bibPath)) setBibPath(bibliographyPaths[0] ?? ""); }, [bibliographyPaths.join("\n"), bibPath]);
   useEffect(() => {
     let current = true;
     setLoading(true); setError(null);
@@ -100,25 +107,53 @@ export function WritingCandidatesPanel({ manuscriptId, file, initialBatchId, bus
     return () => { current = false; clearTimeout(timer); };
   }, [manuscriptId, activeId, refresh]);
   const action = async (fn: () => Promise<void>) => {
-    setPending(true); setError(null);
+    setPending(true); setError(null); setNotice("");
     try { await fn(); setRefresh((n) => n + 1); } catch (error) { setError(error instanceof Error ? error.message : "Candidate action failed."); } finally { setPending(false); }
   };
   return <aside className="writing-candidates" aria-label="Writing alternatives" data-batch-id={batch?.id}>
     <header><h2>Alternatives</h2><button type="button" className="writing-tool" aria-label="Refresh alternatives" title="Refresh alternatives" onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={15} /></button><button type="button" className="writing-tool" aria-label="Close alternatives" title="Close alternatives" onClick={onClose}><X size={16} /></button></header>
     <div className="writing-candidate-batch-picker"><select aria-label="Generation batch" value={activeId ?? ""} disabled={pending || !summaries.length} onChange={(event) => { onClearComparison(); setActiveId(event.target.value); }}>{!summaries.length && <option value="">{loading ? "Loading..." : "No alternatives"}</option>}{summaries.map((item) => <option key={item.id} value={item.id}>{new Date(item.createdAt).toLocaleString()} - {item.instruction}</option>)}</select></div>
     {error && <p role="alert" className="writing-error">{error}</p>}
+    {notice && <p className="writing-action-notice" role="status">{notice}</p>}
     {batch && <>
-      <div className="writing-candidate-context"><span className="writing-draft-notice">{batch.accepted ? "Selection accepted" : "Unverified drafts"}</span><span role="status">{batch.status}</span><p>{batch.request.instruction}</p><small>{audiences[batch.request.audience]} / {batch.request.expectedRevision.slice(0, 8)}</small>
+      <div className="writing-candidate-context"><span className="writing-draft-notice">{batch.accepted ? "Selection accepted" : batch.request.assistant ? "Drafts for review" : "Unverified drafts"}</span><span role="status">{batch.status}</span><p>{batch.request.instruction}</p><small>{audiences[batch.request.audience]} / {batch.request.expectedRevision.slice(0, 8)}</small>
         {batch.status === "running" && <button type="button" disabled={pending} onClick={() => void action(async () => { await api.cancelWritingCandidates(manuscriptId, batch.id); })}><Square size={13} />Stop generation</button>}
         {!batch.accepted && file.revision !== batch.request.expectedRevision && <p className="writing-error">Source changed. These alternatives cannot replace the current draft.</p>}
+        {batch.sourceIssue && <p className="writing-error">{batch.sourceIssue}</p>}
       </div>
-      <ol>{batch.candidates.map((candidate, index) => <li key={candidate.id}>
-        <header><strong>Candidate {index + 1}</strong><span>{batch.accepted?.candidateId === candidate.id ? "accepted" : candidate.status}</span></header>
+      <ol>{batch.candidates.map((candidate, index) => <li key={candidate.id} data-candidate-id={candidate.id}>
+        <header><strong>Candidate {index + 1}</strong><span>{batch.accepted?.candidateId === candidate.id ? "accepted" : candidate.dismissed ? "rejected" : candidate.status === "running" ? candidate.phase ?? "running" : candidate.status}</span></header>
         <div className="writing-candidate-model" title={`${candidate.providerId} / ${candidate.model}`}>{candidate.model}<small>{candidate.providerId} / output {candidate.variant}</small></div>
-        {candidate.text !== null && <p className="writing-candidate-excerpt">{candidate.text}</p>}
+        {candidate.text !== null && <><p className="writing-candidate-excerpt">{candidate.text}</p><details className="writing-candidate-text"><summary>Full text</summary><pre>{candidate.text}</pre><button type="button" onClick={() => void action(() => navigator.clipboard.writeText(candidate.text!))}><Copy size={14} />Copy text</button></details></>}
         {candidate.error && <p className="writing-error">{candidate.error}</p>}
-        {candidate.status === "completed" && <footer><button type="button" disabled={busy || pending} aria-label={`Compare candidate ${index + 1}`} onClick={() => onCompare(batch, candidate.id)}><Columns2 size={14} />Compare</button><button type="button" disabled={busy || pending || batch.status === "running" || !!batch.accepted || file.revision !== batch.request.expectedRevision} aria-label={`Accept candidate ${index + 1}`} onClick={() => void action(() => onAccept(batch, candidate.id))}><Check size={14} />Accept</button></footer>}
+        {candidate.review && <details className={`writing-candidate-review ${candidate.review.supported ? "supported" : "unsupported"}`}><summary>{candidate.review.supported ? "Model support review passed" : "Support review failed"}</summary><p>{candidate.review.reason}</p>{candidate.review.claims.map((claim) => <p key={claim.index}>Claim {claim.index + 1}: {claim.reason}</p>)}</details>}
+        {candidate.warnings?.map((warning, i) => <p className="writing-draft-notice" key={i}>{warning}</p>)}
+        {!!candidate.claims?.length && <details className="writing-candidate-evidence"><summary>Evidence ({candidate.claims.length} claims)</summary>{candidate.claims.map((claim, i) => <section key={i}><p>{claim.text} {claim.kind === "inference" && <em>(inference)</em>}</p>{claim.evidence.map((ref, j) => { const source = batch.context?.sources.find((item) => item.id === ref.sourceId); return <button type="button" key={j} aria-label={`Inspect evidence ${index + 1}.${i + 1}.${j + 1}`} disabled={pending || !!batch.sourceIssue} onClick={() => void action(async () => setEvidence(await api.writingEvidence(manuscriptId, batch.id, ref.sourceId, ref.quote)))}><Quote size={14} /><span>{source?.title ?? "Source"}<small>{ref.quote}</small></span></button>; })}</section>)}</details>}
+        {onReferences && candidate.claims?.some((claim) => claim.evidence.some((ref) => batch.context?.sources.some((source) => source.id === ref.sourceId && source.kind === "literature"))) && <div className="writing-reference-action">
+          <label>Bibliography<select aria-label={`Bibliography for candidate ${index + 1}`} value={bibPath} onChange={(event) => setBibPath(event.target.value)}>{!bibliographyPaths.length && <option value="">No bibliography file</option>}{bibliographyPaths.map((name) => <option key={name}>{name}</option>)}</select></label>
+          <button type="button" disabled={!bibPath || busy || pending || !!batch.sourceIssue || !!batch.accepted} aria-label={`Add references for candidate ${index + 1}`} onClick={() => void action(async () => { await onReferences(batch, candidate.id, bibPath); setNotice(`References added to ${bibPath}.`); })}><BookPlus size={14} />Add references</button>
+          {!bibPath && <p className="writing-draft-notice">Create a .bib file and include it in your TeX project before inserting cited text.</p>}
+        </div>}
+        {candidate.status === "completed" && <footer><button type="button" disabled={busy || pending} aria-label={`Compare candidate ${index + 1}`} onClick={() => onCompare(batch, candidate.id)}><Columns2 size={14} />Compare</button>
+          {batch.request.assistant?.action !== "review" && <button type="button" disabled={busy || pending || batch.status === "running" || !!batch.accepted || !!candidate.dismissed || !!batch.sourceIssue || !!batch.request.assistant && !candidate.review?.supported || file.revision !== batch.request.expectedRevision} aria-label={`Accept candidate ${index + 1}`} onClick={() => void action(() => onAccept(batch, candidate.id))}><Check size={14} />Accept</button>}
+          <button type="button" className="writing-tool" disabled={pending || batch.status === "running" || !!batch.accepted} aria-label={`${candidate.dismissed ? "Restore" : "Reject"} candidate ${index + 1}`} title={candidate.dismissed ? "Restore candidate" : "Reject candidate"} onClick={() => void action(async () => { await api.dismissWritingCandidate(manuscriptId, batch.id, candidate.id, !candidate.dismissed); })}>{candidate.dismissed ? <RotateCcw size={14} /> : <X size={14} />}</button>
+        </footer>}
       </li>)}</ol>
     </>}
+    {!loading && !summaries.length && <p className="writing-no-drafts">No saved candidates for {file.path}.</p>}
+    {evidence && <WritingEvidenceDialog source={evidence} onClose={() => setEvidence(null)} />}
   </aside>;
+}
+
+function WritingEvidenceDialog({ source, onClose }: { source: WritingSourceRef; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [pdf, setPdf] = useState(false);
+  useEffect(() => { ref.current?.showModal(); return () => ref.current?.close(); }, []);
+  return <dialog ref={ref} className={`writing-dialog writing-evidence-dialog${pdf ? " has-pdf" : ""}`} aria-label="Writing evidence" onCancel={onClose}>
+    <header><Quote size={18} /><h2>Supporting evidence</h2><button type="button" className="writing-tool" aria-label="Close writing evidence" title="Close evidence" onClick={onClose}><X size={16} /></button></header>
+    <h3>{source.title}</h3><p>{source.kind} / lines {source.startLine}-{source.endLine}{source.page ? ` / page ${source.page}` : ""}</p><code>Revision {source.revision.slice(0, 12)}</code>
+    <blockquote>{source.quote}</blockquote>
+    <div className="writing-evidence-links">{source.paperId && <><button type="button" onClick={() => setPdf((value) => !value)}><FileText size={15} />{pdf ? "Hide PDF" : "Open PDF"}</button><a href={`${API_BASE}/api/papers/${encodeURIComponent(source.paperId)}/markdown`} target="_blank" rel="noreferrer"><ExternalLink size={14} />Markdown source</a></>}{source.originUrl && <a href={source.originUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Original source</a>}</div>
+    {pdf && source.paperId && <Suspense fallback={<p>Loading PDF...</p>}><PdfReader readOnly source={`${API_BASE}/api/papers/${encodeURIComponent(source.paperId)}/pdf`} highlights={[{ id: source.id, page: source.page ?? 1, quote: source.quote, active: true }]} /></Suspense>}
+  </dialog>;
 }

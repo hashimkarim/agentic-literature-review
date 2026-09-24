@@ -27,17 +27,42 @@ supported packages, isolation and installer prerequisites. The full Linux x64
 runtime now builds XeLaTeX projects with Biber/BibTeX, makeindex glossaries and
 bundled fonts, without running imported scripts. A real 116-file thesis imports
 unchanged and builds an 88-page PDF. Cross-platform build
-packaging, bidirectional source/PDF navigation, bibliography insertion and
-evidence-grounded new prose remain open.
+packaging and bidirectional source/PDF navigation remain open.
 History is per-file, not yet a grouped multi-file document timeline.
 
-The candidate API uses explicitly enabled AgenticDriver targets only, with an
-explicit model and 1-3 outputs per target (at most 6 per batch). It supplies the
-selected TeX text and up to 1,500 surrounding characters on each side, not any
-unselected paper, repository or experiment. Responses are unverified editing
-drafts. Partial failures retain successful alternatives; cancellation and process
-restarts never automatically replay paid work. Acceptance pins the source
-revision, records a recoverable intent, and writes a new text-history version.
+The visible AI assistant provides Compose, Sources and Drafts views: new prose,
+outlines, storylines, rewrite/expand/shorten/simplify/academic tone/grammar,
+citation finding and argument/claim review. It uses explicitly enabled
+AgenticDriver targets with an explicit model and 1-3 outputs per target (at most
+6 per batch). Audience, word budget, terminology, math detail, language and style
+constraints are recorded with each request. Cursor insertion and selected-text
+replacement both retain comparison and explicit acceptance.
+
+Sources are explicitly selected converted papers from linked projects (or the
+global library when unlinked), manuscript files and immutable uploads of code,
+CSV/JSON experiment results, research notes and benchmark text. File/folder
+uploads are snapshots, not live W&B or code-host connections. The context preview
+shows exact text, surrounding selection, source types/revisions, coverage and
+omissions before any model call. No unselected corpus is sent. Source URLs are
+provenance only and are not fetched.
+
+App-issued source IDs and literal quotations are checked before a separate model
+support review. The review can reject a draft despite valid IDs/quotes. It is
+labeled model review, not factual certification. Evidence inspection resolves
+current revisions, source lines, source URLs and PDF quotes. Explicit bibliography
+insertion writes app-owned metadata and stable citekeys to a chosen existing
+`.bib` file; it does not change the document's bibliography include commands.
+Internal evidence receives a provenance footnote, not a fabricated publication.
+Unsupported/rejected/stale drafts cannot overwrite the manuscript. Review-only
+reports are inspectable, not insertable.
+
+Partial failures retain successful alternatives; cancellation and process
+restarts never automatically replay paid work. Acceptance pins source revisions,
+records a recoverable intent, and writes a new text-history version. Legacy
+selected-text alternatives remain available and labeled unverified. Live model
+quality evaluation, automatic corpus discovery, live W&B/public repository
+connectors, inline grammar patches and grouped document history remain open.
+See [Writing Assistant Delivery](WRITING_ASSISTANT_PROGRESS.md) for checks/limits.
 
 ## Product Goal
 

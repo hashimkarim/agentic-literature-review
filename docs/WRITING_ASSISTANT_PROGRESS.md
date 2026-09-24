@@ -10,13 +10,27 @@ of this work. All generated text remains a draft until explicitly accepted.
    immutable source copies, exact prompt preview, revisions and coverage.
 2. Implemented: outlines, storylines, drafting, editing, citation discovery and review;
    multiple candidates, claim/source validation, recoverable acceptance/history.
-3. In progress: persistent assistant sidebar, source selection, evidence inspection,
-  bibliography actions, audience/style settings and responsive interaction tests.
+3. Implemented: persistent assistant sidebar, source selection, evidence inspection,
+   bibliography actions, audience/style settings and responsive interaction tests.
 
 Backend validation: typecheck and 194 tests pass, including literal quote/ID checks,
 separate semantic review, unsupported-result rejection, explicit bibliography
 insertion, cursor drafting, acceptance history, cancellation during review and
 stale/conflicting source protection. Checks use fixtures, not live model accounts.
+
+UI validation: production build and real app/installed SDK browser tests at
+1440, 1920, 860 and 390 pixels pass. Verified explicit mixed-source selection,
+zero inference during preview, two-model drafting/support review, exact evidence
+inspection, rejection/restoration, bibliography insertion, visual comparison,
+history-backed acceptance, unsupported-claim blocking and reload without replay.
+Existing writing/history/recovery and folder/ZIP import/edit/build browser suites
+also pass at all four widths. No personal sources or test PDFs are committed.
+
+Entry point: Writing -> open a document -> AI assistant. Compose, Sources and
+Drafts stay beside the editor; narrower screens use a dismissible side panel.
+Each generated candidate uses one generation call and one support-review call
+through the explicitly selected AgenticDriver model. This is not independent
+fact certification and no heuristic/provider fallback is used.
 
 ## Boundaries
 

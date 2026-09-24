@@ -3,7 +3,7 @@ import { FileCode2, FilePlus2, Plus, Save, History, Download, Trash2, Undo2, Red
 import { undo, redo } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { EditorView } from "codemirror";
-import type { AgentProvider, Manuscript, ManuscriptDocument, ManuscriptFile, ManuscriptHistoryEntry, Project, TexDiagnostic, TexBuild } from "@litagent/contracts";
+import type { AgentProvider, Manuscript, ManuscriptDocument, ManuscriptFile, ManuscriptHistoryEntry, Project, TexDiagnostic, TexBuild, WritingCandidateBatch } from "@litagent/contracts";
 import { api, ApiError } from "./api";
 import { WritingSession } from "./writing-session";
 import { TexEditor, TextComparison } from "./TexEditor";
@@ -11,6 +11,7 @@ import { WritingCandidatesDialog, WritingCandidatesPanel, type WritingSelection 
 import { useWritingBuild, WritingPreview, WritingBuildLog } from "./WritingBuild";
 import { WritingImport } from "./WritingImport";
 import { WritingFileTree, WritingFileTabs, WritingAsset } from "./WritingFiles";
+import { WritingAssistant } from "./WritingAssistant";
 import "./writing.css";
 
 function Tool({ label, children, ...props }: { label: string; children: ReactNode } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -169,6 +170,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
   const [selection, setSelection] = useState({ from: 0, to: 0 });
   const [generating, setGenerating] = useState<WritingSelection | null>(null);
   const [candidatesOpen, setCandidatesOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1100);
   const [initialBatchId, setInitialBatchId] = useState<string | null>(null);
   const [candidateReview, setCandidateReview] = useState<{ before: string; after: string; label: string } | null>(null);
   const build = useWritingBuild(id);
@@ -239,6 +241,33 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     selectFile(diagnostic.path); setJump({ path: diagnostic.path, line: diagnostic.line });
   }
   const canGenerate = viewMode !== "preview" && !!file && active.endsWith(".tex") && selection.to > selection.from && selection.to - selection.from <= 8000 && !compare && !candidateReview;
+  const candidatePanel = file ? <WritingCandidatesPanel key={active} manuscriptId={id} file={file} initialBatchId={initialBatchId} busy={busy}
+    bibliographyPaths={Object.keys(state.files).filter((name) => /\.bib$/i.test(name))}
+    onClose={() => { setCandidatesOpen(false); setAssistantOpen(false); setCandidateReview(null); }}
+    onClearComparison={() => setCandidateReview(null)}
+    onCompare={(batch, candidateId) => { const index = batch.candidates.findIndex((candidate) => candidate.id === candidateId); const item = batch.candidates[index]; if (item?.text !== null && item?.text !== undefined) { setViewMode("source"); setHistorical(null); setRemote(null); setCandidateReview({ before: batch.selectedText, after: item.text, label: `Candidate ${index + 1} / ${item.model}` }); } }}
+    onAccept={async (batch, candidateId) => {
+      setBusy(true);
+      try {
+        await requireSaved();
+        const current = session.getSnapshot().files[batch.request.path];
+        if (!current) throw new Error("The source file is no longer open.");
+        const saved = await api.acceptWritingCandidate(id, batch.id, candidateId, current.revision);
+        session.acceptRemote(saved); setCandidateReview(null);
+      } finally { setBusy(false); }
+    }}
+    onReferences={async (batch, candidateId, path) => {
+      setBusy(true);
+      try {
+        await requireSaved();
+        const current = session.getSnapshot().files[path];
+        if (!current) throw new Error("Reload the bibliography file before adding references.");
+        session.acceptRemote(await api.writingReferences(id, batch.id, candidateId, path, current.revision));
+      } finally { setBusy(false); }
+    }} /> : <p className="writing-no-drafts">Open a text file to view its saved drafts.</p>;
+  function created(batch: WritingCandidateBatch) {
+    setGenerating(null); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); setInitialBatchId(batch.id);
+  }
   return <div className="writing-document">
     <div className="writing-toolbar">
       <button type="button" className="writing-mobile-tree" aria-label="Toggle document files" aria-expanded={filesOpen} onClick={() => setFilesOpen((open) => !open)}><FolderTree size={16} /></button>
@@ -255,11 +284,13 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
         const range = editor.current?.state.selection.main;
         if (!range || range.empty) return;
         await requireSaved(); const current = session.getSnapshot().files[active]!;
+        setAssistantOpen(false);
         setGenerating({ file: { path: current.path, content: current.content, revision: current.revision }, from: range.from, to: range.to });
       })}><Sparkles size={16} /></Tool>
-      <Tool label="Saved alternatives" disabled={busy || !file} aria-pressed={candidatesOpen} onClick={() => { setViewMode("source"); setCandidatesOpen((open) => !open); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); }}><ListChecks size={16} /></Tool>
-      <Tool label="File history" disabled={busy || !file} aria-pressed={history !== null} onClick={() => { setViewMode("source"); setCandidatesOpen(false); setCandidateReview(null); if (history) { setHistory(null); setHistorical(null); } else void run(loadHistory); }}><History size={16} /></Tool>
+      <Tool label="Saved alternatives" disabled={busy || !file} aria-pressed={candidatesOpen} onClick={() => { setViewMode("source"); setAssistantOpen(false); setCandidatesOpen((open) => !open); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); }}><ListChecks size={16} /></Tool>
+      <Tool label="File history" disabled={busy || !file} aria-pressed={history !== null} onClick={() => { setViewMode("source"); setAssistantOpen(false); setCandidatesOpen(false); setCandidateReview(null); if (history) { setHistory(null); setHistorical(null); } else void run(loadHistory); }}><History size={16} /></Tool>
       <Tool label="Export TeX sources" disabled={busy} onClick={() => void run(exportSources)}><Download size={16} /></Tool>
+      <button type="button" className="writing-assistant-toggle" aria-pressed={assistantOpen} onClick={() => { setAssistantOpen((open) => !open); setFilesOpen(false); setCandidatesOpen(false); setHistory(null); setHistorical(null); setRemote(null); }}><Sparkles size={16} />AI assistant</button>
     </div>
     <div className="writing-build-toolbar">
       {compiling ? <button type="button" disabled={build.pending} onClick={() => void build.cancel()}><Square size={14} />Cancel build</button> : <button type="button" className="writing-primary" disabled={busy || build.pending || !build.state?.runtime.available} onClick={() => {
@@ -282,7 +313,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       {file.state !== "conflict" && <button type="button" disabled={busy} onClick={() => void session.save(active)}><Save size={14} />{file.state === "error" ? "Retry save" : "Save recovered draft"}</button>}
       <button type="button" disabled={busy} onClick={() => void run(async () => { const saved = (await api.manuscript(id)).files.find((item) => item.path === active); if (!saved) throw new Error("The saved file was deleted. Export your text before recreating it."); setHistorical(null); setRemote(saved); })}><History size={14} />Compare saved version</button>
     </div>}
-    <div className={`writing-body${history !== null ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}${filesOpen ? " files-open" : ""}`}>
+    <div className={`writing-body${history !== null ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}${assistantOpen ? " has-assistant" : ""}${filesOpen ? " files-open" : ""}`}>
       <aside className="writing-files" aria-label="Manuscript files">
         <header><button type="button" className="writing-files-root" aria-pressed={selected === ""} onClick={() => setSelected("")} title="Document root">Files</button>
           <Tool label="New folder" disabled={busy || build.pending} onClick={() => setDialog("folder")}><FolderPlus size={15} /></Tool>
@@ -312,24 +343,19 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
         <div className="writing-history-path">{active}</div>
         <ol>{history.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={historical?.entry.id === entry.id ? "active" : ""} onClick={() => void run(async () => { const request = ++historyRequest.current; const saved = await api.manuscriptVersion(id, active, entry.id); if (request === historyRequest.current) { setHistorical({ entry, file: saved }); setRemote(null); } })}><span>{entry.label ?? ({ created: "Initial version", saved: "Autosave", external: "External edit", restored: "Restored version", checkpoint: "Checkpoint", deleted: "Before deletion", candidate: "Accepted candidate" })[entry.reason]}</span><time dateTime={entry.savedAt}>{new Date(entry.savedAt).toLocaleString()}</time><code>{entry.revision.slice(0, 8)}</code></button></li>)}</ol>
       </aside>}
-      {candidatesOpen && file && <WritingCandidatesPanel key={active} manuscriptId={id} file={file} initialBatchId={initialBatchId} busy={busy}
-        onClose={() => { setCandidatesOpen(false); setCandidateReview(null); }}
-        onClearComparison={() => setCandidateReview(null)}
-        onCompare={(batch, candidateId) => { const index = batch.candidates.findIndex((candidate) => candidate.id === candidateId); const item = batch.candidates[index]; if (item?.text !== null && item?.text !== undefined) { setHistorical(null); setRemote(null); setCandidateReview({ before: batch.selectedText, after: item.text, label: `Candidate ${index + 1} / ${item.model}` }); } }}
-        onAccept={async (batch, candidateId) => {
+      {candidatesOpen && candidatePanel}
+      <WritingAssistant manuscriptId={id} file={file} selection={selection} providers={providers} visible={assistantOpen} disabled={busy || !!compare || !!candidateReview || viewMode === "preview"}
+        capture={async () => {
+          const range = editor.current?.state.selection.main;
+          if (!range || !file) throw new Error("Return to the TeX editor before generating.");
           setBusy(true);
-          try {
-            await requireSaved();
-            const current = session.getSnapshot().files[batch.request.path];
-            if (!current) throw new Error("The source file is no longer open.");
-            const saved = await api.acceptWritingCandidate(id, batch.id, candidateId, current.revision);
-            session.acceptRemote(saved); setCandidateReview(null);
-          } finally { setBusy(false); }
-        }} />}
+          try { await requireSaved(); const current = session.getSnapshot().files[active]!; return { file: { path: current.path, content: current.content, revision: current.revision }, from: range.from, to: range.to }; }
+          finally { setBusy(false); }
+        }} onClose={() => setAssistantOpen(false)} onCreated={created} drafts={candidatePanel} />
     </div>
     {buildLogOpen && build.state?.latest && <WritingBuildLog build={build.state.latest} onJump={jumpToDiagnostic} />}
     {generating && <WritingCandidatesDialog manuscriptId={id} selection={generating} providers={providers} onClose={() => setGenerating(null)} onCreated={(batch) => {
-      setGenerating(null); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); setInitialBatchId(batch.id); setCandidatesOpen(true);
+      created(batch); setAssistantOpen(false); setCandidatesOpen(true);
     }} />}
     <input hidden ref={upload} type="file" multiple aria-label="Upload manuscript files" onChange={(event) => {
       const files = Array.from(event.target.files ?? []); event.target.value = "";
