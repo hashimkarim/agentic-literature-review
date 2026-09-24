@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
-import { FileCode2, FilePlus2, Plus, Save, History, Download, Trash2, Undo2, Redo2, Search, X, RotateCcw, BookmarkPlus, RefreshCw, ChevronLeft, Check, AlertTriangle, Sparkles, ListChecks } from "lucide-react";
+import { FileCode2, FilePlus2, Plus, Save, History, Download, Trash2, Undo2, Redo2, Search, X, RotateCcw, BookmarkPlus, RefreshCw, ChevronLeft, Check, AlertTriangle, Sparkles, ListChecks, Link2, FolderKanban } from "lucide-react";
 import { undo, redo } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import type { EditorView } from "codemirror";
 import { strToU8, zipSync } from "fflate";
 import type { AgentProvider, Manuscript, ManuscriptDocument, ManuscriptFile, ManuscriptHistoryEntry, Project } from "@litagent/contracts";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 import { WritingSession } from "./writing-session";
 import { TexEditor, TextComparison } from "./TexEditor";
 import { WritingCandidatesDialog, WritingCandidatesPanel, type WritingSelection } from "./WritingCandidates";
@@ -34,39 +34,107 @@ function NameDialog({ title, label, initial = "", onSubmit, onClose }: { title: 
   </dialog>;
 }
 
-export default function WritingWorkspace({ projectId, projects, providers, onProjectChange }: { projectId: string; projects: Project[]; providers: AgentProvider[]; onProjectChange: (id: string) => void }) {
+function ProjectLinksDialog({ manuscript, projects, onUpdated, onClose }: { manuscript: Manuscript; projects: Project[]; onUpdated: (item: Manuscript) => void; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [baseline, setBaseline] = useState(manuscript.projectIds);
+  const [selected, setSelected] = useState(manuscript.projectIds);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  useEffect(() => { ref.current?.showModal(); return () => ref.current?.close(); }, []);
+  const options = [...projects, ...baseline.filter((id) => !projects.some((project) => project.id === id)).map((id) => ({ id, name: `Unavailable project (${id})` }))];
+  async function save(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError(null);
+    try { onUpdated(await api.updateManuscriptProjects(manuscript.id, selected, baseline)); onClose(); }
+    catch (error) { setError(error instanceof Error ? error.message : "Could not update project links."); setConflict(error instanceof ApiError && error.code === "manuscript_links_changed"); }
+    finally { setBusy(false); }
+  }
+  async function reload() {
+    setBusy(true); setError(null);
+    try { const latest = await api.manuscript(manuscript.id); setBaseline(latest.projectIds); setSelected(latest.projectIds); onUpdated(latest); setConflict(false); }
+    catch (error) { setError(error instanceof Error ? error.message : "Could not reload project links."); }
+    finally { setBusy(false); }
+  }
+  return <dialog ref={ref} className="writing-dialog writing-project-dialog" aria-labelledby="writing-project-title" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
+    <form onSubmit={(event) => void save(event)}>
+      <header><h2 id="writing-project-title">Linked projects</h2><Tool label="Close dialog" disabled={busy} onClick={onClose}><X size={16} /></Tool></header>
+      <p className="writing-project-document">{manuscript.name}</p>
+      <label>Find projects<input autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+      <fieldset disabled={busy}><legend>Projects <span>{selected.length} selected</span></legend>
+        <div className="writing-project-options">{options.filter((project) => project.name.toLowerCase().includes(query.toLowerCase())).map((project) =>
+          <label key={project.id}><input type="checkbox" checked={selected.includes(project.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, project.id] : current.filter((id) => id !== project.id))} /><FolderKanban size={16} /><span>{project.name}</span></label>
+        )}{options.length === 0 && <p>No projects yet</p>}{options.length > 0 && !options.some((project) => project.name.toLowerCase().includes(query.toLowerCase())) && <p>No matching projects</p>}</div>
+      </fieldset>
+      {error && <p className="writing-error" role="alert">{error}</p>}
+      <footer>{conflict && <button type="button" disabled={busy} onClick={() => void reload()}><RefreshCw size={15} />Reload links</button>}<button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="writing-primary" disabled={busy || conflict}><Check size={15} />{busy ? "Saving..." : "Save links"}</button></footer>
+    </form>
+  </dialog>;
+}
+
+export default function WritingWorkspace({ projects, providers }: { projects: Project[]; providers: AgentProvider[] }) {
   const [manuscripts, setManuscripts] = useState<Manuscript[]>([]);
-  const [active, setActive] = useState<string | null>(null);
+  const [active, setActive] = useState<string | null>(() => { try { return localStorage.getItem("la-writing-document"); } catch { return null; } });
   const [document, setDocument] = useState<ManuscriptDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [links, setLinks] = useState<Manuscript | null>(null);
+  const [query, setQuery] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  function openDocument(id: string | null) {
+    setActive(id); setError(null);
+    try { if (id) localStorage.setItem("la-writing-document", id); else localStorage.removeItem("la-writing-document"); } catch { /* Navigation also works without browser storage. */ }
+  }
   useEffect(() => {
     let current = true;
     setLoading(true); setError(null);
-    api.manuscripts(projectId).then((items) => { if (current) { setManuscripts(items); setActive((id) => id ?? items[0]?.id ?? null); setLoading(false); } })
+    api.manuscripts().then((items) => { if (current) { setManuscripts(items); setLoading(false); } })
       .catch((error) => { if (current) { setError(error.message); setLoading(false); } });
     return () => { current = false; };
-  }, [projectId, refresh]);
+  }, [refresh]);
   useEffect(() => {
     if (!active) { setDocument(null); return; }
     let current = true;
     setDocument(null); setError(null);
     api.manuscript(active).then((result) => { if (current) setDocument(result); }).catch((error) => { if (current) setError(error.message); });
     return () => { current = false; };
-  }, [projectId, active, refresh]);
+  }, [active, refresh]);
+  const projectNames = (ids: string[]) => ids.map((id) => projects.find((project) => project.id === id)?.name ?? `Unavailable project (${id})`).join(", ");
+  const visible = manuscripts.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()) && (!projectFilter || (projectFilter === "unlinked" ? item.projectIds.length === 0 : item.projectIds.includes(projectFilter))));
+  const currentDocument = document?.id === active ? document : null;
   return <section className="writing-workspace" aria-label="Writing workspace">
-    <header className="writing-heading">
-      <FileCode2 size={18} /><h1>Writing</h1>
-      <select aria-label="Writing project" value={projectId} onChange={(event) => onProjectChange(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
-      {manuscripts.length > 0 && <select aria-label="Manuscript" value={active ?? ""} onChange={(event) => setActive(event.target.value)}>{manuscripts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
+    <header className={`writing-heading${active ? " has-document" : ""}`}>
+      {active ? <button type="button" onClick={() => openDocument(null)}><ChevronLeft size={16} />Documents</button> : <FileCode2 size={18} />}
+      <h1 className="writing-document-name" title={currentDocument?.name}>{active ? currentDocument?.name ?? "Document" : "Documents"}</h1>
       <span className="writing-spacer" />
-      <button type="button" className="writing-primary" onClick={() => setCreating(true)}><Plus size={16} />New manuscript</button>
+      {currentDocument && <button type="button" aria-label="Link projects" onClick={() => setLinks(currentDocument)}><Link2 size={16} />Projects <span>{currentDocument.projectIds.length}</span></button>}
+      <button type="button" className="writing-primary writing-new-document" aria-label="New document" title="New document" onClick={() => setCreating(true)}><Plus size={16} /><span>New document</span></button>
     </header>
-    {error && <div className="writing-banner" role="alert">{error}<Tool label="Retry loading manuscripts" onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={16} /></Tool></div>}
-    {document ? <ManuscriptEditor key={document.id} document={document} providers={providers} /> : <div className="writing-empty"><FileCode2 size={32} /><h2>{loading || active && !error ? "Loading manuscript..." : "No manuscripts"}</h2>{!loading && !active && !error && <button type="button" className="writing-primary" onClick={() => setCreating(true)}><Plus size={16} />New manuscript</button>}</div>}
-    {creating && <NameDialog title="New manuscript" label="Title" onClose={() => setCreating(false)} onSubmit={async (name) => { const created = await api.createManuscript(name, [projectId]); setManuscripts((items) => [created, ...items]); setActive(created.id); }} />}
+    {error && <div className="writing-banner" role="alert">{error}<Tool label="Retry loading documents" onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={16} /></Tool></div>}
+    {active ? currentDocument ? <>
+      <div className="writing-project-summary"><FolderKanban size={14} /><span title={projectNames(currentDocument.projectIds)}>{currentDocument.projectIds.length ? projectNames(currentDocument.projectIds) : "No linked projects"}</span></div>
+      <ManuscriptEditor key={currentDocument.id} document={currentDocument} providers={providers} />
+    </> : <div className="writing-empty"><FileCode2 size={32} /><h2>{error ? "Document unavailable" : "Loading document..."}</h2></div> : <>
+      <div className="writing-document-filters">
+        <label className="writing-document-search"><Search size={16} /><input type="search" aria-label="Find documents" placeholder="Find documents..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+        <select aria-label="Filter documents by project" value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="">All projects</option><option value="unlinked">No linked projects</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
+        <span>{visible.length} {visible.length === 1 ? "document" : "documents"}</span>
+        <Tool label="Refresh documents" disabled={loading} onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={16} /></Tool>
+      </div>
+      {loading ? <div className="writing-empty"><h2>Loading documents...</h2></div> : visible.length ? <div className="writing-document-list"><table aria-label="Writing documents"><thead><tr><th>Document</th><th>Linked projects</th><th className="writing-created">Created</th><th aria-label="Actions" /></tr></thead><tbody>{visible.map((item) => <tr key={item.id}>
+        <td><button type="button" className="writing-open-document" onClick={() => openDocument(item.id)}><FileCode2 size={18} /><span>{item.name}</span></button></td>
+        <td><span className="writing-document-projects" title={projectNames(item.projectIds)}>{item.projectIds.length ? projectNames(item.projectIds) : "No linked projects"}</span></td>
+        <td className="writing-created"><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleDateString()}</time></td>
+        <td><Tool label={`Link projects to ${item.name}`} onClick={() => setLinks(item)}><Link2 size={16} /></Tool></td>
+      </tr>)}</tbody></table></div> : <div className="writing-empty"><FileCode2 size={32} /><h2>{error ? "Documents unavailable" : query || projectFilter ? "No matching documents" : "No documents yet"}</h2></div>}
+    </>}
+    {creating && <NameDialog title="New document" label="Title" onClose={() => setCreating(false)} onSubmit={async (name) => { const created = await api.createManuscript(name); setManuscripts((items) => [created, ...items]); openDocument(created.id); }} />}
+    {links && <ProjectLinksDialog manuscript={links} projects={projects} onClose={() => setLinks(null)} onUpdated={(updated) => {
+      setManuscripts((items) => items.map((item) => item.id === updated.id ? { ...item, projectIds: updated.projectIds } : item));
+      setDocument((current) => current?.id === updated.id ? { ...current, projectIds: updated.projectIds } : current);
+    }} />}
   </section>;
 }
 

@@ -211,10 +211,11 @@ Inspiration: [scite](COMPETITIVE_RESEARCH.md#c05-scite),
 Owners: `apps/web`, `packages/library`, `packages/workflows`, `packages/contracts`.
 Backend note persistence and synthesis-to-note flows already exist; the general
 notes workspace is not a finished editor.
-The user-requested [Writing Mode](WRITING_MODE.md) is a planned project-specific
-TeX editor, compiled preview and source-grounded assistant. Existing note/synthesis
-features are not a completed writing mode. Its W1 foundation starts after the
-notes/evidence workspace, without waiting for online discovery or concept maps.
+The user-requested [Writing Mode](WRITING_MODE.md) is a global workspace with
+independent documents and reusable many-to-many project links. The TeX editor,
+history and selected-text alternatives are implemented; compiled preview and
+source-grounded new prose remain open. Existing note/synthesis features alone
+are not a completed writing mode.
 Inspiration: [Jenni](COMPETITIVE_RESEARCH.md#c31-jenni),
 [Paperpal](COMPETITIVE_RESEARCH.md#c32-paperpal),
 [Sourcely](COMPETITIVE_RESEARCH.md#c33-sourcely).
@@ -230,7 +231,7 @@ Inspiration: [Jenni](COMPETITIVE_RESEARCH.md#c31-jenni),
 | WRITE-07 | Figures, tables and cross-references: Planned | P2 | Insert permitted assets with captions, attribution and stable references; renumber outputs without breaking links to extracted evidence. | C34, C43 |
 | WRITE-08 | Academic/submission checks: Research | P3 | Optional style/structure/reference checks report their limits; external similarity checking requires consent and licensed access. | C08, C32, C34 |
 | WRITE-09 | Writing templates and output styles: Planned | P2 | Reusable annotated bibliography, research memo, comparison and review templates produce editable Markdown/LaTeX/DOCX outputs via PORT-04. | C12, C19, C31 |
-| WRITE-10 | Project TeX writing workspace: Partial | P1 | Multi-file CodeMirror editor, search, autosave/recovery, conflict review and source ZIP export implemented; citation/label completion, source import and compiled preview remain open. Manual authoring needs no provider/account. | Core |
+| WRITE-10 | Global document writing workspace: Partial | P1 | Global Writing navigation, independent documents, search/project filters, reusable many-to-many project links, legacy migration, multi-file CodeMirror editor, autosave/recovery, conflict review and source ZIP export implemented; citation/label completion, source import and compiled preview remain open. Manual authoring needs no project/provider/account. | Core |
 | WRITE-11 | Restricted compilation and PDF preview: Planned | P1 | Packaged TeX build with isolation, no default shell/network access, resource limits, file/line errors, last-good preview and bidirectional source navigation; test clean installs. | Core |
 | WRITE-12 | Searchable code and experiment context: Planned | P1 | Attach approved roots/collections or find relevant evidence via EVID-10/11/13; retain commit/hash/line/run/metric/row provenance, secret exclusions and context preview; never equate code with measurements or execute it. | Core |
 | WRITE-13 | Audience/complexity slider: Partial | P1 | Four audience levels persisted with selected-text generation and explicit review; independent concision/jargon/math controls and real-provider semantic preservation evaluation remain open. | Core |

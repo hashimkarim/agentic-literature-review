@@ -6,11 +6,45 @@
 .writing-workspace .writing-primary, .writing-dialog .writing-primary { background:var(--accent-primary); color:var(--bg-primary); border-color:var(--accent-primary); }
 .writing-heading { display:flex; align-items:center; gap:12px; min-height:58px; padding:10px 18px; border-bottom:1px solid var(--border-line); flex-wrap:wrap; }
 .writing-heading h1 { font-size:17px; margin:0; font-weight:600; }
+.writing-heading .writing-document-name { min-width:0; max-width:480px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.writing-project-summary { display:flex; align-items:center; gap:8px; min-height:34px; padding:6px 18px; border-bottom:1px solid var(--border-line); color:var(--text-secondary); font-size:12px; }
+.writing-project-summary svg { flex-shrink:0; }
+.writing-project-summary span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.writing-document-filters { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:18px 24px; border-bottom:1px solid var(--border-line); }
+.writing-document-search { display:flex; align-items:center; gap:8px; flex:1; min-width:140px; max-width:460px; color:var(--text-secondary); }
+.writing-document-search input, .writing-document-filters select { background:var(--surface-input); color:var(--text-primary); border:1px solid var(--border-line); border-radius:4px; padding:8px; font-size:13px; min-width:0; }
+.writing-document-search input { width:100%; }
+.writing-document-filters select { max-width:240px; text-overflow:ellipsis; }
+.writing-document-filters > span { margin-left:auto; font-size:12px; color:var(--text-muted); }
+.writing-document-list { flex:1; overflow:auto; padding:0 24px 24px; }
+.writing-document-list table { width:100%; table-layout:fixed; border-collapse:collapse; text-align:left; }
+.writing-document-list th, .writing-document-list td { padding:12px 10px; border-bottom:1px solid var(--border-line); vertical-align:middle; }
+.writing-document-list th { color:var(--text-muted); font-size:12px; font-weight:500; }
+.writing-document-list th:first-child { width:45%; }
+.writing-document-list th.writing-created { width:130px; }
+.writing-document-list th:last-child { width:52px; }
+.writing-document-list td { font-size:13px; }
+.writing-document-list time { color:var(--text-secondary); font-size:12px; }
+.writing-workspace .writing-open-document { border:0; background:transparent; justify-content:flex-start; text-align:left; padding:4px 0; width:100%; }
+.writing-open-document svg { flex-shrink:0; color:var(--accent-primary); }
+.writing-open-document span { overflow-wrap:anywhere; line-height:1.5; }
+.writing-document-projects { color:var(--text-secondary); overflow-wrap:anywhere; line-height:1.5; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.writing-project-dialog { max-height:calc(100dvh - 32px); overflow:auto; }
+.writing-project-document { font-size:13px; color:var(--text-secondary); overflow-wrap:anywhere; margin:0 0 16px; }
+.writing-project-dialog fieldset { min-width:0; padding:0; border:0; margin:20px 0 0; }
+.writing-project-dialog legend { font-size:13px; width:100%; margin-bottom:8px; }
+.writing-project-dialog legend span { float:right; color:var(--text-muted); font-size:12px; }
+.writing-project-options { max-height:320px; overflow:auto; }
+.writing-project-dialog .writing-project-options label { flex-direction:row; align-items:center; padding:10px 4px; gap:10px; border-bottom:1px solid var(--border-line); }
+.writing-project-dialog .writing-project-options input { accent-color:var(--accent-primary); width:16px; height:16px; padding:0; flex-shrink:0; }
+.writing-project-options svg { color:var(--text-secondary); flex-shrink:0; }
+.writing-project-options span { overflow-wrap:anywhere; }
+.writing-project-options p { font-size:13px; color:var(--text-muted); }
 .writing-heading select, .writing-mobile-files { background:var(--surface-input); border:1px solid var(--border-line); color:var(--text-primary); border-radius:4px; padding:7px; min-width:0; max-width:240px; text-overflow:ellipsis; }
 .writing-spacer { flex:1; }
 .writing-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:240px; flex:1; color:var(--text-secondary); }
 .writing-empty h2 { font-size:17px; margin:0; }
-.writing-document { flex:1; min-height:0; display:flex; flex-direction:column; }
+.writing-document { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
 .writing-toolbar { display:flex; align-items:center; gap:5px; padding:7px 12px; min-height:46px; background:var(--bg-secondary); border-bottom:1px solid var(--border-line); flex-wrap:wrap; }
 .writing-current-path { font-family:var(--font-mono); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:320px; margin-right:12px; }
 .writing-workspace .writing-tool, .writing-dialog .writing-tool { width:32px; height:32px; padding:0; flex-shrink:0; background:transparent; border-color:transparent; }
@@ -99,6 +133,21 @@
 .writing-sent-context h3 { font-size:12px; margin:16px 0 8px; color:var(--text-secondary); }
 .writing-sent-context pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:180px; overflow:auto; font-size:12px; }
 .writing-draft-notice { color:var(--state-warning); font-size:12px; }
+@media(max-width:600px) {
+  .writing-heading .writing-document-name { flex:1; max-width:none; }
+  .writing-heading.has-document .writing-document-name { flex-basis:100%; order:-1; white-space:normal; overflow-wrap:anywhere; }
+  .writing-heading.has-document .writing-new-document span { display:none; }
+  .writing-heading.has-document .writing-new-document { width:32px; height:32px; padding:0; margin-left:auto; }
+  .writing-heading .writing-spacer { display:none; }
+  .writing-document-filters { padding:12px; gap:8px; }
+  .writing-document-search { flex-basis:100%; max-width:none; }
+  .writing-document-filters select { max-width:155px; }
+  .writing-document-list { padding:0 4px 12px; }
+  .writing-document-list th, .writing-document-list td { padding:10px 6px; }
+  .writing-document-list .writing-created { display:none; }
+  .writing-document-list th:last-child { width:38px; }
+  .writing-project-dialog footer { flex-wrap:wrap; }
+}
 @media(max-width:1100px) {
   .writing-body, .writing-body.has-history, .writing-body.has-candidates { grid-template-columns:minmax(0,1fr); }
   .writing-files { display:none; }

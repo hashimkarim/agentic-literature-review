@@ -36,9 +36,9 @@ import { ChatSessions } from "./chat-sessions";
 import { savedCitationHash, type SavedCitationSources } from "./citation-revision";
 import { useChatScroll } from "./use-chat-scroll";
 
-type Screen = "library" | "projects" | "search" | "settings" | "presets";
+type Screen = "library" | "projects" | "writing" | "search" | "settings" | "presets";
 const WritingWorkspace = lazy(() => import("./WritingWorkspace"));
-type WorkspaceTool = "papers" | "workflows" | "map" | "notes" | "writing" | "exports";
+type WorkspaceTool = "papers" | "workflows" | "map" | "notes" | "exports";
 type ReaderTab = "pdf" | "markdown" | "notes";
 type SettingsSection = "providers" | "defaults" | "appearance" | "storage" | "about";
 
@@ -883,6 +883,7 @@ function App() {
   const nav: Array<[Screen, string, string, string?]> = [
     ["library", "library-big", "Library"],
     ["projects", "folder-kanban", "Projects"],
+    ["writing", "file-pen-line", "Writing"],
     ["search", "search", "Search"],
     ["settings", "settings", "Settings"],
     ["presets", "flask-conical", "Presets", "WIP"]
@@ -891,6 +892,7 @@ function App() {
   const crumb: Record<Screen, [string, string]> = {
     library: ["Global Library", "All papers"],
     projects: ["Projects", activeProject?.name ?? "No project"],
+    writing: ["Writing", "Documents"],
     search: ["Search", "Global index"],
     settings: ["Settings", "Providers"],
     presets: ["Presets", "Experimental"]
@@ -1058,6 +1060,7 @@ function App() {
             onOpenCitation={openCitation}
           />
         ) : null}
+        {screen === "writing" ? <Suspense fallback={<div className="la-screen">Loading documents...</div>}><WritingWorkspace projects={projects} providers={providers} /></Suspense> : null}
         {screen === "search" ? (
           <SearchScreen
             papers={libraryPapers}
@@ -1088,12 +1091,12 @@ function App() {
         <span className="la-stitem accent" style={{ minWidth: 0, flexShrink: 1, maxWidth: 260 }}>
           <Icon name="folder-git-2" size={12} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {screen === "library" ? "global library" : activeProject?.name ?? status?.repoRoot ?? "workspace"}
+            {screen === "library" ? "global library" : screen === "writing" ? "writing" : activeProject?.name ?? status?.repoRoot ?? "workspace"}
           </span>
         </span>
         <span className="la-stitem">
           <Icon name="files" size={12} />
-          {libraryPapers.length} papers · {projectPapers.length} linked
+          {libraryPapers.length} papers{screen === "projects" ? ` · ${projectPapers.length} linked` : ""}
         </span>
         <span className="spacer" />
         <span className={status?.git.clean ? "la-stitem ok" : "la-stitem warn"}>
@@ -1226,13 +1229,12 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
   );
   return (
     <WorkspaceShell
-      writing
       tool={tool}
       setTool={setTool}
-      primaryAction={tool !== "writing" ? <Btn variant="primary" sm icon="plus" onClick={() => props.onImportPapers(props.activeProjectId)} disabled={!props.activeProjectId}>Add papers</Btn> : undefined}
-      secondaryAction={tool !== "writing" ? <Btn variant="ghost" sm icon="users">Share</Btn> : undefined}
+      primaryAction={<Btn variant="primary" sm icon="plus" onClick={() => props.onImportPapers(props.activeProjectId)} disabled={!props.activeProjectId}>Add papers</Btn>}
+      secondaryAction={<Btn variant="ghost" sm icon="users">Share</Btn>}
     >
-      {tool === "writing" && props.activeProjectId ? <Suspense fallback={<div className="la-readerbody">Loading writing workspace...</div>}><WritingWorkspace key={props.activeProjectId} projectId={props.activeProjectId} projects={props.projects} providers={props.providers} onProjectChange={props.onProjectChange} /></Suspense> : tool === "papers" ? (
+      {tool === "papers" ? (
         <div className="la-content">
           <ProjectContext
             project={props.project}
@@ -1274,14 +1276,12 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
 }
 
 function WorkspaceShell({
-  writing = false,
   tool,
   setTool,
   primaryAction,
   secondaryAction,
   children
 }: {
-  writing?: boolean;
   tool: WorkspaceTool;
   setTool: (tool: WorkspaceTool) => void;
   primaryAction?: ReactNode;
@@ -1293,7 +1293,6 @@ function WorkspaceShell({
     ["workflows", "workflow", "Workflows"],
     ["map", "share-2", "Concept Map"],
     ["notes", "sticky-note", "Notes"],
-    ...(writing ? [["writing", "file-pen-line", "Writing"] as [WorkspaceTool, string, string]] : []),
     ["exports", "download", "Exports"]
   ];
   return (

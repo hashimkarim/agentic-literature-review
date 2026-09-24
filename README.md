@@ -27,7 +27,13 @@ Project roadmap and implementation progress are tracked in
 
 ## Writing
 
-Projects > Writing provides a multi-file TeX/BibTeX editor with autosave, local
+Writing is a global tab with its own searchable document list. Documents can link
+zero, one or several projects, and each project can be reused in multiple
+documents. Link/unlink projects from the document header or list; unlinking does
+not delete text, history or alternatives. Existing project-owned manuscripts
+migrate automatically into `manuscripts/` with their original IDs and history.
+
+Each document provides a multi-file TeX/BibTeX editor with autosave, local
 draft recovery, version history, named checkpoints, diff review and source ZIP
 export. History is per-file and independent of Git commits.
 
@@ -37,7 +43,8 @@ context, choose an audience level, compare drafts and explicitly accept one.
 Generation never automatically replaces text, and changed source revisions block
 stale suggestions. These editing drafts are not evidence-verified claims.
 
-Packaged TeX compilation/PDF preview and internal/literature evidence attachment
+Project links organize documents; they do not yet feed project sources into
+generation. Packaged TeX compilation/PDF preview and internal/literature evidence attachment
 are still pending. See [Writing Mode](docs/WRITING_MODE.md) for the full scope.
 
 ## Useful Commands

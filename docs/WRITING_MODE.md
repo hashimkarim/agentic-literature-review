@@ -5,11 +5,12 @@ requested a Grammarly/Overleaf-like TeX workspace grounded in their code,
 experiments and literature. These are product requirements, not claims of
 competitor parity.
 Existing notes, accepted research records, comparisons and synthesis-to-note
-workflows are foundations; they are not yet a manuscript editor.
+workflows are foundations; Writing adds a separate manuscript editor.
 
 Current slice: global document CRUD and revision-checked `.tex`/`.bib` saves
 are implemented, with automatic per-file history, named checkpoints and guarded
-restore. The project Writing tab now includes a CodeMirror source editor, file
+restore. The global Writing tab includes a searchable document list, project
+filters and link/unlink controls for multiple projects, a CodeMirror source editor, file
 creation/deletion, autosave/recovery, side-by-side history review and source ZIP
 export. Selected-text alternatives include explicit model/output-count controls,
 an audience slider, context preview, saved batches, comparison and acceptance.
@@ -47,6 +48,10 @@ does not yet send its evidence to generation: source attachment remains W2 work.
 
 ## Workspace
 
+- Document library: independent documents, title search and project/unlinked
+  filters; open a document without carrying over paper-reader sidebars.
+- Document header: back to Documents, title and linked-project picker. The same
+  project can be reused across documents; manual writing requires no project.
 - Left: manuscript file tree, section outline, labels/citekeys, assets and
   attachment inventory; collapse it without losing the active file/selection.
 - Center: TeX source editor with syntax diagnostics, completion for citations,

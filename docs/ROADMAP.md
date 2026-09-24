@@ -8,7 +8,7 @@ state, tags, collections, notes, questions, and generated research artifacts.
 
 ## Planning Documents
 
-- [Writing Mode](WRITING_MODE.md): project TeX editor, attached code/results and
+- [Writing Mode](WRITING_MODE.md): global TeX documents, linked projects, code/results and
   literature, storyline/drafting, citation finder and audience controls.
 - [Internal/external evidence discovery](EVIDENCE_SOURCES.md): search own code,
   experiments and W&B alongside papers, public repositories and benchmarks;
@@ -55,7 +55,7 @@ using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENT
 | Structured extraction | Working MVP | Accepted findings/method/dataset/result/limitation/reproducibility records | Configurable extraction schemas, editable literature sheets and per-cell provenance UI |
 | Notes | Backend foundation | Markdown note CRUD, annotation links and synthesis-to-note flow | General editor/browser, backlinks, evidence ledger and note search UI |
 | Internal/external evidence finder | Planned | Paper evidence and accepted research records are foundations, not code/run connectors | Search own repositories/results/W&B and public code/benchmarks with typed provenance, source permissions and comparability checks |
-| Writing Mode | Partial | Multi-file TeX editor, autosave/recovery, per-file history/checkpoints/diffs/restore, source ZIP, selected-text multi-model alternatives with audience slider/context preview and revision-safe acceptance | Safe packaged compilation/preview, source/citation attachment, outline/storyline, evidence-grounded new prose and live generation quality |
+| Writing Mode | Partial | Global documents with reusable project links, search/filter, legacy migration, multi-file TeX editor, autosave/recovery, per-file history/checkpoints/diffs/restore, source ZIP, selected-text multi-model alternatives with audience slider/context preview and revision-safe acceptance | Safe packaged compilation/preview, source/citation attachment, outline/storyline, evidence-grounded new prose and live generation quality |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
 | Git and LFS | Foundation | Repository bootstrap, LFS policy and status display | Commit/sync UI, conflict handling and recovery guidance |
@@ -278,7 +278,8 @@ Backlog: WRITE-03/04/05, WRITE-10 through WRITE-15, MAP-01/02/03;
 shared evidence: EVID-09 through EVID-14; then WRITE-06/07/09/16/17 and
 MAP-04 through MAP-07.
 
-Writing is a first-class project workspace, specified in [Writing Mode](WRITING_MODE.md).
+Writing is a global workspace with independent documents linked to zero or more
+reusable projects, specified in [Writing Mode](WRITING_MODE.md).
 Start its W1 editor/preview foundation after gate 2, alongside gate 3; it does
 not wait for online discovery, Zotero sync or concept-map completion. W2-W4
 reuse gate 1 source guards and the notes/evidence foundation.
@@ -428,6 +429,7 @@ determine release readiness.
 
 | Date | Change | Verification |
 | --- | --- | --- |
+| 2026-09-24 | Global Writing navigation replaces the project tab: independent document list, title/project filters, reusable project links, conflict review and unlinking without losing editor/history/candidates | Typecheck, 157 tests and build pass. Isolated real app/SDK browser workflows at 1440/1920/860/390px cover two documents sharing two projects, concurrent link edits, unlinking/reload and existing writing controls; chat checks at 1440/1920px and live local Writing/create-cancel smoke pass. Linked-project evidence ingestion remains planned; generation checks use synthetic models only. |
 | 2026-09-24 | Global document storage/API, many-to-many project links and atomic migration from project folders; stable history/candidates and legacy browser recovery | Typecheck and 157 tests pass, including migration interruption/conflict, link concurrency, unlinking and candidate acceptance after migration. Global navigation UI follows. |
 | 2026-09-24 | Candidate UI: explicit connections/models/output counts, audience slider, exact context preview, persistent alternatives, comparison and acceptance; narrow screens use inline diffs | Typecheck, 150 tests, build and existing chat checks; isolated app plus installed SDK synthetic HTTP checks at 1440/1920/860/390px cover repeated/multiple models, invalid output, cancellation acknowledgement, stale drafts, history and reload without replay. No real account calls or evidence-quality certification. |
 | 2026-09-24 | Writing candidate backend: selected-text/model/count requests, bounded context, persisted alternatives, partial failures, cancellation, restart interruption and recoverable revision-checked acceptance | Typecheck and 150 tests, including HTTP candidate review and fixture execution; no live inference, provider runtime changes or automatic file acceptance. Candidate UI follows. |
