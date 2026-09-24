@@ -1,8 +1,9 @@
 # Writing Mode
 
-Status: planned, not implemented. Added 2026-09-23 from the user's request for
-a Grammarly/Overleaf-like TeX workspace grounded in their code, experiments and
-literature. These are product requirements, not claims of competitor parity.
+Status: planned, not implemented. Added 2026-09-23; updated 2026-09-24. The user
+requested a Grammarly/Overleaf-like TeX workspace grounded in their code,
+experiments and literature. These are product requirements, not claims of
+competitor parity.
 Existing notes, accepted research records, comparisons and synthesis-to-note
 workflows are foundations; they are not yet a manuscript editor.
 
@@ -49,8 +50,16 @@ Each manuscript has an explicit context set, with section-level overrides:
 - Experiment manifests, logs, CSV/JSON result tables, configuration files,
   figures, datasets and their documented provenance. Large datasets are linked
   by identifiers/manifests, not automatically copied into prompts.
+- Read-only W&B projects/runs, metric histories and artifact tables, plus
+  explicitly selected public codebases, benchmark protocols and result sources.
 - Research questions, contributions, hypotheses, evaluation protocol and
   user-written findings. Unsupported notes remain assertions, not verified facts.
+
+Attachment is not the only discovery path. The shared
+[internal and external evidence finder](EVIDENCE_SOURCES.md) searches approved
+repositories, experiment collections, W&B projects and literature for relevant
+content. Users choose the allowed sources, not every supporting file or run in
+advance. Search results become reviewable context for the active claim/section.
 
 Users choose paths/files explicitly and inspect what will be sent to a provider.
 Exclude credentials, environment files and ignored/binary/generated material by
@@ -131,9 +140,13 @@ variants for the same paragraph and keep these settings local to their scope.
 
 ## Citation Finder And Evidence Review
 
-- Select a claim and find candidate support first in the chosen library/evidence
-  set. A separate explicit action searches academic sources; show whether the
-  candidate has full text, abstract only or metadata only before use.
+- Select a claim and search Internal, Literature & public, or Both, within
+  approved sources. Find relevant code, experiment/W&B results and paper passages
+  rather than requiring pre-attached evidence. External discovery is explicit;
+  show actual content availability and query/data egress before use.
+- Trace original-work claims to code commits, run configs, metric/step or result
+  cells; compare with paper/benchmark results only after checking their protocols.
+  The shared evidence finder serves chat and notes too, not a second writing index.
 - Rank and explain actual relevance, showing source passages and contrary or
   qualifying findings. Distinguish supports, contradicts, discusses and
   insufficient evidence. Similarity is not support or calibrated confidence.
@@ -143,6 +156,9 @@ variants for the same paragraph and keep these settings local to their scope.
 - Insert valid TeX citation commands with stable citekeys and the project's
   chosen bibliography style. Detect missing/duplicate keys and preserve Zotero
   identity; updates use the shared bibliography model, not a second library.
+- Own results use evidence links and figure/table/method references where
+  appropriate; published software/datasets can have reviewed bibliography entries.
+  Do not invent paper citations for code or measurements.
 - Claim-to-evidence inspection shows which sentence a citation supports, exact
   quote, source type/revision and any inference. User edits or changed evidence
   invalidate earlier support checks instead of retaining a misleading badge.
@@ -223,10 +239,10 @@ include private code, datasets, tokens or user-supplied test PDFs.
 | Slice | Scope | Gate |
 | --- | --- | --- |
 | W1: local writer | Project Writing tab, multi-file TeX editor, recovery, restricted build, PDF preview, existing citation insertion | Fresh project imports/edits/builds/reopens without data loss or an AI provider; compile failures preserve source and last good preview. |
-| W2: attach evidence | Library/notes/records plus read-only code/result attachments, permissions, revision manifests | Exact file/commit/row/passage navigation works; secrets/out-of-scope files never enter context; changed sources mark dependents stale. |
+| W2: attach and find evidence | Library/notes/records plus searchable read-only code/result roots, permissions and revision manifests; reuse shared evidence discovery | Discover relevant files/rows without preselecting them; exact file/commit/row/passage navigation works; secrets/out-of-scope files never enter context; changed sources mark dependents stale. |
 | W3: plan and draft | Outline/storyline, selected-text commands, audience slider, provider/model, reviewable patches | A synthetic source-grounded paragraph at each audience level preserves facts/cites/uncertainty; stale draft edits cannot overwrite new user text. |
-| W4: citation review | Claim evidence inspector, local citation finder, unsupported/counterevidence, bibliography checks | Distinct claims select distinct supporting sources; unsupported claims remain flagged; no invented keys or silent citation substitutions. |
-| W5: advanced authoring | Online discovery, result-to-prose, figures, consistency, reviewer response and submission presets | End-to-end examples retain inspectable provenance, valid exports and reversible edits; online discovery waits for its own source adapters. |
+| W4: citation review | Claim evidence inspector, internal/library evidence finder, unsupported/counterevidence, bibliography checks | Distinct claims select distinct supporting sources; code, measurements and literature retain different roles; unsupported claims remain flagged; no invented keys or silent citation substitutions. |
+| W5: connected and advanced authoring | W&B/public code/benchmark and academic source adapters from E3/E4, result-to-prose, figures, consistency, reviewer response and submission presets | End-to-end examples retain inspectable provenance, comparison checks, valid exports and reversible edits; connectors are incremental and do not block local authoring. |
 
 Start W1 after the notes/evidence foundation, alongside extraction work. W2-W4
 reuse reliable source anchors; online search, graph views and cloud collaboration
@@ -241,6 +257,9 @@ features are incremental, not bundled into one large implementation.
   access and excessive resource use without corrupting user files.
 - Attach two code revisions and two result runs; distinguish implementation
   evidence from measured results and catch mismatched configurations/metrics.
+- Discover evidence within approved local roots and synthetic W&B/public sources
+  without pre-attached snippets. A cross-source claim retains exact run/metric,
+  code and paper targets; incompatible benchmark protocols remain flagged.
 - Generate outline/paragraph fixtures at each audience level; retain numbers,
   equations, negation, uncertainty and citation identity. Report omitted context.
 - Reject invented/out-of-scope/stale sources and citation injection; verify local

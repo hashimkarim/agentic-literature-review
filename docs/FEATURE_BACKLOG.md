@@ -1,6 +1,6 @@
 # LitAgent Feature Backlog
 
-Updated: 2026-09-23. Delivery order: [roadmap](ROADMAP.md).
+Updated: 2026-09-24. Delivery order: [roadmap](ROADMAP.md).
 Research basis: [43-product feature survey](COMPETITIVE_RESEARCH.md).
 
 This is a deduplicated product backlog, not a promise to copy every service or
@@ -178,8 +178,13 @@ Inspiration: [Elicit](COMPETITIVE_RESEARCH.md#c03-elicit),
 
 ## Evidence Ledger And Synthesis
 
-Owners: `packages/contracts`, `packages/library`, `packages/workflows`, `apps/web`.
+Owners: `packages/contracts`, `packages/library`, `packages/indexer`,
+`packages/workflows`, `apps/server`, `apps/web`.
 Depends on CHAT-06, READ-04 and accepted DATA records.
+The planned [internal/external evidence finder](EVIDENCE_SOURCES.md) extends
+paper evidence to own code/results, W&B, public repositories and benchmarks.
+It serves chat, notes, comparison and writing, with explicit source permissions;
+attachments alone do not fulfill the discovery requirement.
 Inspiration: [scite](COMPETITIVE_RESEARCH.md#c05-scite),
 [Consensus](COMPETITIVE_RESEARCH.md#c01-consensus),
 [EvidenceHunt](COMPETITIVE_RESEARCH.md#c42-evidencehunt).
@@ -194,6 +199,12 @@ Inspiration: [scite](COMPETITIVE_RESEARCH.md#c05-scite),
 | EVID-06 | Reference integrity checks: Planned | P1 | Validate bibliography identity, duplicated references and available correction/retraction/version signals with source dates; surface unavailable checks explicitly. | C05, C32 |
 | EVID-07 | Evidence change propagation: Planned | P2 | Changed/retracted sources mark affected claims, notes, comparisons and answers stale; keep old snapshots and review regeneration diffs. | C26, C42 |
 | EVID-08 | Statistical meta-analysis: Research | P3 | Only after validated quantitative schemas: use an established statistical engine, specify assumptions, assess heterogeneity and reproduce outputs with expert review. | C08, C27 |
+| EVID-09 | Typed multi-source evidence: Planned | P1 | Extend paper evidence with code/run/result/benchmark source kinds, revisions and typed locations; preserve old citations and enforce source access on retrieval and saved display. | Core |
+| EVID-10 | Own code and experiment discovery: Planned | P1 | Search approved repository/result roots without manually choosing every evidence file; retain commit/line or run/row/config provenance, exclude secrets and never execute source code. | Core |
+| EVID-11 | Read-only W&B evidence connector: Planned | P1 | Discover fields and search selected projects/runs/configs/metrics/tables/artifacts; cite actual content with key/step/aggregation/snapshot, disclose sampling and handle permission, revision and offline failures. | Core |
+| EVID-12 | Public code and benchmark discovery: Planned | P1 | Find and inspect pinned implementations, evaluation protocols and result rows alongside FIND paper adapters; distinguish metadata from inspected evidence and approve private query egress. | Core |
+| EVID-13 | Unified internal/external evidence finder: Planned | P1 | Internal, Literature & public, and Both scopes share reviewed claim support/counterevidence with chat/notes/writing; report searched/omitted/unavailable sources and navigate every result's exact target. | Core |
+| EVID-14 | Cross-source result comparability: Planned | P1 | Connect own runs/configs/commits to paper/benchmark results; check task, split, metric, aggregation and protocol, disclose run selection and qualify incompatible or incomplete comparisons. | Core |
 
 ## Notes And Source-Grounded Writing
 
@@ -212,7 +223,7 @@ Inspiration: [Jenni](COMPETITIVE_RESEARCH.md#c31-jenni),
 | --- | --- | --- | --- | --- |
 | WRITE-01 | Markdown notes workspace: Partial | P1 | Replace placeholder notes with browser/editor, autosave, search, revisions and recovery; support paper-linked and project-wide notes. | C21, C38, Core |
 | WRITE-02 | Capture and backlinks: Partial | P1 | Save annotations, selected quotes, chat turns and workflow outputs as notes with durable backlinks to sources, runs and questions. | C02, C17, C35 |
-| WRITE-03 | Citation finder and claim support: Planned | P1 | Find support/counterevidence in selected sources, inspect exact quotes/revisions, abstain when unsupported and insert valid citekeys only after review; online discovery is an explicit separate action. | C05, C32, C33, Core |
+| WRITE-03 | Citation finder and claim support: Planned | P1 | Reuse EVID-13 to discover internal and external support/counterevidence, inspect exact quotes/lines/result cells and revisions, abstain when unsupported and insert reviewed citations or internal evidence links; external search is explicit. | C05, C32, C33, Core |
 | WRITE-04 | Outlines, storylines and drafts: Partial foundation | P1 | Extend accepted-comparison synthesis into section briefs, reorderable argument/evidence blocks, alternative storylines and reverse outlines; proposed edits preserve labels and require acceptance. | C03, C31, C37, Core |
 | WRITE-05 | Bounded writing commands: Planned | P1 | Generate/expand/shorten/clarify/paraphrase/translate a selected passage with diffs and undo; retain citations and flag changes to quantities, negation, uncertainty or claim strength. | C23, C32, C34, Core |
 | WRITE-06 | Optional source-grounded autocomplete: Planned | P2 | Suggestions use approved sources, can be disabled and never insert claims or citations before explicit acceptance. | C31, C34 |
@@ -221,11 +232,11 @@ Inspiration: [Jenni](COMPETITIVE_RESEARCH.md#c31-jenni),
 | WRITE-09 | Writing templates and output styles: Planned | P2 | Reusable annotated bibliography, research memo, comparison and review templates produce editable Markdown/LaTeX/DOCX outputs via PORT-04. | C12, C19, C31 |
 | WRITE-10 | Project TeX writing workspace: Planned | P1 | Multi-file source editor, citation/label completion, search, autosave/recovery and external-change handling; manual authoring works without a provider or account. | Core |
 | WRITE-11 | Restricted compilation and PDF preview: Planned | P1 | Packaged TeX build with isolation, no default shell/network access, resource limits, file/line errors, last-good preview and bidirectional source navigation; test clean installs. | Core |
-| WRITE-12 | Code and experiment context attachments: Planned | P1 | Explicit read-only roots/files/results with commit/hash/line/row provenance, secret exclusions and context preview; never equate code with measured performance or execute attached files. | Core |
+| WRITE-12 | Searchable code and experiment context: Planned | P1 | Attach approved roots/collections or find relevant evidence via EVID-10/11/13; retain commit/hash/line/run/metric/row provenance, secret exclusions and context preview; never equate code with measurements or execute it. | Core |
 | WRITE-13 | Audience/complexity slider: Planned | P1 | Layperson through doctoral/specialist presets with separate concision, jargon and math detail; preview-only until accepted, retaining facts, citations and uncertainty at every level. | Core |
 | WRITE-14 | Grammar, style and terminology review: Planned | P1 | Scoped accept/reject suggestions, glossary and editable style profiles; distinguish linguistic quality from evidence validity and preserve TeX commands. | Core |
 | WRITE-15 | Revision-safe suggestions and provenance: Planned | P1 | Persist source/manuscript revisions, provider/model and accepted/rejected patches; concurrent edits or changed sources require review rather than overwriting or retaining a stale support badge. | Core |
-| WRITE-16 | Results and manuscript consistency: Planned | P2 | Result-to-prose cites approved rows/units/uncertainty; compare abstract/body/conclusions, metrics, notation and figures; incompatible runs and missing facts remain flagged. | Core |
+| WRITE-16 | Results and manuscript consistency: Planned | P2 | Result-to-prose cites approved internal/W&B/external rows, units and uncertainty using EVID-14 comparisons; check abstract/body/conclusions, metrics, notation and figures; incompatible runs and missing facts remain flagged. | Core |
 | WRITE-17 | Reviewer response workspace: Planned | P2 | Anchor local/imported feedback to manuscript revisions, track decisions and propose response letters citing actual edits; no hosted collaboration required. | Core |
 
 Writing Mode's core scope is WRITE-03/04/05 and WRITE-10 through WRITE-15,

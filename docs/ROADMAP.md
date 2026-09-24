@@ -1,6 +1,6 @@
 # LitAgent Roadmap And Progress
 
-Updated: 2026-09-23
+Updated: 2026-09-24
 
 LitAgent is a local-first, project-centered literature review workspace. Papers
 are canonical global records; projects reference them with their own screening
@@ -10,6 +10,9 @@ state, tags, collections, notes, questions, and generated research artifacts.
 
 - [Writing Mode](WRITING_MODE.md): project TeX editor, attached code/results and
   literature, storyline/drafting, citation finder and audience controls.
+- [Internal/external evidence discovery](EVIDENCE_SOURCES.md): search own code,
+  experiments and W&B alongside papers, public repositories and benchmarks;
+  shared claim provenance, source permissions and comparison checks.
 - [Authentication plan](AUTH_PLAN.md): Better Auth/AuthYard ownership, SDK pairing
   contracts, compatibility gates and application migration acceptance checks.
 - [Competitive research](COMPETITIVE_RESEARCH.md): 43 products and adjacent tools,
@@ -51,6 +54,7 @@ using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENT
 | Discovery and screening | Partial | Local search, project relevance decisions and proposal review | Online discovery adapters, search histories, staged screening and auditable PRISMA counts |
 | Structured extraction | Working MVP | Accepted findings/method/dataset/result/limitation/reproducibility records | Configurable extraction schemas, editable literature sheets and per-cell provenance UI |
 | Notes | Backend foundation | Markdown note CRUD, annotation links and synthesis-to-note flow | General editor/browser, backlinks, evidence ledger and note search UI |
+| Internal/external evidence finder | Planned | Paper evidence and accepted research records are foundations, not code/run connectors | Search own repositories/results/W&B and public code/benchmarks with typed provenance, source permissions and comparability checks |
 | Writing Mode | Planned | Existing accepted records and synthesis-to-note are reusable foundations, not a manuscript editor | Multi-file TeX/preview, attached code/results, outline/storyline, reviewed drafting, citation finder and audience slider |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
@@ -209,6 +213,13 @@ Backlog: WRITE-01/02, EVID-01, LIB-05; depends on gate 1 anchors.
 - Add an evidence ledger for claims, source passages, confidence, and note links.
 - Carry source versions and accepted/generated status into notes and claims.
 
+Follow-on evidence slices E1-E2 (EVID-09/10/13) generalize this foundation to
+search approved code/result roots alongside library papers. The shared
+[evidence-source plan](EVIDENCE_SOURCES.md) also commits to incremental read-only
+W&B and public code/benchmark connectors (E3-E4, EVID-11/12), then cross-source
+comparison checks (E5, EVID-14). These support chat and writing, not a separate
+writing-only evidence store. Paper notes need not wait for every connector.
+
 Exit: a user can turn a cited answer or annotation into an editable note, find
 it later, follow all backlinks and reopen it after restart without losing data.
 
@@ -264,7 +275,8 @@ publishing local PDFs, credentials or generated caches.
 Priority: P1 writing/core graph, P2 advanced authoring/exploration.
 Status: Writing Mode planned; note/synthesis and graph foundations exist.
 Backlog: WRITE-03/04/05, WRITE-10 through WRITE-15, MAP-01/02/03;
-then WRITE-06/07/09/16/17 and MAP-04 through MAP-07.
+shared evidence: EVID-09 through EVID-14; then WRITE-06/07/09/16/17 and
+MAP-04 through MAP-07.
 
 Writing is a first-class project workspace, specified in [Writing Mode](WRITING_MODE.md).
 Start its W1 editor/preview foundation after gate 2, alongside gate 3; it does
@@ -275,11 +287,17 @@ reuse gate 1 source guards and the notes/evidence foundation.
   citation/label completion, recovery and source-to-preview navigation.
 - Attach selected read-only code, experiment/result records and literature with
   exact revisions, context permissions and meaningful source types.
+- Find evidence within those sources without manually selecting every file/run.
+  Add read-only W&B and public repository/benchmark adapters incrementally, with
+  Internal, Literature & public, and Both scopes shared with research chat.
 - Build outline/storyline and paragraph/section commands with reviewable diffs.
   Offer a layperson-to-doctoral/specialist slider with independent concision,
   terminology and mathematical detail; preserve facts, citations and uncertainty.
 - Find citation support/counterevidence for individual claims, insert stable
   citekeys only after review, and leave unsupported claims explicitly unresolved.
+- Link own results to run/config/commit and external baselines; check dataset,
+  split, metric and evaluation protocol before proposing comparative claims.
+  Internal evidence links are not fabricated literature references.
 - Add grammar/style suggestions and revision-safe patch acceptance before
   advanced result-to-prose, consistency checks and reviewer response workflows.
 - Build actual graph edges from citations, project membership, accepted records
@@ -381,8 +399,14 @@ The local MVP is complete when a clean desktop install can:
     visible failures and restart-safe execution; no page reload is required to
     see changed Markdown, jobs or evidence.
 11. Use core Writing Mode (W1-W4): edit/compile/recover a TeX manuscript, attach
-    code/results/literature, review a source-grounded outline and draft at a
-    chosen audience level, insert supported citations and export sources/PDF.
+    and search approved code/results/literature, review a source-grounded outline
+    and draft at a chosen audience level, insert supported citations or internal
+    evidence links and export sources/PDF.
+
+Read-only W&B and public code/benchmark connectors are explicit incremental
+deliverables (E3-E4), not prerequisites for local-only installation or editing.
+Verify them with synthetic connector fixtures before separately authorized live
+account checks; do not treat manual attachments as a completed connector.
 
 Advanced visual automation, proprietary data integrations, vector retrieval,
 meta-analysis, mobile, cloud/team features and multimedia outputs are not MVP
@@ -404,6 +428,7 @@ determine release readiness.
 
 | Date | Change | Verification |
 | --- | --- | --- |
+| 2026-09-24 | Added shared internal/external evidence discovery plan and EVID-09 through EVID-14: own code/results, W&B, papers, public repositories and benchmarks; linked chat/writing scopes and comparison checks | Planning only; documentation consistency checks. No connector, account access or live provider/search calls introduced. |
 | 2026-09-23 | Added project Writing Mode specification, W1-W5 delivery slices and WRITE-10 through WRITE-17; expanded outline/citation/revision requirements and core MVP gate | Planning only; documentation consistency checks. No editor, compiler or agent workflow implemented by this change. |
 | 2026-07-10 to 2026-07-11 | Accepted research records, cited comparison review and synthesis-to-note workflows implemented | Existing unit/integration coverage and prior feature commits |
 | 2026-09-20 | Shared AgenticDriver SDK integration added alongside existing agent harness | Adapter tests; see [integration setup](agenticdriver.md) |
