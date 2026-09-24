@@ -428,6 +428,7 @@ determine release readiness.
 
 | Date | Change | Verification |
 | --- | --- | --- |
+| 2026-09-24 | Writing candidate backend: selected-text/model/count requests, bounded context, persisted alternatives, partial failures, cancellation, restart interruption and recoverable revision-checked acceptance | Typecheck and 150 tests, including HTTP candidate review and fixture execution; no live inference, provider runtime changes or automatic file acceptance. Candidate UI follows. |
 | 2026-09-24 | Project Writing tab: CodeMirror editor, file management, autosave/recovery and conflict review; named text versions with visual diffs/restore and source ZIP export | Typecheck, 139 tests and build; real isolated HTTP/browser writing workflow at 1440/1920/860px, plus existing chat checks at 1440/1920px. No TeX compiler or live model calls. |
 | 2026-09-24 | Writing foundation: project-owned TeX/BibTeX files, safe paths, atomic revision-checked saves, per-file automatic history, named checkpoints and restore APIs; added multi-candidate drafting requirement | Typecheck and 132 tests pass, including real HTTP CRUD/conflicts and history/integrity tests. Editor UI, compilation and generation are not completed by this slice. |
 | 2026-09-24 | Added shared internal/external evidence discovery plan and EVID-09 through EVID-14: own code/results, W&B, papers, public repositories and benchmarks; linked chat/writing scopes and comparison checks | Planning only; documentation consistency checks. No connector, account access or live provider/search calls introduced. |

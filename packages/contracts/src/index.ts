@@ -1,5 +1,6 @@
 import { z } from "zod";
 export * from "./manuscripts";
+export * from "./writing-candidates";
 
 export const isoDateSchema = z.string().datetime();
 

@@ -11,8 +11,18 @@ Current slice: project manuscript CRUD and revision-checked `.tex`/`.bib` saves
 are implemented, with automatic per-file history, named checkpoints and guarded
 restore. The project Writing tab now includes a CodeMirror source editor, file
 creation/deletion, autosave/recovery, side-by-side history review and source ZIP
-export. Compilation, bibliography insertion and agentic writing remain open.
+export. Selected-text candidate storage/orchestration and acceptance APIs are
+implemented; the comparison/generation UI is the next slice. Compilation,
+bibliography insertion and evidence-grounded new prose remain open.
 History is per-file, not yet a grouped multi-file document timeline.
+
+The candidate API uses explicitly enabled AgenticDriver targets only, with an
+explicit model and 1-3 outputs per target (at most 6 per batch). It supplies the
+selected TeX text and up to 1,500 surrounding characters on each side, not any
+unselected paper, repository or experiment. Responses are unverified editing
+drafts. Partial failures retain successful alternatives; cancellation and process
+restarts never automatically replay paid work. Acceptance pins the source
+revision, records a recoverable intent, and writes a new text-history version.
 
 ## Product Goal
 

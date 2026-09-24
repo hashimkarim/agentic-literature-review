@@ -6,6 +6,7 @@ import {
   CreateManuscriptRequestSchema, DeleteManuscriptFileRequestSchema,
   ManuscriptPathSchema, ManuscriptSchema, WriteManuscriptFileRequestSchema,
   ManuscriptHistoryEntrySchema, ManuscriptCheckpointRequestSchema, RestoreManuscriptFileRequestSchema,
+  WritingCandidateBatchSchema, type WritingCandidateBatch, type WritingCandidateSummary,
   type Manuscript, type ManuscriptDocument, type ManuscriptFile,
   type WriteManuscriptFileRequest, type ManuscriptHistoryEntry
 } from "@litagent/contracts";
@@ -149,7 +150,7 @@ export class ManuscriptStore {
     return { ...metadata, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
   }
 
-  writeFile(projectId: string, manuscriptId: string, input: WriteManuscriptFileRequest, reason: "saved" | "restored" = "saved"): ManuscriptFile {
+  writeFile(projectId: string, manuscriptId: string, input: WriteManuscriptFileRequest, reason: "saved" | "restored" | "candidate" = "saved"): ManuscriptFile {
     const parsed = WriteManuscriptFileRequestSchema.parse(input);
     const document = this.read(projectId, manuscriptId);
     const current = document.files.find((file) => file.path === parsed.path);
@@ -230,5 +231,37 @@ export class ManuscriptStore {
     const parsed = RestoreManuscriptFileRequestSchema.parse(input);
     const saved = this.historicalFile(projectId, manuscriptId, parsed.path, parsed.versionId);
     return this.writeFile(projectId, manuscriptId, { path: parsed.path, content: saved.content, expectedRevision: parsed.expectedRevision }, "restored");
+  }
+
+  private candidatePath(projectId: string, manuscriptId: string, batchId: string): string {
+    this.metadata(projectId, manuscriptId);
+    WritingCandidateBatchSchema.shape.id.parse(batchId);
+    return `${this.directory(projectId, manuscriptId)}/.candidates/${batchId}.json`;
+  }
+
+  candidateBatch(projectId: string, manuscriptId: string, batchId: string): WritingCandidateBatch | null {
+    const file = this.safePath(this.candidatePath(projectId, manuscriptId, batchId));
+    if (!fs.existsSync(file)) return null;
+    const batch = WritingCandidateBatchSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
+    if (batch.id !== batchId || batch.projectId !== projectId || batch.manuscriptId !== manuscriptId) {
+      throw new ManuscriptError(409, "candidate_identity_changed", "Candidate identity does not match this manuscript.");
+    }
+    return batch;
+  }
+
+  saveCandidateBatch(input: WritingCandidateBatch): void {
+    const batch = WritingCandidateBatchSchema.parse(input);
+    atomicWrite(this.safePath(this.candidatePath(batch.projectId, batch.manuscriptId, batch.id), true), `${JSON.stringify(batch, null, 2)}\n`);
+  }
+
+  candidateBatches(projectId: string, manuscriptId: string): WritingCandidateSummary[] {
+    this.metadata(projectId, manuscriptId);
+    const directory = this.safePath(`${this.directory(projectId, manuscriptId)}/.candidates`);
+    if (!fs.existsSync(directory)) return [];
+    return fs.readdirSync(directory).filter((file) => /^candidates_[a-f0-9]{32}\.json$/.test(file)).map((file) => {
+      const batch = this.candidateBatch(projectId, manuscriptId, file.slice(0, -5))!;
+      return { id: batch.id, createdAt: batch.createdAt, status: batch.status, accepted: batch.accepted, path: batch.request.path,
+        instruction: batch.request.instruction, completed: batch.candidates.filter((item) => item.status === "completed").length, total: batch.candidates.length };
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 }

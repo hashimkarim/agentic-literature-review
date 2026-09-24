@@ -239,7 +239,7 @@ Inspiration: [Jenni](COMPETITIVE_RESEARCH.md#c31-jenni),
 | WRITE-16 | Results and manuscript consistency: Planned | P2 | Result-to-prose cites approved internal/W&B/external rows, units and uncertainty using EVID-14 comparisons; check abstract/body/conclusions, metrics, notation and figures; incompatible runs and missing facts remain flagged. | Core |
 | WRITE-17 | Reviewer response workspace: Planned | P2 | Anchor local/imported feedback to manuscript revisions, track decisions and propose response letters citing actual edits; no hosted collaboration required. | Core |
 | WRITE-18 | Text history beyond Git: Working per-file MVP | P1 | Automatic versions, named checkpoints, side-by-side diffs and conflict-checked restore preserve replaced text independently of Git; grouped manuscript checkpoints and authorship attribution remain open. | Core |
-| WRITE-19 | Multi-model draft candidates: Planned | P1 | Select multiple models and/or repeated outputs from one model; compare candidates with their prompt/evidence/revisions, handle partial failure, pick explicitly and retain alternatives; accept only against the unchanged target. | Core |
+| WRITE-19 | Multi-model draft candidates: Backend implemented | P1 | Selected-text alternatives with explicit SDK model targets/counts, bounded context, durable drafts, cancellation, partial failure and revision-safe acceptance; comparison UI next, evidence-grounded new prose remains open. | Core |
 
 Writing Mode's core scope is WRITE-03/04/05 and WRITE-10 through WRITE-15,
 delivered as W1-W4 in the linked specification. WRITE-06/07/09/16/17 extend that
