@@ -30,7 +30,8 @@ import {
 import { AgentProviderSettingsStore } from "@litagent/agents";
 import { agenticDriverCatalogFromEnvironment } from "@litagent/agents/agenticdriver";
 import { SearchIndex } from "@litagent/indexer";
-import { CitationSourceChangedError, DEFAULT_REPO_ROOT, LitAgentRepository } from "@litagent/library";
+import { CitationSourceChangedError, DEFAULT_REPO_ROOT, LitAgentRepository, ManuscriptStore } from "@litagent/library";
+import { manuscriptRoutes } from "./manuscript-routes";
 import { WorkflowEngine, WorkflowStartRequestSchema, QaThreadConflictError, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema } from "@litagent/workflows";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -78,6 +79,7 @@ const automationPath = repo.resolve(".litagent/workflow-automations.json");
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+app.use("/api/projects/:id/manuscripts", manuscriptRoutes(new ManuscriptStore(repo.root)));
 
 function asyncHandler(
   handler: (req: Request, res: Response, next: NextFunction) => Promise<void> | void

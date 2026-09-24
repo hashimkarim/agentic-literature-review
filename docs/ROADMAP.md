@@ -428,6 +428,7 @@ determine release readiness.
 
 | Date | Change | Verification |
 | --- | --- | --- |
+| 2026-09-24 | Writing foundation: project-owned TeX/BibTeX files, safe paths, atomic revision-checked saves, per-file automatic history, named checkpoints and restore APIs; added multi-candidate drafting requirement | Typecheck and 132 tests pass, including real HTTP CRUD/conflicts and history/integrity tests. Editor UI, compilation and generation are not completed by this slice. |
 | 2026-09-24 | Added shared internal/external evidence discovery plan and EVID-09 through EVID-14: own code/results, W&B, papers, public repositories and benchmarks; linked chat/writing scopes and comparison checks | Planning only; documentation consistency checks. No connector, account access or live provider/search calls introduced. |
 | 2026-09-23 | Added project Writing Mode specification, W1-W5 delivery slices and WRITE-10 through WRITE-17; expanded outline/citation/revision requirements and core MVP gate | Planning only; documentation consistency checks. No editor, compiler or agent workflow implemented by this change. |
 | 2026-07-10 to 2026-07-11 | Accepted research records, cited comparison review and synthesis-to-note workflows implemented | Existing unit/integration coverage and prior feature commits |

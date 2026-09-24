@@ -1,11 +1,15 @@
 # Writing Mode
 
-Status: planned, not implemented. Added 2026-09-23; updated 2026-09-24. The user
+Status: implementation started. Added 2026-09-23; updated 2026-09-24. The user
 requested a Grammarly/Overleaf-like TeX workspace grounded in their code,
 experiments and literature. These are product requirements, not claims of
 competitor parity.
 Existing notes, accepted research records, comparisons and synthesis-to-note
 workflows are foundations; they are not yet a manuscript editor.
+
+Current slice: project manuscript CRUD and revision-checked `.tex`/`.bib` saves
+are implemented, with automatic per-file history, named checkpoints and guarded
+restore. Source editor/history UI, compilation and agentic writing remain open.
 
 ## Product Goal
 
@@ -187,6 +191,16 @@ variants for the same paragraph and keep these settings local to their scope.
   unsupported TeX formatting. Do not promise automatic Overleaf/cloud sync.
 - Git-backed checkpoints and draft comparisons allow reverting an accepted
   change without deleting supporting notes or canonical research artifacts.
+- Text history is independent of Git commits: automatic saved revisions, named
+  versions, readable diffs and restoration that retains the replaced text.
+  Start with per-file history; grouped manuscript checkpoints and authorship
+  attribution are later extensions, not implied by individual saved versions.
+- Multi-candidate drafting: explicitly choose model targets and output count per
+  target (including repeated outputs from one model), compare proposed texts,
+  and select one without discarding alternatives. Preserve prompt, source and
+  manuscript revisions, provider/model and failure state for each candidate.
+  Each acceptance is a conflict-checked edit recorded in text history. No model
+  substitution, automatic winner or live inference is authorized by this plan.
 
 ## Implementation Boundaries
 
@@ -226,6 +240,8 @@ projects/{projectId}/manuscripts/{manuscriptId}/
   context.json
   claims.json
   suggestions/{suggestionId}.json
+  .history/{filePathHash}.json
+  .history/blobs/{contentHash}.json
 ```
 
 Local attachment-root mappings/credentials and compilation caches stay outside
