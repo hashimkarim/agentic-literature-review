@@ -17,7 +17,21 @@ function fixture(compile: TexCompiler["compile"] = async () => ({ log: "", pdf: 
   const compiler: TexCompiler = { status: () => ({ available: true, version: "fixture", message: "synthetic" }), compile };
   return { root, store, document, compiler, service: new TexBuildService(store, compiler) };
 }
-const request = (document: ManuscriptDocument) => ({ requestId: randomUUID(), revisions: Object.fromEntries(document.files.map((file) => [file.path, file.revision])) });
+const request = (document: ManuscriptDocument) => ({ requestId: randomUUID(), entryFile: document.entryFile, revisions: Object.fromEntries([...document.files, ...(document.assets ?? [])].map((file) => [file.path, file.revision])) });
+
+it("snapshots binary assets and rejects stale assets or main-file selection", async () => {
+  let copied: Buffer | undefined;
+  const f = fixture(async (snapshot) => { copied = snapshot.assetContents?.[0]?.bytes; return { log: "", pdf: Buffer.from("%PDF-fixture") }; });
+  let document = f.store.uploadFile(f.document.id, "figures/test.png", Buffer.from([1, 2]), f.document.treeRevision!);
+  const input = request(document);
+  f.service.start(document.id, input); await f.service.idle();
+  expect(copied).toEqual(Buffer.from([1, 2]));
+  expect(f.service.get(document.id).latest?.revisions["figures/test.png"]).toBe(document.assets![0]!.revision);
+  document = f.store.changeTree(document.id, { action: "entry", path: "sections/introduction.tex", expectedRevision: document.treeRevision });
+  expect(() => f.service.start(document.id, { ...input, requestId: randomUUID() })).toThrow(/Saved sources changed/);
+  fs.writeFileSync(path.join(f.root, "manuscripts", document.id, "figures/test.png"), Buffer.from([3]));
+  expect(() => f.service.start(document.id, request(document))).toThrow(/Saved sources changed/);
+});
 
 it("compiles an immutable revision-checked snapshot, deduplicates retries and persists the PDF", async () => {
   let snapshot: ManuscriptDocument | undefined;
@@ -97,6 +111,13 @@ it.runIf(process.env.LITAGENT_TEST_TEX === "1")("uses the prepared offline engin
   expect(engine.status().available).toBe(true);
   const result = await engine.compile(f.document, new AbortController().signal);
   expect(result.pdf?.subarray(0, 5).toString(), result.log).toBe("%PDF-");
+  let imported = f.store.uploadFile(f.document.id, "figures/sample.pdf", result.pdf!, f.document.treeRevision!);
+  imported = f.store.uploadFile(imported.id, "custom.sty", Buffer.from("\\RequirePackage{graphicx}\n\\newcommand{\\fixturetext}{Imported figure}"), imported.treeRevision!);
+  f.store.writeFile(imported.id, { path: "main.tex", content: "\\documentclass{article}\n\\usepackage{custom}\n\\begin{document}\\fixturetext\\includegraphics[width=2cm]{figures/sample.pdf}\\end{document}", expectedRevision: imported.files.find((file) => file.path === "main.tex")!.revision });
+  imported = f.store.read(imported.id);
+  const service = new TexBuildService(f.store, engine);
+  service.start(imported.id, request(imported)); await service.idle();
+  expect(service.get(imported.id).latest?.status, service.get(imported.id).latest?.log).toBe("succeeded");
   const replaceMain = (content: string) => ({ ...f.document, files: f.document.files.map((file) => file.path === "main.tex" ? { ...file, content } : file) });
   const bad = await engine.compile(replaceMain("\\documentclass{article}\n\\begin{document}\n\\unknownCommand\n\\end{document}"), new AbortController().signal);
   expect(bad.pdf).toBeNull();

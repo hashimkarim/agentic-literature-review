@@ -6,10 +6,52 @@ import express from "express";
 import { expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { zipSync, strToU8, unzipSync } from "fflate";
 import { LitAgentRepository, ManuscriptStore } from "@litagent/library";
 import { WritingCandidateService, TexBuildService } from "@litagent/workflows";
 import type { WritingCandidateBatch } from "@litagent/contracts";
 import { manuscriptRoutes } from "./manuscript-routes";
+
+it("imports, edits, downloads and exports a complete file tree over HTTP", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-import-http-"));
+  const store = new ManuscriptStore(root);
+  const app = express(); app.use(express.json()); app.use("/api/manuscripts", manuscriptRoutes(store));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts`;
+  const zip = zipSync({ "main.tex": strToU8("\\documentclass{article}"), "sections/one.tex": strToU8("First chapter"), "figures/plot.png": new Uint8Array([1, 2, 3]) });
+  const requestId = randomUUID();
+  const upload = (preview: boolean, bytes: Uint8Array = zip) => {
+    const body = new FormData(); body.set("archive", new Blob([new Uint8Array(bytes)]), "overleaf.zip");
+    if (!preview) body.set("options", JSON.stringify({ requestId, name: "HTTP import", entryFile: "main.tex" }));
+    return fetch(`${base}/import${preview ? "/preview" : ""}`, { method: "POST", body });
+  };
+  try {
+    const preview = await upload(true); expect(preview.status).toBe(200);
+    expect(await preview.json()).toMatchObject({ suggestedEntry: "main.tex", folders: ["figures", "sections"] });
+    expect(store.list()).toEqual([]);
+    expect((await upload(true, new Uint8Array([0]))).status).toBe(400);
+    const response = await upload(false); expect(response.status).toBe(201);
+    let document = await response.json() as import("@litagent/contracts").ManuscriptDocument;
+    expect(await (await upload(false)).json()).toMatchObject({ id: document.id });
+    const tree = (body: unknown) => fetch(`${base}/${document.id}/tree`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    expect((await tree({ action: "folder", path: "draft", expectedRevision: "0".repeat(64) })).status).toBe(409);
+    const moved = await tree({ action: "move", path: "sections", destination: "chapters", expectedRevision: document.treeRevision }); expect(moved.status).toBe(200); document = await moved.json() as typeof document;
+    expect((await tree({ action: "move", path: "main.tex", destination: "chapters/one.tex", expectedRevision: document.treeRevision })).status).toBe(400);
+    const asset = document.assets![0]!;
+    const fetched = await fetch(`${base}/${document.id}/assets?path=${asset.path}&revision=${asset.revision}`);
+    expect(fetched.headers.get("content-type")).toContain("image/png");
+    expect(Buffer.from(await fetched.arrayBuffer())).toEqual(Buffer.from([1, 2, 3]));
+    const exported = await fetch(`${base}/${document.id}/archive`);
+    const unzipped = unzipSync(new Uint8Array(await exported.arrayBuffer()));
+    expect(Object.keys(unzipped)).toContain("chapters/one.tex");
+    expect(unzipped["figures/plot.png"]).toEqual(new Uint8Array([1, 2, 3]));
+    expect(Object.keys(unzipped).some((name) => name.startsWith(".history"))).toBe(false);
+    const fileBody = new FormData(); fileBody.set("file", new Blob(["New source"]), "new.tex"); fileBody.set("path", "chapters/new.tex"); fileBody.set("expectedRevision", document.treeRevision!);
+    expect((await fetch(`${base}/${document.id}/upload`, { method: "POST", body: fileBody })).status).toBe(201);
+    expect(store.history(document.id, "chapters/new.tex")).toHaveLength(1);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 it("serves revision-checked builds, diagnostics, and last-good PDFs over HTTP", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-tex-http-"));

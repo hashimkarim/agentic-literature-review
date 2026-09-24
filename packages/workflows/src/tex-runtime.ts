@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { ManuscriptDocument, TexRuntimeStatus } from "@litagent/contracts";
 
+export type TexCompileDocument = ManuscriptDocument & { assetContents?: { path: string; bytes: Buffer }[] };
 export interface TexCompiler {
   status(): TexRuntimeStatus;
-  compile(document: ManuscriptDocument, signal: AbortSignal): Promise<{ log: string; pdf: Buffer | null }>;
+  compile(document: TexCompileDocument, signal: AbortSignal): Promise<{ log: string; pdf: Buffer | null }>;
 }
 const MAX_OUTPUT = 16 * 1024 * 1024;
 const ManifestSchema = z.object({
@@ -46,7 +47,7 @@ export class TectonicCompiler implements TexCompiler {
     }
   }
 
-  async compile(document: ManuscriptDocument, signal: AbortSignal) {
+  async compile(document: TexCompileDocument, signal: AbortSignal) {
     const status = this.status();
     if (!status.available) throw new Error(status.message);
     await this.verifyRuntime();
@@ -61,6 +62,11 @@ export class TectonicCompiler implements TexCompiler {
         const destination = path.join(work, file.path);
         await fs.promises.mkdir(path.dirname(destination), { recursive: true });
         await fs.promises.writeFile(destination, file.content, { flag: "wx", mode: 0o600 });
+      }
+      for (const asset of document.assetContents ?? []) {
+        const destination = path.join(work, asset.path);
+        await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+        await fs.promises.writeFile(destination, asset.bytes, { flag: "wx", mode: 0o600 });
       }
       // Only the source snapshot is writable. No home, repository, host binaries,
       // sockets or network interfaces are visible inside this namespace.
@@ -87,14 +93,14 @@ export class TectonicCompiler implements TexCompiler {
             let bytes = 0, count = 0;
             async function inspect(directory: string): Promise<void> {
               for (const entry of await fs.promises.readdir(directory, { withFileTypes: true })) {
-                if (++count > 256) throw new Error("Compilation created too many files.");
+                if (++count > 1024) throw new Error("Compilation created too many files.");
                 const file = path.join(directory, entry.name);
                 if (entry.isDirectory()) await inspect(file);
                 else if (entry.isFile()) {
                   try { bytes += (await fs.promises.stat(file)).size; }
                   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
                 }
-                if (bytes > 48 * 1024 * 1024) throw new Error("Compilation exceeded the output size limit.");
+                if (bytes > 96 * 1024 * 1024) throw new Error("Compilation exceeded the output size limit.");
               }
             }
             await inspect(work); await inspect(scratch);
@@ -111,7 +117,7 @@ export class TectonicCompiler implements TexCompiler {
         child.on("close", (code) => { closed = true; clearTimeout(timer); clearInterval(outputLimit); signal.removeEventListener("abort", stop); if (failure) reject(new Error(failure)); else resolve({ code, log }); });
       });
       signal.throwIfAborted();
-      const output = path.join(work, "out", `${path.basename(document.entryFile, ".tex")}.pdf`);
+      const output = path.join(work, "out", `${path.parse(document.entryFile).name}.pdf`);
       if (result.code !== 0 || !fs.existsSync(output)) return { log: result.log, pdf: null };
       const stat = await fs.promises.lstat(output);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_OUTPUT) throw new Error("Invalid or oversized compiler output.");

@@ -64,7 +64,7 @@ it("creates nested files and guards deletion including the main entry", () => {
 
 it("rejects traversal, absolute paths, unsupported extensions and portable case collisions", () => {
   const f = fixture();
-  for (const target of ["../escape.tex", "/tmp/escape.tex", "sections/../../escape.tex", "sections\\escape.tex", ".hidden.tex", "script.sh"]) {
+  for (const target of ["../escape.tex", "/tmp/escape.tex", "sections/../../escape.tex", "sections\\escape.tex", ".hidden.tex", "program.exe"]) {
     expect(() => f.store.writeFile(f.document.id, { path: target, content: "Bad", expectedRevision: null })).toThrow();
   }
   expect(() => f.store.writeFile(f.document.id, { path: "Main.tex", content: "Bad", expectedRevision: null })).toThrow(/capitalization/);
@@ -177,8 +177,8 @@ it("refuses duplicate legacy IDs without overwriting either copy", () => {
 
 it("enforces UTF-8 byte limits and never truncates oversized sources", () => {
   const f = fixture();
-  expect(() => f.store.writeFile(f.document.id, { path: "big.tex", content: "\u00e9".repeat(130_000), expectedRevision: null })).toThrow(/limit/);
-  fs.writeFileSync(path.join(f.directory, "big.tex"), "x".repeat(250_001));
+  expect(() => f.store.writeFile(f.document.id, { path: "big.tex", content: "\u00e9".repeat(500_001), expectedRevision: null })).toThrow(/limit/);
+  fs.writeFileSync(path.join(f.directory, "big.tex"), "x".repeat(1_000_001));
   expect(() => f.store.read(f.document.id)).toThrow(/limit/);
 });
 

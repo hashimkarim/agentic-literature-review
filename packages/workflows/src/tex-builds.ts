@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ManuscriptError, ManuscriptStore } from "@litagent/library";
 import { TexBuildRequestSchema, TexBuildStateSchema, type ManuscriptDocument, type TexBuild, type TexBuildState, type TexDiagnostic } from "@litagent/contracts";
-import { TectonicCompiler, type TexCompiler } from "./tex-runtime";
+import { TectonicCompiler, type TexCompiler, type TexCompileDocument } from "./tex-runtime";
 
 type StoredState = Omit<TexBuildState, "runtime">;
 export function texDiagnostics(log: string, paths: string[]): TexDiagnostic[] {
@@ -11,7 +11,7 @@ export function texDiagnostics(log: string, paths: string[]): TexDiagnostic[] {
   for (const raw of log.split(/\r?\n/)) {
     const match = /^(error|warning):\s*(.*)$/.exec(raw);
     if (!match) continue;
-    const location = /^(?:\/work\/|\.\/)?([^:]+\.(?:tex|bib)):(\d+):\s*(.*)$/.exec(match[2]!);
+    const location = /^(?:\/work\/|\.\/)?([^:]+):(\d+):\s*(.*)$/.exec(match[2]!);
     const file = location && paths.includes(location[1]!) ? location[1]! : null;
     const line = Number(location?.[2]);
     diagnostics.push({ severity: match[1] as "error" | "warning", message: (location?.[3] ?? match[2]!).slice(0, 2000), path: file, line: file && Number.isSafeInteger(line) && line > 0 ? line : null });
@@ -19,7 +19,7 @@ export function texDiagnostics(log: string, paths: string[]): TexDiagnostic[] {
   }
   return diagnostics;
 }
-const revisionsOf = (document: ManuscriptDocument) => Object.fromEntries(document.files.map((file) => [file.path, file.revision]));
+const revisionsOf = (document: ManuscriptDocument) => Object.fromEntries([...document.files, ...(document.assets ?? [])].map((file) => [file.path, file.revision]));
 const sameRevisions = (a: Record<string, string>, b: Record<string, string>) => Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([name, revision]) => b[name] === revision);
 
 export class TexBuildService {
@@ -67,7 +67,7 @@ export class TexBuildService {
   private writeState(id: string, state: StoredState) { this.atomicFile(id, "state.json", JSON.stringify(TexBuildStateSchema.parse(state))); }
 
   get(manuscriptId: string): TexBuildState {
-    this.store.read(manuscriptId);
+    this.store.describe(manuscriptId);
     return { ...this.readState(manuscriptId), runtime: this.compiler.status() };
   }
 
@@ -76,19 +76,20 @@ export class TexBuildService {
     const document = this.store.read(manuscriptId);
     const state = this.readState(manuscriptId);
     if (state.latest?.id === request.requestId) {
-      if (!sameRevisions(request.revisions, state.latest.revisions)) throw new ManuscriptError(409, "build_request_changed", "A build request ID cannot be reused for changed sources.");
+      if (!sameRevisions(request.revisions, state.latest.revisions) || (request.entryFile && request.entryFile !== state.latest.entryFile)) throw new ManuscriptError(409, "build_request_changed", "A build request ID cannot be reused for changed sources.");
       return { ...state, runtime: this.compiler.status() };
     }
-    if (!sameRevisions(request.revisions, revisionsOf(document))) throw new ManuscriptError(409, "build_source_changed", "Saved sources changed. Reload or resolve your draft before compiling.");
+    if (!sameRevisions(request.revisions, revisionsOf(document)) || (request.entryFile && request.entryFile !== document.entryFile)) throw new ManuscriptError(409, "build_source_changed", "Saved sources changed. Reload or resolve your draft before compiling.");
     if (this.active) throw new ManuscriptError(409, "build_busy", "Another document is compiling. Wait for it to finish or cancel it first.");
     const runtime = this.compiler.status();
     if (!runtime.available) throw new ManuscriptError(503, "tex_unavailable", runtime.message);
-    const build: TexBuild = { id: request.requestId, manuscriptId, revisions: request.revisions, status: "running", startedAt: new Date().toISOString(), finishedAt: null, diagnostics: [], log: "" };
+    const build: TexBuild = { id: request.requestId, manuscriptId, entryFile: document.entryFile, revisions: request.revisions, status: "running", startedAt: new Date().toISOString(), finishedAt: null, diagnostics: [], log: "" };
+    const snapshot = { ...document, assetContents: (document.assets ?? []).map((file) => ({ path: file.path, bytes: this.store.asset(manuscriptId, file.path, file.revision) })) };
     const controller = new AbortController();
     this.writeState(manuscriptId, { ...state, latest: build });
     const active = { manuscriptId, id: build.id, controller, finished: Promise.resolve() };
     this.active = active;
-    active.finished = this.execute(document, build, state.lastSuccessful, controller.signal).finally(() => { if (this.active === active) this.active = null; });
+    active.finished = this.execute(snapshot, build, state.lastSuccessful, controller.signal).finally(() => { if (this.active === active) this.active = null; });
     // A failed cache write must not terminate the server; the persisted running
     // record is reconciled to interrupted on the next read and can be retried.
     void active.finished.catch(() => console.error("Could not persist TeX build state; the next read will reconcile the interrupted build."));
@@ -111,7 +112,7 @@ export class TexBuildService {
     return fs.readFileSync(file);
   }
 
-  private async execute(document: ManuscriptDocument, build: TexBuild, previous: TexBuild | null, signal: AbortSignal) {
+  private async execute(document: TexCompileDocument, build: TexBuild, previous: TexBuild | null, signal: AbortSignal) {
     let successful = previous;
     try {
       const result = await this.compiler.compile(document, signal);

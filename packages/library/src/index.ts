@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 export { ManuscriptStore, ManuscriptError } from "./manuscripts";
+export { inspectManuscriptZip } from "./manuscript-import";
+export { manuscriptLimits, ManuscriptTreeError } from "./manuscript-files";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

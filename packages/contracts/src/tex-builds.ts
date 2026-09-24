@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { ManuscriptPathSchema, ManuscriptRevisionSchema, ManuscriptSchema } from "./manuscripts";
+import { ManuscriptPathSchema, ManuscriptNodePathSchema, ManuscriptEntryPathSchema, ManuscriptRevisionSchema, ManuscriptSchema } from "./manuscripts";
 
 export const TexBuildRequestSchema = z.object({
   requestId: z.string().uuid(),
-  revisions: z.record(ManuscriptPathSchema, ManuscriptRevisionSchema)
-    .refine((files) => Object.keys(files).length > 0 && Object.keys(files).length <= 64)
+  revisions: z.record(ManuscriptNodePathSchema, ManuscriptRevisionSchema)
+    .refine((files) => Object.keys(files).length > 0 && Object.keys(files).length <= 256),
+  entryFile: ManuscriptEntryPathSchema.optional()
 }).strict();
 export const TexDiagnosticSchema = z.object({
   severity: z.enum(["error", "warning"]),
@@ -16,6 +17,7 @@ export const TexBuildSchema = z.object({
   id: z.string().uuid(),
   manuscriptId: ManuscriptSchema.shape.id,
   revisions: TexBuildRequestSchema.shape.revisions,
+  entryFile: ManuscriptEntryPathSchema.optional(),
   status: z.enum(["running", "succeeded", "failed", "cancelled", "interrupted"]),
   startedAt: z.string().datetime(),
   finishedAt: z.string().datetime().nullable(),

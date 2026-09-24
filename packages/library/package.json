@@ -16,6 +16,11 @@
   },
   "dependencies": {
     "@litagent/contracts": "*",
+    "fflate": "0.8.3",
+    "yauzl": "3.4.0",
     "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/yauzl": "3.4.0"
   }
 }
