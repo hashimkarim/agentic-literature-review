@@ -7,18 +7,26 @@ competitor parity.
 Existing notes, accepted research records, comparisons and synthesis-to-note
 workflows are foundations; Writing adds a separate manuscript editor.
 
-Current slice: global document CRUD and revision-checked `.tex`/`.bib` saves
+Current slice: global document CRUD and revision-checked source-file saves
 are implemented, with automatic per-file history, named checkpoints and guarded
 restore. The global Writing tab includes a searchable document list, project
 filters and link/unlink controls for multiple projects, a CodeMirror source editor, file
-creation/deletion, autosave/recovery, side-by-side history review and source ZIP
+creation/deletion, folders, open-file tabs, upload/move/rename, main-file selection,
+asset previews, autosave/recovery, side-by-side history review and source ZIP
 export. Selected-text alternatives include explicit model/output-count controls,
 an audience slider, context preview, saved batches, comparison and acceptance.
 Restricted offline Linux compilation, source/split/PDF views, PDF download,
 revision labels, build logs, cancellation and guarded file/line error navigation
-are implemented. Failed builds retain the last successful preview. The prepared
+are implemented. Folder and Overleaf ZIP import preserve nested sources, custom
+classes, figures and fonts, with a preview, main-file choice and initial text
+history. Imports create an app-owned copy; they do not edit or continuously sync
+the original folder. Moving files does not rewrite TeX include paths.
+Failed builds retain the last successful preview. The prepared
 runtime does not require host TeX Live; see [TeX Runtime](TEX_RUNTIME.md) for
-supported packages, isolation and installer prerequisites. Cross-platform build
+supported packages, isolation and installer prerequisites. The full Linux x64
+runtime now builds XeLaTeX projects with Biber/BibTeX, makeindex glossaries and
+bundled fonts, without running imported scripts. A real 116-file thesis imports
+unchanged and builds an 88-page PDF. Cross-platform build
 packaging, bidirectional source/PDF navigation, bibliography insertion and
 evidence-grounded new prose remain open.
 History is per-file, not yet a grouped multi-file document timeline.

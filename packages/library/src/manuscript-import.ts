@@ -30,7 +30,7 @@ export async function inspectManuscriptZip(bytes: Buffer): Promise<ManuscriptImp
     const first = visible[0]?.fileName.split("/")[0];
     const rootFolder = first && visible.every((entry) => entry.fileName.startsWith(`${first}/`)) ? first : null;
     const normalize = (name: string) => rootFolder ? name.slice(rootFolder.length + 1) : name;
-    const preview: ManuscriptImportPreview = { files: [], folders: [], entryCandidates: [], suggestedEntry: null, rootFolder, skipped: [], warnings: [] };
+    const preview: ManuscriptImportPreview = { files: [], folders: [], entryCandidates: [], suggestedEntry: null, rootFolder, skipped: [], warnings: [], requirements: [] };
     const contents = new Map<string, Buffer>();
     const texPaths = new Set(visible.map((entry) => normalize(entry.fileName)).filter((name) => /\.tex$/i.test(name)).map((name) => name.slice(0, -4).toLowerCase()));
     let total = 0, textTotal = 0;
@@ -69,10 +69,13 @@ export async function inspectManuscriptZip(bytes: Buffer): Promise<ManuscriptImp
     const roots = preview.entryCandidates.filter((name) => /^\s*\\documentclass(?:\[|\{)/m.test(contents.get(name)!.toString("utf8")));
     preview.suggestedEntry = roots.includes("main.tex") ? "main.tex" : roots.length === 1 ? roots[0]! : preview.entryCandidates.length === 1 ? preview.entryCandidates[0]! : null;
     const text = preview.files.filter((file) => file.kind === "source").map((file) => contents.get(file.path)!.toString("utf8")).join("\n");
-    if (/backend\s*=\s*biber/.test(text)) preview.warnings.push("Biber is required by these sources; the current offline compiler does not run Biber.");
-    if (/\\makeglossaries/.test(text)) preview.warnings.push("Glossary generation requires an external build step that is not bundled yet.");
-    if (/\\(?:setmainfont|setsansfont|setmonofont|newfontfamily)/.test(text)) preview.warnings.push("Custom font dependencies may be unavailable in the isolated compiler.");
-    if (preview.files.some((file) => /(?:latexmkrc|\.(?:py|sh))$/.test(file.path))) preview.warnings.push("Build scripts are preserved as editable text but are never executed by the compiler.");
+    if (/backend\s*=\s*biber/.test(text)) preview.requirements.push("biber");
+    if (/\\makeglossaries/.test(text)) preview.requirements.push("glossaries");
+    if (/\\(?:setmainfont|setsansfont|setmonofont|newfontfamily)/.test(text)) preview.requirements.push("fonts");
+    if (preview.files.some((file) => /(?:latexmkrc|\.(?:py|sh))$/.test(file.path))) {
+      preview.requirements.push("scripts");
+      preview.warnings.push("Imported build scripts are kept as text. Compilation uses the app's fixed build steps, never these scripts.");
+    }
     preview.files.sort((a, b) => a.path.localeCompare(b.path)); preview.entryCandidates.sort();
     return { preview, contents };
   } finally { zip.close(); }

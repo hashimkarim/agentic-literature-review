@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { FileArchive, FolderOpen, Upload, X, AlertTriangle, FileCode2, Image } from "lucide-react";
+import { FileArchive, FolderOpen, Upload, X, AlertTriangle, FileCode2, Image, CheckCircle2 } from "lucide-react";
 import { zip } from "fflate";
 import type { ManuscriptDocument, ManuscriptImportPreview, Project } from "@litagent/contracts";
 import { api } from "./api";
@@ -77,7 +77,8 @@ export function WritingImport({ projects, onImported, onClose }: { projects: Pro
         {!!projects.length && <details className="writing-import-projects"><summary>Linked projects ({projectIds.length})</summary>{projects.map((project) => <label key={project.id}><input type="checkbox" disabled={!!busy} checked={projectIds.includes(project.id)} onChange={(event) => setProjectIds((ids) => event.target.checked ? [...ids, project.id] : ids.filter((id) => id !== project.id))} /><span>{project.name}</span></label>)}</details>}
         <div className="writing-import-summary">{preview.files.length} files <span>{preview.folders.length} folders</span><span>{(preview.files.reduce((sum, file) => sum + file.bytes, 0) / 1024 / 1024).toFixed(1)} MB</span></div>
         <ul className="writing-import-files" aria-label="Files to import">{preview.files.map((file) => <li key={file.path}>{file.kind === "source" ? <FileCode2 size={14} /> : <Image size={14} />}<span>{file.path}</span><small>{Math.max(1, Math.ceil(file.bytes / 1024))} KB</small></li>)}</ul>
-        {!!preview.warnings.length && <section className="writing-import-warnings" aria-label="Compilation compatibility"><h3><AlertTriangle size={15} />Compilation requirements</h3><ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
+        {preview.compiler?.available && <p className="writing-import-runtime"><CheckCircle2 size={16} /><span>{preview.compiler.message}</span></p>}
+        {!!preview.warnings.length && <section className="writing-import-warnings" aria-label="Compilation compatibility"><h3><AlertTriangle size={15} />Build notes</h3><ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
         {(preview.skipped.length > 0 || omitted > 0) && <details className="writing-import-skipped"><summary>Not imported ({preview.skipped.length + omitted})</summary>{omitted > 0 && <p>{omitted} hidden or dependency files excluded before upload</p>}<ul>{preview.skipped.map((file) => <li key={file.path}><span>{file.path}</span><small>{file.reason}</small></li>)}</ul></details>}
       </>}
       <footer><button type="button" disabled={!!busy} onClick={onClose}>Cancel</button><button type="submit" className="writing-primary" disabled={!!busy || !preview || !entry || !name.trim()}><Upload size={15} />Import document</button></footer>

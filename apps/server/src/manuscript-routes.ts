@@ -20,7 +20,13 @@ export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCan
     let data: Awaited<ReturnType<typeof inspectManuscriptZip>>;
     try { data = await inspectManuscriptZip(req.file.buffer); }
     catch (error) { throw new ManuscriptError(400, "invalid_manuscript_archive", error instanceof z.ZodError ? "The archive contains an unsupported path." : error instanceof Error ? error.message : "Could not read ZIP."); }
-    if (req.path.endsWith("/preview")) { res.json(data.preview); return; }
+    if (req.path.endsWith("/preview")) {
+      const compiler = builds?.compiler.status();
+      const warnings = [...data.preview.warnings];
+      if (!compiler?.available) warnings.push(compiler?.message ?? "No compiler is configured. Files can still be imported and edited.");
+      else if (compiler.engine !== "texlive" && data.preview.requirements.some((item) => item === "biber" || item === "glossaries" || item === "fonts")) warnings.push("This project needs the full offline TeX Live runtime for bibliography, glossary or custom font support.");
+      res.json({ ...data.preview, warnings, compiler }); return;
+    }
     let options: unknown;
     try { options = JSON.parse(req.body.options ?? "null"); } catch { throw new ManuscriptError(400, "invalid_import_options", "Invalid import options."); }
     const linkedProject = project(req.params);

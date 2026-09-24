@@ -91,6 +91,8 @@
 .writing-image-preview img { max-width:100%; max-height:100%; object-fit:contain; }
 .writing-workspace .writing-mobile-tree { display:none; }
 .writing-dialog.writing-import-dialog { width:min(640px, calc(100vw - 32px)); max-height:calc(100dvh - 32px); overflow:auto; }
+.writing-import-runtime { display:flex; align-items:flex-start; gap:8px; font-size:13px; line-height:1.6; color:var(--text-secondary); }
+.writing-import-runtime svg { flex-shrink:0; margin-top:3px; color:var(--accent-success, #36b38a); }
 .writing-import-pickers { display:flex; gap:10px; }
 .writing-import-pickers > button { flex:1; }
 .writing-import-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; margin:18px 0; }

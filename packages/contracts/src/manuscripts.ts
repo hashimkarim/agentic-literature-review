@@ -48,7 +48,9 @@ export const ManuscriptImportPreviewSchema = z.object({
   folders: z.array(ManuscriptNodePathSchema),
   entryCandidates: z.array(ManuscriptEntryPathSchema), suggestedEntry: ManuscriptEntryPathSchema.nullable(),
   rootFolder: z.string().nullable(), skipped: z.array(z.object({ path: z.string(), reason: z.string() })),
-  warnings: z.array(z.string())
+  warnings: z.array(z.string()),
+  requirements: z.array(z.enum(["biber", "glossaries", "fonts", "scripts"])).default([]),
+  compiler: z.object({ available: z.boolean(), version: z.string().nullable(), message: z.string() }).optional()
 });
 export const CreateManuscriptRequestSchema = z.object({
   name: ManuscriptSchema.shape.name,

@@ -81,7 +81,8 @@ it("rejects links, encrypted entries, corrupt CRC and inflated size claims befor
 
 it("reports external compiler dependencies without executing imported scripts", async () => {
   const result = await inspectManuscriptZip(archive({ "main.tex": "\\documentclass{custom}\n\\usepackage[backend=biber]{biblatex}\n\\makeglossaries", "custom.cls": "\\setmainfont{Example}", "latexmkrc": "system('do-not-run')", "scripts/build.py": "raise RuntimeError()" }));
-  expect(result.preview.warnings).toHaveLength(4);
+  expect(result.preview.requirements).toEqual(["biber", "glossaries", "fonts", "scripts"]);
+  expect(result.preview.warnings).toHaveLength(1);
   expect(result.contents.get("latexmkrc")?.toString()).toContain("do-not-run");
 });
 

@@ -10,7 +10,30 @@ import { zipSync, strToU8, unzipSync } from "fflate";
 import { LitAgentRepository, ManuscriptStore } from "@litagent/library";
 import { WritingCandidateService, TexBuildService } from "@litagent/workflows";
 import type { WritingCandidateBatch } from "@litagent/contracts";
+import { ManuscriptImportPreviewSchema, type TexRuntimeStatus } from "@litagent/contracts";
 import { manuscriptRoutes } from "./manuscript-routes";
+
+it("reports the actual compiler capability when previewing imported requirements", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-import-runtime-http-"));
+  const store = new ManuscriptStore(root);
+  let status: TexRuntimeStatus = { available: true, engine: "texlive", version: "fixture", message: "Synthetic full runtime" };
+  const builds = new TexBuildService(store, { status: () => status, compile: async () => { throw new Error("Preview must not compile"); } });
+  const app = express(); app.use("/api/manuscripts", manuscriptRoutes(store, undefined, builds));
+  const server = http.createServer(app); await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts/import/preview`;
+  const preview = async () => {
+    const body = new FormData(); body.set("archive", new Blob([new Uint8Array(zipSync({ "main.tex": strToU8("\\documentclass{report}\\usepackage[backend=biber]{biblatex}\\makeglossaries\\setmainfont{Liberation Sans}") }))]), "sources.zip");
+    const response = await fetch(url, { method: "POST", body }); expect(response.status).toBe(200); return ManuscriptImportPreviewSchema.parse(await response.json());
+  };
+  try {
+    expect(await preview()).toMatchObject({ requirements: ["biber", "glossaries", "fonts"], warnings: [], compiler: { available: true } });
+    status = { available: true, engine: "tectonic", version: "fixture", message: "Synthetic basic runtime" };
+    expect((await preview()).warnings).toContain("This project needs the full offline TeX Live runtime for bibliography, glossary or custom font support.");
+    status = { available: false, version: null, message: "Runtime missing" };
+    expect((await preview()).warnings).toContain("Runtime missing");
+    expect(store.list()).toEqual([]);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 it("imports, edits, downloads and exports a complete file tree over HTTP", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-import-http-"));
