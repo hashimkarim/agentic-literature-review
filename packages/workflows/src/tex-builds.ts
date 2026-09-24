@@ -13,7 +13,8 @@ export function texDiagnostics(log: string, paths: string[]): TexDiagnostic[] {
     if (!match) continue;
     const location = /^(?:\/work\/|\.\/)?([^:]+\.(?:tex|bib)):(\d+):\s*(.*)$/.exec(match[2]!);
     const file = location && paths.includes(location[1]!) ? location[1]! : null;
-    diagnostics.push({ severity: match[1] as "error" | "warning", message: (location?.[3] ?? match[2]!).slice(0, 2000), path: file, line: file && Number(location?.[2]) > 0 ? Number(location![2]) : null });
+    const line = Number(location?.[2]);
+    diagnostics.push({ severity: match[1] as "error" | "warning", message: (location?.[3] ?? match[2]!).slice(0, 2000), path: file, line: file && Number.isSafeInteger(line) && line > 0 ? line : null });
     if (diagnostics.length === 100) break;
   }
   return diagnostics;
@@ -47,6 +48,7 @@ export class TexBuildService {
     if (state.latest?.status === "running" && this.active?.id !== state.latest.id) {
       state.latest.status = "interrupted";
       state.latest.finishedAt = new Date().toISOString();
+      state.latest.diagnostics = state.latest.diagnostics.slice(0, 99);
       state.latest.diagnostics.push({ severity: "error", message: "The server restarted during compilation. Compile again to retry.", path: null, line: null });
       this.writeState(manuscriptId, state);
     }
@@ -123,7 +125,7 @@ export class TexBuildService {
         successful = build;
       } else {
         build.status = "failed";
-        if (!build.diagnostics.some((item) => item.severity === "error")) build.diagnostics.push({ severity: "error", message: "Compilation failed. See the build log for details.", path: null, line: null });
+        if (!build.diagnostics.some((item) => item.severity === "error")) build.diagnostics = [...build.diagnostics.slice(0, 99), { severity: "error", message: "Compilation failed. See the build log for details.", path: null, line: null }];
       }
     } catch (error) {
       build.status = signal.aborted ? "cancelled" : "failed";

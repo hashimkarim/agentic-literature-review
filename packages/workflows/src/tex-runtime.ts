@@ -55,6 +55,8 @@ export class TectonicCompiler implements TexCompiler {
     try {
       const work = path.join(temporary, "work");
       await fs.promises.mkdir(path.join(work, "out"), { recursive: true });
+      const scratch = path.join(temporary, "scratch");
+      await fs.promises.mkdir(scratch);
       for (const file of document.files) {
         const destination = path.join(work, file.path);
         await fs.promises.mkdir(path.dirname(destination), { recursive: true });
@@ -66,7 +68,7 @@ export class TectonicCompiler implements TexCompiler {
         "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--clearenv",
         "--ro-bind", path.join(this.runtime, "tectonic"), "/tectonic",
         "--ro-bind", path.join(this.runtime, "cache"), "/cache",
-        "--bind", work, "/work", "--tmpfs", "/tmp", "--dev", "/dev", "--proc", "/proc",
+        "--bind", work, "/work", "--bind", scratch, "/tmp", "--dev", "/dev", "--proc", "/proc", "--remount-ro", "/",
         "--setenv", "HOME", "/tmp", "--setenv", "TECTONIC_CACHE_DIR", "/cache", "--setenv", "TECTONIC_UNTRUSTED_MODE", "1",
         "--chdir", "/work", "--", "/tectonic", "-X", "compile", "--untrusted", "--only-cached", "--keep-logs", "--synctex", "--outdir", "/work/out", document.entryFile];
       const result = await new Promise<{ code: number | null; log: string }>((resolve, reject) => {
@@ -95,7 +97,7 @@ export class TectonicCompiler implements TexCompiler {
                 if (bytes > 48 * 1024 * 1024) throw new Error("Compilation exceeded the output size limit.");
               }
             }
-            await inspect(work);
+            await inspect(work); await inspect(scratch);
           })().catch((error) => { failure = error instanceof Error ? error.message : "Could not inspect compiler output."; stop(); }).finally(() => { checkingSize = false; });
         }, 200);
         const collect = (data: Buffer) => {

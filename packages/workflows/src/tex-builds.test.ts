@@ -79,6 +79,16 @@ it("only links diagnostics to manuscript files and bounds malformed logs", () =>
     { severity: "warning", message: "Denied", path: null, line: null }
   ]);
   expect(texDiagnostics("error: Bad\n".repeat(500), []).length).toBe(100);
+  expect(texDiagnostics(`error: main.tex:${"9".repeat(400)}: Bad`, ["main.tex"])[0]?.line).toBeNull();
+});
+
+it("retains a failed status when the warning limit is already full", async () => {
+  const f = fixture(async () => ({ log: "warning: Warning\n".repeat(200), pdf: null }));
+  f.service.start(f.document.id, request(f.document)); await f.service.idle();
+  const result = f.service.get(f.document.id);
+  expect(result.latest?.status).toBe("failed");
+  expect(result.latest?.diagnostics).toHaveLength(100);
+  expect(result.latest?.diagnostics.at(-1)?.severity).toBe("error");
 });
 
 it.runIf(process.env.LITAGENT_TEST_TEX === "1")("uses the prepared offline engine with real isolation, diagnostics and cancellation", async () => {
@@ -104,4 +114,6 @@ it.runIf(process.env.LITAGENT_TEST_TEX === "1")("uses the prepared offline engin
   const timer = setTimeout(() => controller.abort(), 1500);
   try { await expect(engine.compile(replaceMain("\\documentclass{article}\n\\begin{document}\n\\loop\\iftrue\\repeat\n\\end{document}"), controller.signal)).rejects.toThrow(); }
   finally { clearTimeout(timer); }
+  const limited = new TectonicCompiler(engine.runtime, engine.bwrap, engine.prlimit, 500);
+  await expect(limited.compile(replaceMain("\\documentclass{article}\n\\begin{document}\n\\loop\\iftrue\\repeat\n\\end{document}"), new AbortController().signal)).rejects.toThrow("time limit");
 }, 45_000);
