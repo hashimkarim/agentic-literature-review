@@ -4,8 +4,11 @@ import type { AgentHarness, AgentProviderCatalog } from "@litagent/agents";
 import { ManuscriptError, ManuscriptStore } from "@litagent/library";
 import {
   AcceptWritingCandidateSchema, CreateWritingCandidatesSchema,
+  ManuscriptPathSchema, ManuscriptRevisionSchema,
   type AgentProviderSettings, type CreateWritingCandidates, type WritingCandidateBatch, type WritingTarget
 } from "@litagent/contracts";
+import { WritingContextService } from "./writing-context";
+import { assistantPrompt, inspectWritingOutput, parseWritingOutput, renderWritingOutput, validateWritingReview, writingReviewPrompt } from "./writing-assistant";
 
 type Runtime = Pick<AgentHarness, "startRun" | "cancelRun">;
 const audiences = ["Layperson", "Undergraduate", "Graduate", "Doctoral / specialist"];
@@ -23,6 +26,7 @@ export function writingTargetValidator(catalog: AgentProviderCatalog, settings: 
 }
 
 export function writingCandidatePrompt(batch: WritingCandidateBatch, variant: number): string {
+  if (batch.request.assistant) return assistantPrompt(batch, variant);
   return [
     "Rewrite the selected TeX prose as one alternative. This is editing, not research or fact verification.",
     "Return only JSON with one key: {\"text\":\"replacement TeX text\"}. No explanation or Markdown fence.",
@@ -38,7 +42,7 @@ export function writingCandidatePrompt(batch: WritingCandidateBatch, variant: nu
 /** App-owned draft orchestration. Execution and cancellation remain with the existing SDK adapter. */
 export class WritingCandidateService {
   private active = new Map<string, Promise<void>>();
-  constructor(private readonly store: ManuscriptStore, private readonly runtime: Runtime, private readonly validateTarget: (target: WritingTarget) => void) {}
+  constructor(private readonly store: ManuscriptStore, private readonly runtime: Runtime, private readonly validateTarget: (target: WritingTarget) => void, private readonly context?: WritingContextService) {}
   private key(manuscriptId: string, id: string) { return `${manuscriptId}/${id}`; }
 
   get(manuscriptId: string, id: string): WritingCandidateBatch {
@@ -51,7 +55,17 @@ export class WritingCandidateService {
       }
       this.store.saveCandidateBatch(batch);
     }
+    if (batch.request.assistant) {
+      try { this.assertSources(batch); batch.sourceIssue = null; }
+      catch { batch.sourceIssue = "Sources changed or were removed. Review fresh context before using these drafts."; }
+    }
     return batch;
+  }
+
+  private assertSources(batch: WritingCandidateBatch) {
+    if (!batch.request.assistant) return;
+    if (!this.context || !batch.context) throw new ManuscriptError(409, "writing_context_unavailable", "Writing context is unavailable.");
+    this.context.assertCurrent(batch.manuscriptId, batch.request.assistant.context, batch.context.revision);
   }
 
   list(manuscriptId: string) {
@@ -73,10 +87,16 @@ export class WritingCandidateService {
     if (this.store.candidateBatches(manuscriptId).length >= 250) throw new ManuscriptError(413, "candidate_limit", "This manuscript has reached its 250 candidate-batch limit.");
     const file = this.store.read(manuscriptId).files.find((item) => item.path === request.path);
     if (!file || file.revision !== request.expectedRevision) throw new ManuscriptError(409, "manuscript_file_changed", "Save and reload the current file before generating candidates.");
-    if (!file.path.endsWith(".tex") || request.to > file.content.length || !file.content.slice(request.from, request.to).trim()) {
+    if (!file.path.endsWith(".tex") || request.to > file.content.length || request.from > file.content.length || (request.to > request.from && !file.content.slice(request.from, request.to).trim()) || (!request.assistant && request.to === request.from)) {
       throw new ManuscriptError(400, "invalid_writing_selection", "Select non-empty prose in a TeX file.");
     }
     request.targets.forEach(this.validateTarget);
+    let context: WritingCandidateBatch["context"];
+    if (request.assistant) {
+      if (!this.context) throw new ManuscriptError(409, "writing_context_unavailable", "Writing context is unavailable.");
+      context = this.context.preview(manuscriptId, request.assistant.context);
+      if (context.revision !== request.assistant.expectedContextRevision) throw new ManuscriptError(409, "writing_context_changed", "Sources changed since preview. Review fresh context before generating.");
+    }
     const source = this.store.checkpoint(manuscriptId, { path: file.path, expectedRevision: file.revision, label: "Before candidate generation" });
     const batch: WritingCandidateBatch = {
       id, manuscriptId, createdAt: new Date().toISOString(), status: "running", request,
@@ -85,8 +105,9 @@ export class WritingCandidateService {
       candidates: request.targets.flatMap((target) => Array.from({ length: target.count }, (_, index) => ({
         id: `candidate_${randomBytes(8).toString("hex")}`, providerId: target.providerId, model: target.model, variant: index + 1,
         status: "queued" as const, text: null, error: null
-      }))), accepting: null, accepted: null
+      }))), accepting: null, accepted: null, ...(context ? { context } : {})
     };
+    if (Buffer.byteLength(writingCandidatePrompt(batch, 1)) > 750_000) throw new ManuscriptError(413, "writing_context_limit", "Selected context is too large for transport. Select fewer sources.");
     this.store.saveCandidateBatch(batch);
     const key = this.key(manuscriptId, id);
     // Publish the pending promise before execution; a GET cannot misclassify this new batch as orphaned.
@@ -102,9 +123,10 @@ export class WritingCandidateService {
       let batch = this.get(original.manuscriptId, original.id);
       if (batch.status !== "running") return;
       let candidate = batch.candidates.find((item) => item.id === queued.id)!;
-      candidate.status = "running";
+      candidate.status = "running"; candidate.phase = "drafting";
       this.store.saveCandidateBatch(batch);
       try {
+        this.assertSources(batch);
         this.validateTarget({ providerId: candidate.providerId, model: candidate.model, count: 1 });
         const session = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: candidate.id,
           cwd: this.store.root, prompt: writingCandidatePrompt(batch, candidate.variant) });
@@ -117,8 +139,26 @@ export class WritingCandidateService {
           candidate.error = result.status === "cancelled" ? "Generation cancelled." : "Provider did not complete this candidate. Check the selected connection; no fallback was used.";
         } else {
           const raw = result.transcript.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1");
-          const output = z.object({ text: z.string().min(1).max(32_000).refine((text) => text.trim().length > 0) }).strict().parse(JSON.parse(raw));
-          candidate.status = "completed"; candidate.text = output.text;
+          if (batch.request.assistant) {
+            const output = parseWritingOutput(raw);
+            inspectWritingOutput(output, batch);
+            this.assertSources(batch);
+            candidate.phase = "reviewing"; this.store.saveCandidateBatch(batch);
+            this.validateTarget({ providerId: candidate.providerId, model: candidate.model, count: 1 });
+            const reviewRun = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: `${candidate.id}_review`, cwd: this.store.root, prompt: writingReviewPrompt(output, batch) });
+            const reviewed = await reviewRun.finished;
+            batch = this.get(original.manuscriptId, original.id);
+            if (batch.status !== "running") return;
+            candidate = batch.candidates.find((item) => item.id === queued.id)!;
+            if (reviewed.status !== "completed") throw new Error("Source review did not complete.");
+            this.assertSources(batch);
+            const review = validateWritingReview(JSON.parse(reviewed.transcript.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1")), output);
+            candidate.text = renderWritingOutput(output, batch); candidate.claims = output.claims;
+            candidate.warnings = output.warnings; candidate.review = review; candidate.status = "completed";
+          } else {
+            const output = z.object({ text: z.string().min(1).max(32_000).refine((text) => text.trim().length > 0) }).strict().parse(JSON.parse(raw));
+            candidate.status = "completed"; candidate.text = output.text;
+          }
         }
       } catch {
         batch = this.get(original.manuscriptId, original.id);
@@ -142,7 +182,7 @@ export class WritingCandidateService {
       candidate.status = "cancelled"; candidate.error = "Generation cancelled.";
     }
     this.store.saveCandidateBatch(batch);
-    running.forEach((candidate) => this.runtime.cancelRun(candidate.id));
+    running.forEach((candidate) => { this.runtime.cancelRun(candidate.id); if (candidate.phase === "reviewing") this.runtime.cancelRun(`${candidate.id}_review`); });
     return batch;
   }
 
@@ -152,6 +192,7 @@ export class WritingCandidateService {
     if (batch.status === "running") throw new ManuscriptError(409, "candidates_running", "Wait for generation to finish or cancel remaining candidates before accepting.");
     const candidate = batch.candidates.find((item) => item.id === request.candidateId);
     if (!candidate || candidate.status !== "completed" || candidate.text === null) throw new ManuscriptError(400, "candidate_unavailable", "Choose a completed candidate.");
+    if (candidate.dismissed || batch.request.assistant?.action === "review" || batch.request.assistant && !candidate.review?.supported) throw new ManuscriptError(409, "candidate_not_approved", "A dismissed, unsupported or review-only candidate cannot replace manuscript text.");
     if (request.expectedRevision !== batch.request.expectedRevision) throw new ManuscriptError(409, "candidate_stale", "The draft changed after generation. Generate new alternatives for the current text.");
     const base = this.store.historicalFile(manuscriptId, batch.request.path, batch.sourceVersionId);
     if (base.revision !== batch.request.expectedRevision || base.content.slice(batch.request.from, batch.request.to) !== batch.selectedText) {
@@ -169,6 +210,12 @@ export class WritingCandidateService {
       if (current.revision !== revision) throw new ManuscriptError(409, "candidate_stale", "The accepted text has since changed. No text was overwritten.");
       return current;
     }
+    if (!prior) {
+      this.assertSources(batch);
+      const entries = this.references(batch, candidate.id);
+      const bibs = this.store.read(manuscriptId).files.filter((file) => file.path.endsWith(".bib"));
+      if (entries.some((entry) => !bibs.some((file) => file.content.includes(entry.bibliography!)))) throw new ManuscriptError(409, "writing_references_missing", "Add the cited references to a bibliography before inserting this draft.");
+    }
     // Persist intent before the file write. A lost response or crash retries the same edit, never another candidate.
     batch.accepting = prior ?? { candidateId: candidate.id, revision, acceptedAt: new Date().toISOString() };
     this.store.saveCandidateBatch(batch);
@@ -176,6 +223,42 @@ export class WritingCandidateService {
     batch.accepted = batch.accepting; batch.accepting = null;
     this.store.saveCandidateBatch(batch);
     return saved;
+  }
+
+  dismiss(manuscriptId: string, id: string, candidateId: string, dismissed: boolean) {
+    const batch = this.get(manuscriptId, id), candidate = batch.candidates.find((item) => item.id === candidateId);
+    if (!candidate || batch.status === "running" || batch.accepted || batch.accepting) throw new ManuscriptError(409, "candidate_locked", "This candidate cannot be changed now.");
+    candidate.dismissed = dismissed; this.store.saveCandidateBatch(batch); return batch;
+  }
+
+  private references(batch: WritingCandidateBatch, candidateId: string) {
+    const candidate = batch.candidates.find((item) => item.id === candidateId);
+    if (!candidate || candidate.status !== "completed") throw new ManuscriptError(409, "candidate_unavailable", "Choose a completed candidate.");
+    const ids = new Set(candidate.claims?.flatMap((claim) => claim.evidence.map((item) => item.sourceId)));
+    return [...new Map((batch.context?.sources ?? []).filter((source) => ids.has(source.id) && source.kind === "literature").map((source) => [source.sourceId, source])).values()];
+  }
+
+  addReferences(manuscriptId: string, id: string, candidateId: string, input: unknown) {
+    const request = z.object({ path: ManuscriptPathSchema.refine((path) => path.endsWith(".bib")), expectedRevision: ManuscriptRevisionSchema.nullable() }).strict().parse(input);
+    const batch = this.get(manuscriptId, id); this.assertSources(batch);
+    const entries = this.references(batch, candidateId);
+    if (!entries.length) throw new ManuscriptError(400, "no_references", "This candidate has no literature references.");
+    const file = this.store.read(manuscriptId).files.find((file) => file.path === request.path);
+    let content = file?.content ?? "";
+    for (const entry of entries) {
+      if (content.includes(entry.bibliography!)) continue;
+      if (new RegExp(`@\\w+\\s*[({]\\s*${entry.citekey}\\s*,`, "i").test(content)) throw new ManuscriptError(409, "citekey_conflict", "A generated citekey already has a different bibliography entry. Resolve it before adding references.");
+      content += `\n\n${entry.bibliography}\n`;
+    }
+    return this.store.writeFile(manuscriptId, { path: request.path, content, expectedRevision: request.expectedRevision }, "candidate");
+  }
+
+  evidence(manuscriptId: string, id: string, sourceId: string, quote: string) {
+    const batch = this.get(manuscriptId, id); this.assertSources(batch);
+    const source = batch.context?.sources.find((source) => source.id === sourceId);
+    if (!source || !batch.candidates.some((candidate) => candidate.claims?.some((claim) => claim.evidence.some((item) => item.sourceId === sourceId && item.quote === quote)))) throw new ManuscriptError(404, "writing_evidence_missing", "Evidence was not cited by this response.");
+    const startLine = (source.startLine ?? 1) + source.quote.slice(0, source.quote.indexOf(quote)).split("\n").length - 1;
+    return { ...source, quote, startLine, endLine: startLine + quote.split("\n").length - 1 };
   }
 
   async idle(): Promise<void> { await Promise.all([...this.active.values()]); }

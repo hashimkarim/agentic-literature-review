@@ -59,7 +59,7 @@ export const WritingAssistantOptionsSchema = z.object({
 export const WritingClaimSchema = z.object({
   text: z.string().trim().min(1).max(4000),
   kind: z.enum(["reported", "inference"]),
-  sourceIds: z.array(WritingSourceRefSchema.shape.id).min(1).max(12)
+  evidence: z.array(z.object({ sourceId: WritingSourceRefSchema.shape.id, quote: z.string().min(4).max(2000) }).strict()).min(1).max(12)
 }).strict();
 export const WritingAssistantOutputSchema = z.object({
   text: z.string().trim().min(1).max(32_000),

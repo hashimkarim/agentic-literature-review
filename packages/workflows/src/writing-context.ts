@@ -75,6 +75,7 @@ export class WritingContextService {
       documents.push({ ...base, sourceId: source.id, kind: source.kind, title: source.path, path: source.path, originUrl: source.originUrl, revision: source.revision, text: source.content });
     }
     for (const name of [...new Set(selected.manuscriptPaths)].sort()) {
+      if (/\.bib$/i.test(name)) throw new ManuscriptError(400, "bibliography_context", "Select paper full text as evidence; bibliography files are citation metadata, not factual sources.");
       const file = document.files.find((item) => item.path === name);
       if (!file) throw new ManuscriptError(409, "writing_source_missing", "A selected manuscript file was removed.");
       documents.push({ ...base, sourceId: `manuscript:${name}`, kind: "manuscript", title: name, path: name, revision: file.revision, text: file.content });

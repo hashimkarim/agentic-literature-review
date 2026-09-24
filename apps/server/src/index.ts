@@ -82,9 +82,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 const manuscripts = new ManuscriptStore(repo.root);
-const writingCandidates = new WritingCandidateService(manuscripts, new AgentHarness({ catalog: providers }), writingTargetValidator(providers, () => providerSettings.read()));
-const texBuilds = new TexBuildService(manuscripts);
 const writingContext = new WritingContextService(manuscripts, repo);
+const writingCandidates = new WritingCandidateService(manuscripts, new AgentHarness({ catalog: providers }), writingTargetValidator(providers, () => providerSettings.read()), writingContext);
+const texBuilds = new TexBuildService(manuscripts);
 app.use("/api/manuscripts", manuscriptRoutes(manuscripts, writingCandidates, texBuilds, writingContext));
 app.use("/api/projects/:id/manuscripts", manuscriptRoutes(manuscripts, writingCandidates, texBuilds, writingContext));
 

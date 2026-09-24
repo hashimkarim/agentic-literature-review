@@ -94,6 +94,15 @@ export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCan
     router.get("/:manuscriptId/candidates/:batchId", (req, res) => res.json(candidates.get(param(req.params, "manuscriptId"), param(req.params, "batchId"))));
     router.post("/:manuscriptId/candidates/:batchId/cancel", (req, res) => res.json(candidates.cancel(param(req.params, "manuscriptId"), param(req.params, "batchId"))));
     router.post("/:manuscriptId/candidates/:batchId/accept", (req, res) => res.json(candidates.accept(param(req.params, "manuscriptId"), param(req.params, "batchId"), req.body)));
+    router.post("/:manuscriptId/candidates/:batchId/dismiss", (req, res) => {
+      const input = z.object({ candidateId: z.string(), dismissed: z.boolean() }).strict().parse(req.body);
+      res.json(candidates.dismiss(param(req.params, "manuscriptId"), param(req.params, "batchId"), input.candidateId, input.dismissed));
+    });
+    router.post("/:manuscriptId/candidates/:batchId/references/:candidateId", (req, res) => res.json(candidates.addReferences(param(req.params, "manuscriptId"), param(req.params, "batchId"), param(req.params, "candidateId"), req.body)));
+    router.post("/:manuscriptId/candidates/:batchId/evidence", (req, res) => {
+      const input = z.object({ sourceId: z.string(), quote: z.string().max(2000) }).strict().parse(req.body);
+      res.json(candidates.evidence(param(req.params, "manuscriptId"), param(req.params, "batchId"), input.sourceId, input.quote));
+    });
   }
   router.use((error: unknown, _req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
     if (error instanceof multer.MulterError) { res.status(413).json({ error: "Import upload exceeds its file, field or size limit (128 MB ZIP).", code: "import_limit" }); return; }

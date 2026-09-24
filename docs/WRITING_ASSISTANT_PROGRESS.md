@@ -8,10 +8,15 @@ of this work. All generated text remains a draft until explicitly accepted.
 
 1. Implemented: explicit literature, manuscript and uploaded code/result context;
    immutable source copies, exact prompt preview, revisions and coverage.
-2. Pending: outlines, storylines, drafting, editing, citation discovery and review;
+2. Implemented: outlines, storylines, drafting, editing, citation discovery and review;
    multiple candidates, claim/source validation, recoverable acceptance/history.
-3. Pending: persistent assistant sidebar, source selection, evidence inspection,
-   bibliography actions, audience/style settings and responsive interaction tests.
+3. In progress: persistent assistant sidebar, source selection, evidence inspection,
+  bibliography actions, audience/style settings and responsive interaction tests.
+
+Backend validation: typecheck and 194 tests pass, including literal quote/ID checks,
+separate semantic review, unsupported-result rejection, explicit bibliography
+insertion, cursor drafting, acceptance history, cancellation during review and
+stale/conflicting source protection. Checks use fixtures, not live model accounts.
 
 ## Boundaries
 

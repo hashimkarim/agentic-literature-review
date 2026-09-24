@@ -513,7 +513,7 @@ export class ManuscriptStore {
     return fs.readdirSync(directory).filter((file) => /^candidates_[a-f0-9]{32}\.json$/.test(file)).map((file) => {
       const batch = this.candidateBatch(manuscriptId, file.slice(0, -5))!;
       return { id: batch.id, createdAt: batch.createdAt, status: batch.status, accepted: batch.accepted, path: batch.request.path,
-        instruction: batch.request.instruction, completed: batch.candidates.filter((item) => item.status === "completed").length, total: batch.candidates.length };
+        instruction: batch.request.instruction, completed: batch.candidates.filter((item) => item.status === "completed").length, total: batch.candidates.length, action: batch.request.assistant?.action };
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 }
