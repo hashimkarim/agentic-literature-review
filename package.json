@@ -15,6 +15,7 @@
     "dev:desktop": "bun run --filter @litagent/desktop dev",
     "prepare:marker-runtime": "bun scripts/prepare-marker-runtime.ts",
     "prepare:tex-runtime": "bun scripts/prepare-tex-runtime.ts",
+    "prepare:texlive-runtime": "bun scripts/prepare-texlive-runtime.ts",
     "build": "bun run --workspaces --if-present build",
     "typecheck": "bunx tsc -b",
     "test": "bunx vitest run",

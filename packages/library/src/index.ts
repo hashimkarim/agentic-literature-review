@@ -265,6 +265,7 @@ export class LitAgentRepository {
       ".litagent/provider-settings.json",
       ".litagent/workflow-automations.json",
       ".litagent/cache/",
+      ".litagent/tex-builds/",
       ".litagent/thumbnails/",
       "pdfs/",
       "*.tmp"

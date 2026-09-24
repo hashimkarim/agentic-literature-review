@@ -10,7 +10,7 @@ import type { ManuscriptDocument, TexRuntimeStatus } from "@litagent/contracts";
 export type TexCompileDocument = ManuscriptDocument & { assetContents?: { path: string; bytes: Buffer }[] };
 export interface TexCompiler {
   status(): TexRuntimeStatus;
-  compile(document: TexCompileDocument, signal: AbortSignal): Promise<{ log: string; pdf: Buffer | null }>;
+  compile(document: TexCompileDocument, signal: AbortSignal, progress?: (phase: string) => void): Promise<{ log: string; pdf: Buffer | null }>;
 }
 const MAX_OUTPUT = 16 * 1024 * 1024;
 const ManifestSchema = z.object({

@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
@@ -16,13 +17,15 @@ function converterDir() {
 
 function startBackend() {
   if (process.env.LITAGENT_SERVER_EXTERNAL === "1") return;
+  const fullTex = process.env.LITAGENT_TEXLIVE_RUNTIME_DIR ?? (app.isPackaged ? path.join(process.resourcesPath, "texlive") : path.join(repoRoot, "resources/texlive"));
   serverProcess = spawn("bun", ["run", "--filter", "@litagent/server", "start"], {
     cwd: repoRoot,
     stdio: "inherit",
     env: {
       ...process.env,
       LITAGENT_CONVERTER_DIR: converterDir(),
-      LITAGENT_TEX_RUNTIME_DIR: process.env.LITAGENT_TEX_RUNTIME_DIR ?? (app.isPackaged ? path.join(process.resourcesPath, "tex") : path.join(repoRoot, "resources/tex"))
+      LITAGENT_TEX_RUNTIME_DIR: process.env.LITAGENT_TEX_RUNTIME_DIR ?? (app.isPackaged ? path.join(process.resourcesPath, "tex") : path.join(repoRoot, "resources/tex")),
+      ...(process.env.LITAGENT_TEXLIVE_RUNTIME_DIR || existsSync(path.join(fullTex, "manifest.json")) ? { LITAGENT_TEXLIVE_RUNTIME_DIR: fullTex } : {})
     }
   });
 }

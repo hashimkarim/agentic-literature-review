@@ -59,6 +59,11 @@ function findPdfFiles(dir: string): string[] {
 }
 
 describe("LitAgentRepository", () => {
+  it("keeps generated manuscript PDFs and build logs out of version control", () => {
+    const repo = tempRepo();
+    try { expect(fs.readFileSync(repo.resolve(".gitignore"), "utf8")).toContain(".litagent/tex-builds/\n"); }
+    finally { fs.rmSync(repo.root, { recursive: true, force: true }); }
+  });
   it("can import every local PDF fixture when developers provide them", () => {
     const pdfs = localFixturePdfs();
     if (pdfs.length === 0) return;

@@ -21,6 +21,7 @@ export const TexBuildSchema = z.object({
   status: z.enum(["running", "succeeded", "failed", "cancelled", "interrupted"]),
   startedAt: z.string().datetime(),
   finishedAt: z.string().datetime().nullable(),
+  phase: z.string().max(120).optional(),
   diagnostics: z.array(TexDiagnosticSchema).max(100),
   log: z.string().max(64_000)
 });
@@ -31,5 +32,5 @@ export const TexBuildStateSchema = z.object({
 export type TexBuildRequest = z.infer<typeof TexBuildRequestSchema>;
 export type TexDiagnostic = z.infer<typeof TexDiagnosticSchema>;
 export type TexBuild = z.infer<typeof TexBuildSchema>;
-export type TexRuntimeStatus = { available: boolean; version: string | null; message: string };
+export type TexRuntimeStatus = { available: boolean; version: string | null; message: string; engine?: "tectonic" | "texlive" };
 export type TexBuildState = z.infer<typeof TexBuildStateSchema> & { runtime: TexRuntimeStatus };

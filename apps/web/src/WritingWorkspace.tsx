@@ -266,7 +266,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
         setViewMode(window.innerWidth > 1100 ? "split" : "preview");
         void build.compile(async () => { const latest = await savedTree(); return Object.fromEntries([...latest.files, ...(latest.assets ?? [])].map((item) => [item.path, item.revision])); }, tree.entryFile);
       }}><Play size={14} />{build.pending ? "Saving..." : "Compile"}</button>}
-      <span className="writing-build-status" role="status">{compiling ? "Compiling..." : build.state?.latest ? ({ succeeded: "Build succeeded", failed: "Build failed", cancelled: "Build cancelled", interrupted: "Build interrupted", running: "Compiling..." })[build.state.latest.status] : build.state?.runtime.available ? "Ready to compile" : build.state ? "Compiler unavailable" : "Checking compiler..."}</span>
+      <span className="writing-build-status" role="status">{compiling ? build.state?.latest?.phase ?? "Compiling..." : build.state?.latest ? ({ succeeded: "Build succeeded", failed: "Build failed", cancelled: "Build cancelled", interrupted: "Build interrupted", running: "Compiling..." })[build.state.latest.status] : build.state?.runtime.available ? "Ready to compile" : build.state ? "Compiler unavailable" : "Checking compiler..."}</span>
       <span className="writing-spacer" />
       <div className="writing-view-modes" role="group" aria-label="Editor layout">
         <Tool label="Source only" aria-pressed={viewMode === "source"} onClick={() => setViewMode("source")}><FileCode2 size={16} /></Tool>

@@ -64,7 +64,7 @@ The preview contains two pages. Source history and project links remain independ
     await page.getByRole("button", { name: document.name, exact: true }).click();
     await page.getByRole("textbox", { name: "TeX source", exact: true }).waitFor();
     await page.getByRole("button", { name: "Compile", exact: true }).click();
-    await page.getByText("Build succeeded", { exact: true }).waitFor({ timeout: 30_000 });
+    await page.getByText("Build succeeded", { exact: true }).waitFor({ timeout: 120_000 });
     const canvas = page.locator(".writing-preview canvas").first();
     await canvas.waitFor();
     await page.waitForFunction(() => {

@@ -28,6 +28,8 @@ resources/converters/**
 
 # Prepared TeX engine and offline support files.
 resources/tex/
+resources/texlive
+resources/.texlive-prepare-*/
 
 # OS/editor
 .DS_Store

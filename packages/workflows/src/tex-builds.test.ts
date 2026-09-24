@@ -96,6 +96,27 @@ it("only links diagnostics to manuscript files and bounds malformed logs", () =>
   expect(texDiagnostics(`error: main.tex:${"9".repeat(400)}: Bad`, ["main.tex"])[0]?.line).toBeNull();
 });
 
+it("maps native XeLaTeX errors and ignores warnings resolved by later passes", () => {
+  const log = "[XeLaTeX pass 1]\nLaTeX Warning: Citation undefined.\n[XeLaTeX pass 2]\n/work/chapters/intro.tex:13: Undefined control sequence.\nERROR - Bibliography failed\nwarning: Output limited";
+  expect(texDiagnostics(log, ["chapters/intro.tex"])).toEqual([
+    { severity: "error", path: "chapters/intro.tex", line: 13, message: "Undefined control sequence." },
+    { severity: "error", path: null, line: null, message: "Bibliography failed" },
+    { severity: "warning", path: null, line: null, message: "Output limited" }
+  ]);
+});
+
+it("persists compiler phases while keeping source snapshots and last-good output unchanged", async () => {
+  let progress!: (phase: string) => void;
+  let finish!: (value: { log: string; pdf: Buffer }) => void;
+  const f = fixture((_document, _signal, report) => { progress = report!; return new Promise((resolve) => { finish = resolve; }); });
+  f.service.start(f.document.id, request(f.document));
+  progress("Biber bibliography");
+  expect(f.service.get(f.document.id).latest).toMatchObject({ status: "running", phase: "Biber bibliography" });
+  finish({ log: "", pdf: Buffer.from("%PDF-synthetic") }); await f.service.idle();
+  expect(f.service.get(f.document.id).latest?.status).toBe("succeeded");
+  expect(f.store.read(f.document.id).files).toEqual(f.document.files);
+});
+
 it("retains a failed status when the warning limit is already full", async () => {
   const f = fixture(async () => ({ log: "warning: Warning\n".repeat(200), pdf: null }));
   f.service.start(f.document.id, request(f.document)); await f.service.idle();

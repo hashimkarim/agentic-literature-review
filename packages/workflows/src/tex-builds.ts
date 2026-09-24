@@ -3,13 +3,22 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ManuscriptError, ManuscriptStore } from "@litagent/library";
 import { TexBuildRequestSchema, TexBuildStateSchema, type ManuscriptDocument, type TexBuild, type TexBuildState, type TexDiagnostic } from "@litagent/contracts";
-import { TectonicCompiler, type TexCompiler, type TexCompileDocument } from "./tex-runtime";
+import { type TexCompiler, type TexCompileDocument } from "./tex-runtime";
+import { defaultTexCompiler } from "./texlive-runtime";
 
 type StoredState = Omit<TexBuildState, "runtime">;
 export function texDiagnostics(log: string, paths: string[]): TexDiagnostic[] {
   const diagnostics: TexDiagnostic[] = [];
+  // Earlier passes normally have unresolved citations. Only report diagnostics
+  // from the final attempted pass and its subsequent bibliography/PDF steps.
+  const finalPass = log.lastIndexOf("[XeLaTeX pass ");
+  if (finalPass >= 0) log = log.slice(finalPass);
   for (const raw of log.split(/\r?\n/)) {
-    const match = /^(error|warning):\s*(.*)$/.exec(raw);
+    const native = /^(?:\.\/|\/work\/)?([^:]+):(\d+):\s*(.*)$/.exec(raw);
+    const normalized = native && paths.includes(native[1]!) ? `error: ${native[1]}:${native[2]}: ${native[3]}` : raw
+      .replace(/^(?:LaTeX|Package [\w-]+) Warning:\s*/, "warning: ")
+      .replace(/^WARN -\s*/, "warning: ").replace(/^ERROR -\s*/, "error: ");
+    const match = /^(error|warning):\s*(.*)$/.exec(normalized);
     if (!match) continue;
     const location = /^(?:\/work\/|\.\/)?([^:]+):(\d+):\s*(.*)$/.exec(match[2]!);
     const file = location && paths.includes(location[1]!) ? location[1]! : null;
@@ -24,7 +33,7 @@ const sameRevisions = (a: Record<string, string>, b: Record<string, string>) => 
 
 export class TexBuildService {
   private active: { manuscriptId: string; id: string; controller: AbortController; finished: Promise<void> } | null = null;
-  constructor(readonly store: ManuscriptStore, readonly compiler: TexCompiler = new TectonicCompiler()) {}
+  constructor(readonly store: ManuscriptStore, readonly compiler: TexCompiler = defaultTexCompiler()) {}
 
   private file(manuscriptId: string, name: string): string {
     // Manuscript identity is validated by every public method before cache access.
@@ -115,7 +124,10 @@ export class TexBuildService {
   private async execute(document: TexCompileDocument, build: TexBuild, previous: TexBuild | null, signal: AbortSignal) {
     let successful = previous;
     try {
-      const result = await this.compiler.compile(document, signal);
+      const result = await this.compiler.compile(document, signal, (phase) => {
+        build.phase = phase.slice(0, 120);
+        this.writeState(document.id, { latest: build, lastSuccessful: previous });
+      });
       signal.throwIfAborted();
       build.log = result.log.slice(-64_000);
       build.diagnostics = texDiagnostics(build.log, document.files.map((file) => file.path));
