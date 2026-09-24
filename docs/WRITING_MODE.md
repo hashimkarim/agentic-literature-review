@@ -9,7 +9,10 @@ workflows are foundations; they are not yet a manuscript editor.
 
 Current slice: project manuscript CRUD and revision-checked `.tex`/`.bib` saves
 are implemented, with automatic per-file history, named checkpoints and guarded
-restore. Source editor/history UI, compilation and agentic writing remain open.
+restore. The project Writing tab now includes a CodeMirror source editor, file
+creation/deletion, autosave/recovery, side-by-side history review and source ZIP
+export. Compilation, bibliography insertion and agentic writing remain open.
+History is per-file, not yet a grouped multi-file document timeline.
 
 ## Product Goal
 

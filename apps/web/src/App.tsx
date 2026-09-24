@@ -1,5 +1,5 @@
 import type { ComponentType, CSSProperties, Dispatch, ReactNode, SetStateAction } from "react";
-import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { Children, isValidElement, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import * as Lucide from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -37,7 +37,8 @@ import { savedCitationHash, type SavedCitationSources } from "./citation-revisio
 import { useChatScroll } from "./use-chat-scroll";
 
 type Screen = "library" | "projects" | "search" | "settings" | "presets";
-type WorkspaceTool = "papers" | "workflows" | "map" | "notes" | "exports";
+const WritingWorkspace = lazy(() => import("./WritingWorkspace"));
+type WorkspaceTool = "papers" | "workflows" | "map" | "notes" | "writing" | "exports";
 type ReaderTab = "pdf" | "markdown" | "notes";
 type SettingsSection = "providers" | "defaults" | "appearance" | "storage" | "about";
 
@@ -1225,12 +1226,13 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
   );
   return (
     <WorkspaceShell
+      writing
       tool={tool}
       setTool={setTool}
-      primaryAction={<Btn variant="primary" sm icon="plus" onClick={() => props.onImportPapers(props.activeProjectId)} disabled={!props.activeProjectId}>Add papers</Btn>}
-      secondaryAction={<Btn variant="ghost" sm icon="users">Share</Btn>}
+      primaryAction={tool !== "writing" ? <Btn variant="primary" sm icon="plus" onClick={() => props.onImportPapers(props.activeProjectId)} disabled={!props.activeProjectId}>Add papers</Btn> : undefined}
+      secondaryAction={tool !== "writing" ? <Btn variant="ghost" sm icon="users">Share</Btn> : undefined}
     >
-      {tool === "papers" ? (
+      {tool === "writing" && props.activeProjectId ? <Suspense fallback={<div className="la-readerbody">Loading writing workspace...</div>}><WritingWorkspace key={props.activeProjectId} projectId={props.activeProjectId} projects={props.projects} onProjectChange={props.onProjectChange} /></Suspense> : tool === "papers" ? (
         <div className="la-content">
           <ProjectContext
             project={props.project}
@@ -1272,12 +1274,14 @@ function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: U
 }
 
 function WorkspaceShell({
+  writing = false,
   tool,
   setTool,
   primaryAction,
   secondaryAction,
   children
 }: {
+  writing?: boolean;
   tool: WorkspaceTool;
   setTool: (tool: WorkspaceTool) => void;
   primaryAction?: ReactNode;
@@ -1289,6 +1293,7 @@ function WorkspaceShell({
     ["workflows", "workflow", "Workflows"],
     ["map", "share-2", "Concept Map"],
     ["notes", "sticky-note", "Notes"],
+    ...(writing ? [["writing", "file-pen-line", "Writing"] as [WorkspaceTool, string, string]] : []),
     ["exports", "download", "Exports"]
   ];
   return (

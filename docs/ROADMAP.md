@@ -55,7 +55,7 @@ using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENT
 | Structured extraction | Working MVP | Accepted findings/method/dataset/result/limitation/reproducibility records | Configurable extraction schemas, editable literature sheets and per-cell provenance UI |
 | Notes | Backend foundation | Markdown note CRUD, annotation links and synthesis-to-note flow | General editor/browser, backlinks, evidence ledger and note search UI |
 | Internal/external evidence finder | Planned | Paper evidence and accepted research records are foundations, not code/run connectors | Search own repositories/results/W&B and public code/benchmarks with typed provenance, source permissions and comparability checks |
-| Writing Mode | Planned | Existing accepted records and synthesis-to-note are reusable foundations, not a manuscript editor | Multi-file TeX/preview, attached code/results, outline/storyline, reviewed drafting, citation finder and audience slider |
+| Writing Mode | Partial | Project multi-file TeX/BibTeX editor, autosave/recovery, conflict review, per-file text history/checkpoints/diffs/restore and source ZIP export | Safe packaged compilation/preview, source/citation attachment, outline/storyline, reviewed generation and audience slider |
 | Concept map | UI prototype | Paper/tag graph surface | Real project graph API, filters, relationships and saved layouts |
 | Bibliography and Zotero | Partial | Project BibTeX export and stored Zotero keys | BibLaTeX/CSL import/export and Zotero interchange/sync |
 | Git and LFS | Foundation | Repository bootstrap, LFS policy and status display | Commit/sync UI, conflict handling and recovery guidance |
@@ -273,7 +273,7 @@ publishing local PDFs, credentials or generated caches.
 ### 6. Writing Mode And Concept Maps
 
 Priority: P1 writing/core graph, P2 advanced authoring/exploration.
-Status: Writing Mode planned; note/synthesis and graph foundations exist.
+Status: source editor and per-file history implemented; compiler and agentic writing open.
 Backlog: WRITE-03/04/05, WRITE-10 through WRITE-15, MAP-01/02/03;
 shared evidence: EVID-09 through EVID-14; then WRITE-06/07/09/16/17 and
 MAP-04 through MAP-07.
@@ -428,6 +428,7 @@ determine release readiness.
 
 | Date | Change | Verification |
 | --- | --- | --- |
+| 2026-09-24 | Project Writing tab: CodeMirror editor, file management, autosave/recovery and conflict review; named text versions with visual diffs/restore and source ZIP export | Typecheck, 139 tests and build; real isolated HTTP/browser writing workflow at 1440/1920/860px, plus existing chat checks at 1440/1920px. No TeX compiler or live model calls. |
 | 2026-09-24 | Writing foundation: project-owned TeX/BibTeX files, safe paths, atomic revision-checked saves, per-file automatic history, named checkpoints and restore APIs; added multi-candidate drafting requirement | Typecheck and 132 tests pass, including real HTTP CRUD/conflicts and history/integrity tests. Editor UI, compilation and generation are not completed by this slice. |
 | 2026-09-24 | Added shared internal/external evidence discovery plan and EVID-09 through EVID-14: own code/results, W&B, papers, public repositories and benchmarks; linked chat/writing scopes and comparison checks | Planning only; documentation consistency checks. No connector, account access or live provider/search calls introduced. |
 | 2026-09-23 | Added project Writing Mode specification, W1-W5 delivery slices and WRITE-10 through WRITE-17; expanded outline/citation/revision requirements and core MVP gate | Planning only; documentation consistency checks. No editor, compiler or agent workflow implemented by this change. |

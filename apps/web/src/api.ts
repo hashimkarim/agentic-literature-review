@@ -7,6 +7,7 @@ import type {
   Passage,
   Project,
   MetadataProposal,
+  Manuscript, ManuscriptDocument, ManuscriptFile, ManuscriptHistoryEntry, WriteManuscriptFileRequest,
   QaResponse,
   QaThread,
   RelevanceProposal,
@@ -84,16 +85,29 @@ export interface ConverterStatus {
   };
 }
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) { super(message); }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(error.error ?? response.statusText);
+    throw new ApiError(error.error ?? response.statusText, response.status, error.code);
   }
   return (await response.json()) as T;
 }
 
 export const api = {
+  manuscripts: (projectId: string) => request<Manuscript[]>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts`),
+  createManuscript: (projectId: string, name: string) => request<ManuscriptDocument>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }),
+  manuscript: (projectId: string, id: string) => request<ManuscriptDocument>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts/${encodeURIComponent(id)}`),
+  writeManuscriptFile: (projectId: string, id: string, body: WriteManuscriptFileRequest) => request<ManuscriptFile>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts/${encodeURIComponent(id)}/files`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  deleteManuscriptFile: (projectId: string, id: string, path: string, expectedRevision: string) => request<{ ok: true }>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts/${encodeURIComponent(id)}/files`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, expectedRevision }) }),
+  manuscriptHistory: (projectId: string, id: string, path: string) => request<ManuscriptHistoryEntry[]>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts/${encodeURIComponent(id)}/history?path=${encodeURIComponent(path)}`),
+  manuscriptVersion: (projectId: string, id: string, path: string, versionId: string) => request<ManuscriptFile>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts/${encodeURIComponent(id)}/history/${encodeURIComponent(versionId)}?path=${encodeURIComponent(path)}`),
+  manuscriptCheckpoint: (projectId: string, id: string, path: string, expectedRevision: string, label: string) => request<ManuscriptHistoryEntry>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts/${encodeURIComponent(id)}/checkpoints`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, expectedRevision, label }) }),
+  restoreManuscriptFile: (projectId: string, id: string, path: string, versionId: string, expectedRevision: string | null) => request<ManuscriptFile>(`/api/projects/${encodeURIComponent(projectId)}/manuscripts/${encodeURIComponent(id)}/restore`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, versionId, expectedRevision }) }),
   status: () => request<AppStatus>("/api/status"),
   projects: () => request<Project[]>("/api/projects"),
   project: (projectId: string) => request<ProjectDetails>(`/api/projects/${projectId}`),
