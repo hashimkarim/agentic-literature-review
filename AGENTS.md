@@ -72,5 +72,6 @@ directly. Adapter implementations should support:
 - Canonical PDFs, Markdown, assets, and metadata live in `library/`.
 - Projects never duplicate paper files; they store `paper-links.json` records.
 - Importing through a project imports globally and then adds a project link.
+- Writing documents live globally in `manuscripts/` and reference zero or more projects via `projectIds`; unlinking never removes their text, history or candidates.
 - SQLite indexes, thumbnails, and caches stay under `.litagent/` and are ignored.
 - Agent output is a proposal or artifact unless the user explicitly accepts it.

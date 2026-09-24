@@ -7,7 +7,7 @@ competitor parity.
 Existing notes, accepted research records, comparisons and synthesis-to-note
 workflows are foundations; they are not yet a manuscript editor.
 
-Current slice: project manuscript CRUD and revision-checked `.tex`/`.bib` saves
+Current slice: global document CRUD and revision-checked `.tex`/`.bib` saves
 are implemented, with automatic per-file history, named checkpoints and guarded
 restore. The project Writing tab now includes a CodeMirror source editor, file
 creation/deletion, autosave/recovery, side-by-side history review and source ZIP
@@ -32,10 +32,18 @@ submission without losing the distinction between literature, original results
 and interpretation. Manual writing and local compilation must work without an
 agent or an application account. Adding this mode does not request app auth.
 
-Writing is a project-specific tab alongside Papers, Workflows, Notes and Map,
-not another global navigation section. A project can contain several manuscripts
-that reference the global library without duplicating its papers. Imported TeX
-projects remain usable in an external editor and under Git.
+Writing is a global navigation tab with independent documents. A document can
+link zero, one or several research projects, and the same project can support
+several documents. These are references, not copied research data. Unlinking a
+project never deletes text, history or candidates. Imported TeX documents remain
+usable in an external editor and under Git.
+
+Global document storage and APIs are implemented. Existing project-owned
+manuscript folders migrate without changing document/history/candidate IDs;
+legacy browser draft recovery keys are still recognized. Duplicate folder IDs
+stop migration without overwriting either copy. Project-link changes use
+optimistic concurrency, separately from text revisions. Linking a project alone
+does not yet send its evidence to generation: source attachment remains W2 work.
 
 ## Workspace
 
@@ -240,11 +248,11 @@ file/build APIs; `packages/library` owns manuscript/context/artifact persistence
 writing orchestration through the existing agent interface. Extend these modules
 before inventing another storage system or provider runtime.
 
-Suggested tracked layout within a project (final schema to be designed in W1):
+Tracked global document layout (assets/context/claims remain planned):
 
 ```text
-projects/{projectId}/manuscripts/{manuscriptId}/
-  manuscript.json
+manuscripts/{manuscriptId}/
+  manuscript.json              # includes projectIds, no owning project
   main.tex
   sections/*.tex
   references.bib
@@ -268,7 +276,7 @@ include private code, datasets, tokens or user-supplied test PDFs.
 
 | Slice | Scope | Gate |
 | --- | --- | --- |
-| W1: local writer | Project Writing tab, multi-file TeX editor, recovery, restricted build, PDF preview, existing citation insertion | Fresh project imports/edits/builds/reopens without data loss or an AI provider; compile failures preserve source and last good preview. |
+| W1: local writer | Global Writing tab, independent documents with reusable project links, multi-file TeX editor, recovery, restricted build, PDF preview, existing citation insertion | Documents import/edit/build/reopen without a project or AI provider; linked projects can be reused and unlinked without losing text/history; compile failures preserve source and last good preview. |
 | W2: attach and find evidence | Library/notes/records plus searchable read-only code/result roots, permissions and revision manifests; reuse shared evidence discovery | Discover relevant files/rows without preselecting them; exact file/commit/row/passage navigation works; secrets/out-of-scope files never enter context; changed sources mark dependents stale. |
 | W3: plan and draft | Outline/storyline, selected-text commands, audience slider, provider/model, reviewable patches | A synthetic source-grounded paragraph at each audience level preserves facts/cites/uncertainty; stale draft edits cannot overwrite new user text. |
 | W4: citation review | Claim evidence inspector, internal/library evidence finder, unsupported/counterevidence, bibliography checks | Distinct claims select distinct supporting sources; code, measurements and literature retain different roles; unsupported claims remain flagged; no invented keys or silent citation substitutions. |

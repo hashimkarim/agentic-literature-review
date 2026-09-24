@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ManuscriptHistoryEntrySchema, ManuscriptPathSchema, ManuscriptRevisionSchema, ManuscriptSchema } from "./manuscripts";
+import { ManuscriptHistoryEntrySchema, ManuscriptPathSchema, ManuscriptRevisionSchema, ManuscriptSchema, ManuscriptProjectIdSchema } from "./manuscripts";
 
 export const WritingTargetSchema = z.object({
   providerId: z.string().regex(/^driver\.[A-Za-z0-9_.-]+$/).max(180),
@@ -33,7 +33,8 @@ const AcceptanceSchema = z.object({
 });
 export const WritingCandidateBatchSchema = z.object({
   id: z.string().regex(/^candidates_[a-f0-9]{32}$/),
-  projectId: ManuscriptSchema.shape.projectId,
+  // Kept only as provenance on batches created before documents became global.
+  projectId: ManuscriptProjectIdSchema.optional(),
   manuscriptId: ManuscriptSchema.shape.id,
   createdAt: z.string().datetime(),
   status: z.enum(["running", "completed", "cancelled", "interrupted"]),

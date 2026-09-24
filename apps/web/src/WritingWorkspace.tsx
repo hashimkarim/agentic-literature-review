@@ -53,7 +53,7 @@ export default function WritingWorkspace({ projectId, projects, providers, onPro
     if (!active) { setDocument(null); return; }
     let current = true;
     setDocument(null); setError(null);
-    api.manuscript(projectId, active).then((result) => { if (current) setDocument(result); }).catch((error) => { if (current) setError(error.message); });
+    api.manuscript(active).then((result) => { if (current) setDocument(result); }).catch((error) => { if (current) setError(error.message); });
     return () => { current = false; };
   }, [projectId, active, refresh]);
   return <section className="writing-workspace" aria-label="Writing workspace">
@@ -66,17 +66,17 @@ export default function WritingWorkspace({ projectId, projects, providers, onPro
     </header>
     {error && <div className="writing-banner" role="alert">{error}<Tool label="Retry loading manuscripts" onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={16} /></Tool></div>}
     {document ? <ManuscriptEditor key={document.id} document={document} providers={providers} /> : <div className="writing-empty"><FileCode2 size={32} /><h2>{loading || active && !error ? "Loading manuscript..." : "No manuscripts"}</h2>{!loading && !active && !error && <button type="button" className="writing-primary" onClick={() => setCreating(true)}><Plus size={16} />New manuscript</button>}</div>}
-    {creating && <NameDialog title="New manuscript" label="Title" onClose={() => setCreating(false)} onSubmit={async (name) => { const created = await api.createManuscript(projectId, name); setManuscripts((items) => [created, ...items]); setActive(created.id); }} />}
+    {creating && <NameDialog title="New manuscript" label="Title" onClose={() => setCreating(false)} onSubmit={async (name) => { const created = await api.createManuscript(name, [projectId]); setManuscripts((items) => [created, ...items]); setActive(created.id); }} />}
   </section>;
 }
 
 function ManuscriptEditor({ document, providers }: { document: ManuscriptDocument; providers: AgentProvider[] }) {
-  const { projectId, id } = document;
+  const { id } = document;
   const [session] = useState(() => {
     let storage: Storage | null = null;
     let clientId: string = crypto.randomUUID();
     try { storage = window.localStorage; clientId = sessionStorage.getItem("litagent-writing-client") ?? clientId; sessionStorage.setItem("litagent-writing-client", clientId); } catch { /* Server saves remain usable without browser storage. */ }
-    return new WritingSession(document, (input) => api.writeManuscriptFile(projectId, id, input), storage, clientId);
+    return new WritingSession(document, (input) => api.writeManuscriptFile(id, input), storage, clientId);
   });
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const [active, setActive] = useState(document.files.some((file) => file.path === document.entryFile) ? document.entryFile : document.files[0]?.path ?? "");
@@ -105,12 +105,12 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
   const requireSaved = async () => { if (!await session.flush()) throw new Error("Save or resolve pending file changes first."); };
   async function loadHistory() {
     const request = ++historyRequest.current;
-    const items = await api.manuscriptHistory(projectId, id, active);
+    const items = await api.manuscriptHistory(id, active);
     if (request === historyRequest.current) { setHistory(items); setHistorical(null); }
   }
   async function exportSources() {
     await requireSaved();
-    const current = await api.manuscript(projectId, id);
+    const current = await api.manuscript(id);
     const files = Object.fromEntries(current.files.map((file) => [file.path, strToU8(file.content)]));
     const bytes = zipSync(files);
     const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/zip" }));
@@ -144,27 +144,27 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     {(file?.state === "conflict" || file?.state === "error" || file?.state === "recovered") && <div className="writing-banner" role="alert">
       <span>{file.state === "recovered" ? "Recovered unsaved text. Review before saving." : file.error}</span>
       {file.state !== "conflict" && <button type="button" disabled={busy} onClick={() => void session.save(active)}><Save size={14} />{file.state === "error" ? "Retry save" : "Save recovered draft"}</button>}
-      <button type="button" disabled={busy} onClick={() => void run(async () => { const saved = (await api.manuscript(projectId, id)).files.find((item) => item.path === active); if (!saved) throw new Error("The saved file was deleted. Export your text before recreating it."); setHistorical(null); setRemote(saved); })}><History size={14} />Compare saved version</button>
+      <button type="button" disabled={busy} onClick={() => void run(async () => { const saved = (await api.manuscript(id)).files.find((item) => item.path === active); if (!saved) throw new Error("The saved file was deleted. Export your text before recreating it."); setHistorical(null); setRemote(saved); })}><History size={14} />Compare saved version</button>
     </div>}
     <div className={`writing-body${history !== null ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}`}>
       <aside className="writing-files" aria-label="Manuscript files">
         <header><span>Files</span></header>
         <nav>{Object.values(state.files).map((item) => <button key={item.path} type="button" className={active === item.path ? "active" : ""} aria-current={active === item.path ? "true" : undefined} disabled={busy} title={item.path} onClick={() => setActive(item.path)}><FileCode2 size={15} /><span>{item.path}</span>{item.state !== "saved" && <span aria-label="Unsaved" className="writing-dirty-dot" />}</button>)}</nav>
-        <footer><span>{Object.keys(state.files).length} files</span><Tool label="Delete selected file" disabled={busy || !file || active === document.entryFile} onClick={() => { if (window.confirm(`Delete ${active}?`)) void run(async () => { await requireSaved(); const current = session.getSnapshot().files[active]!; await api.deleteManuscriptFile(projectId, id, active, current.revision); session.remove(active); setActive(document.entryFile); }); }}><Trash2 size={15} /></Tool></footer>
+        <footer><span>{Object.keys(state.files).length} files</span><Tool label="Delete selected file" disabled={busy || !file || active === document.entryFile} onClick={() => { if (window.confirm(`Delete ${active}?`)) void run(async () => { await requireSaved(); const current = session.getSnapshot().files[active]!; await api.deleteManuscriptFile(id, active, current.revision); session.remove(active); setActive(document.entryFile); }); }}><Trash2 size={15} /></Tool></footer>
       </aside>
       <main className="writing-source">
         {candidateReview ? <><div className="writing-diff-heading"><span>Original selection</span><span>{candidateReview.label}</span><Tool label="Close candidate comparison" onClick={() => setCandidateReview(null)}><X size={16} /></Tool></div><TextComparison before={candidateReview.before} after={candidateReview.after} /></> : compare && file ? <><div className="writing-diff-heading"><span>{historical?.entry.label ?? (historical ? new Date(historical.entry.savedAt).toLocaleString() : "Saved on disk")}</span><span>Current draft</span><Tool label="Close comparison" onClick={() => { setHistorical(null); setRemote(null); }}><X size={16} /></Tool></div><TextComparison before={compare.content} after={file.content} />
           <div className="writing-review-actions">
             <button type="button" disabled={busy} onClick={() => { setHistorical(null); setRemote(null); }}><ChevronLeft size={15} />Back to editor</button>
-            {historical ? <button type="button" className="writing-primary" disabled={busy} onClick={() => void run(async () => { await requireSaved(); const current = session.getSnapshot().files[active]!; const restored = await api.restoreManuscriptFile(projectId, id, active, historical.entry.id, current.revision); session.acceptRemote(restored); setHistorical(null); await loadHistory(); })}><RotateCcw size={15} />Restore this version</button> : <><button type="button" disabled={busy} onClick={() => { session.acceptRemote(compare); setRemote(null); }}>Use saved version</button><button type="button" className="writing-primary" disabled={busy} onClick={() => { session.acceptRemote(compare, true); setRemote(null); }}>Save my version</button></>}
+            {historical ? <button type="button" className="writing-primary" disabled={busy} onClick={() => void run(async () => { await requireSaved(); const current = session.getSnapshot().files[active]!; const restored = await api.restoreManuscriptFile(id, active, historical.entry.id, current.revision); session.acceptRemote(restored); setHistorical(null); await loadHistory(); })}><RotateCcw size={15} />Restore this version</button> : <><button type="button" disabled={busy} onClick={() => { session.acceptRemote(compare); setRemote(null); }}>Use saved version</button><button type="button" className="writing-primary" disabled={busy} onClick={() => { session.acceptRemote(compare, true); setRemote(null); }}>Save my version</button></>}
           </div></> : file ? <TexEditor filePath={active} content={file.content} disabled={busy} onChange={(content) => session.edit(active, content)} onView={(view) => { editor.current = view; }} onSelection={setSelection} /> : <div className="writing-empty"><h2>No source files</h2><button type="button" onClick={() => setDialog("file")}><FilePlus2 size={16} />New file</button></div>}
       </main>
       {history !== null && <aside className="writing-history" aria-label="File history">
         <header><h2>History</h2><Tool label="Named checkpoint" disabled={busy} onClick={() => setDialog("checkpoint")}><BookmarkPlus size={16} /></Tool><Tool label="Refresh history" disabled={busy} onClick={() => void run(loadHistory)}><RefreshCw size={15} /></Tool></header>
         <div className="writing-history-path">{active}</div>
-        <ol>{history.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={historical?.entry.id === entry.id ? "active" : ""} onClick={() => void run(async () => { const request = ++historyRequest.current; const saved = await api.manuscriptVersion(projectId, id, active, entry.id); if (request === historyRequest.current) { setHistorical({ entry, file: saved }); setRemote(null); } })}><span>{entry.label ?? ({ created: "Initial version", saved: "Autosave", external: "External edit", restored: "Restored version", checkpoint: "Checkpoint", deleted: "Before deletion", candidate: "Accepted candidate" })[entry.reason]}</span><time dateTime={entry.savedAt}>{new Date(entry.savedAt).toLocaleString()}</time><code>{entry.revision.slice(0, 8)}</code></button></li>)}</ol>
+        <ol>{history.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={historical?.entry.id === entry.id ? "active" : ""} onClick={() => void run(async () => { const request = ++historyRequest.current; const saved = await api.manuscriptVersion(id, active, entry.id); if (request === historyRequest.current) { setHistorical({ entry, file: saved }); setRemote(null); } })}><span>{entry.label ?? ({ created: "Initial version", saved: "Autosave", external: "External edit", restored: "Restored version", checkpoint: "Checkpoint", deleted: "Before deletion", candidate: "Accepted candidate" })[entry.reason]}</span><time dateTime={entry.savedAt}>{new Date(entry.savedAt).toLocaleString()}</time><code>{entry.revision.slice(0, 8)}</code></button></li>)}</ol>
       </aside>}
-      {candidatesOpen && file && <WritingCandidatesPanel key={active} projectId={projectId} manuscriptId={id} file={file} initialBatchId={initialBatchId} busy={busy}
+      {candidatesOpen && file && <WritingCandidatesPanel key={active} manuscriptId={id} file={file} initialBatchId={initialBatchId} busy={busy}
         onClose={() => { setCandidatesOpen(false); setCandidateReview(null); }}
         onClearComparison={() => setCandidateReview(null)}
         onCompare={(batch, candidateId) => { const index = batch.candidates.findIndex((candidate) => candidate.id === candidateId); const item = batch.candidates[index]; if (item?.text !== null && item?.text !== undefined) { setHistorical(null); setRemote(null); setCandidateReview({ before: batch.selectedText, after: item.text, label: `Candidate ${index + 1} / ${item.model}` }); } }}
@@ -174,17 +174,17 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
             await requireSaved();
             const current = session.getSnapshot().files[batch.request.path];
             if (!current) throw new Error("The source file is no longer open.");
-            const saved = await api.acceptWritingCandidate(projectId, id, batch.id, candidateId, current.revision);
+            const saved = await api.acceptWritingCandidate(id, batch.id, candidateId, current.revision);
             session.acceptRemote(saved); setCandidateReview(null);
           } finally { setBusy(false); }
         }} />}
     </div>
-    {generating && <WritingCandidatesDialog projectId={projectId} manuscriptId={id} selection={generating} providers={providers} onClose={() => setGenerating(null)} onCreated={(batch) => {
+    {generating && <WritingCandidatesDialog manuscriptId={id} selection={generating} providers={providers} onClose={() => setGenerating(null)} onCreated={(batch) => {
       setGenerating(null); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); setInitialBatchId(batch.id); setCandidatesOpen(true);
     }} />}
     {dialog && <NameDialog title={dialog === "file" ? "New file" : "Name this version"} label={dialog === "file" ? "Relative file path" : "Version name"} initial={dialog === "file" ? "sections/methods.tex" : ""} onClose={() => setDialog(null)} onSubmit={async (value) => {
-      if (dialog === "file") { const saved = await api.writeManuscriptFile(projectId, id, { path: value, content: "", expectedRevision: null }); session.acceptRemote(saved); setActive(saved.path); }
-      else { await requireSaved(); await api.manuscriptCheckpoint(projectId, id, active, session.getSnapshot().files[active]!.revision, value); await loadHistory(); }
+      if (dialog === "file") { const saved = await api.writeManuscriptFile(id, { path: value, content: "", expectedRevision: null }); session.acceptRemote(saved); setActive(saved.path); }
+      else { await requireSaved(); await api.manuscriptCheckpoint(id, active, session.getSnapshot().files[active]!.revision, value); await loadHistory(); }
     }} />}
   </div>;
 }

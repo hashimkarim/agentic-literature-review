@@ -7,7 +7,7 @@ function memoryStorage() {
   return { get length() { return map.size; }, key: (n: number) => [...map.keys()][n] ?? null, getItem: (key: string) => map.get(key) ?? null, setItem: (key: string, value: string) => { map.set(key, value); }, removeItem: (key: string) => { map.delete(key); } };
 }
 function document(): ManuscriptDocument {
-  return { id: "manuscript_0000000000000001", projectId: "project_1", name: "Fixture", entryFile: "main.tex", createdAt: "2026-09-24T00:00:00Z", files: [{ path: "main.tex", content: "Original", revision: "a".repeat(64) }, { path: "methods.tex", content: "Methods", revision: "b".repeat(64) }] };
+  return { id: "manuscript_0000000000000001", projectIds: ["project_1"], name: "Fixture", entryFile: "main.tex", createdAt: "2026-09-24T00:00:00Z", files: [{ path: "main.tex", content: "Original", revision: "a".repeat(64) }, { path: "methods.tex", content: "Methods", revision: "b".repeat(64) }] };
 }
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -50,7 +50,22 @@ it("recovers drafts across reload without autosaving until reviewed", async () =
   const next = new WritingSession(document(), write, storage, "two");
   expect(next.getSnapshot().files["main.tex"]).toMatchObject({ content: "Unsaved work", state: "recovered" });
   await vi.advanceTimersByTimeAsync(5000); expect(write).not.toHaveBeenCalled();
-  expect(new WritingSession({ ...document(), projectId: "project_other" }, write, storage, "three").getSnapshot().files["main.tex"]?.content).toBe("Original");
+  expect(new WritingSession({ ...document(), projectIds: [] }, write, storage, "three").getSnapshot().files["main.tex"]?.content).toBe("Unsaved work");
+  expect(new WritingSession({ ...document(), id: "manuscript_0000000000000002" }, write, storage, "four").getSnapshot().files["main.tex"]?.content).toBe("Original");
+});
+
+it("recovers legacy project-scoped drafts after moving and unlinking a document", async () => {
+  const doc = document();
+  const storage = memoryStorage();
+  const legacyKey = `litagent:writing:deleted_project:${doc.id}:old-tab:main.tex`;
+  storage.setItem(legacyKey, JSON.stringify({ path: "main.tex", content: "Legacy draft", savedContent: "Original", expectedRevision: "a".repeat(64), updatedAt: Date.now() }));
+  const write = vi.fn().mockResolvedValue({ path: "main.tex", content: "Legacy draft", revision: "c".repeat(64) });
+  const next = new WritingSession({ ...doc, projectIds: [] }, write, storage, "new-tab");
+  expect(next.getSnapshot().files["main.tex"]).toMatchObject({ content: "Legacy draft", state: "recovered" });
+  expect(storage.getItem(legacyKey)).not.toBeNull();
+  await vi.advanceTimersByTimeAsync(5000); expect(write).not.toHaveBeenCalled();
+  await next.save("main.tex");
+  expect(storage.getItem(legacyKey)).toBeNull();
 });
 
 it("does not automatically retry a conflict and rebases only after explicit review", async () => {

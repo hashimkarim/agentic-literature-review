@@ -6,6 +6,7 @@ import {
   CreateManuscriptRequestSchema, DeleteManuscriptFileRequestSchema,
   ManuscriptPathSchema, ManuscriptSchema, WriteManuscriptFileRequestSchema,
   ManuscriptHistoryEntrySchema, ManuscriptCheckpointRequestSchema, RestoreManuscriptFileRequestSchema,
+  ManuscriptProjectIdSchema, UpdateManuscriptProjectsRequestSchema,
   WritingCandidateBatchSchema, type WritingCandidateBatch, type WritingCandidateSummary,
   type Manuscript, type ManuscriptDocument, type ManuscriptFile,
   type WriteManuscriptFileRequest, type ManuscriptHistoryEntry
@@ -13,6 +14,7 @@ import {
 
 const MAX_FILE_BYTES = 250_000;
 const MAX_DOCUMENT_BYTES = 2_000_000;
+const LegacyManuscriptSchema = ManuscriptSchema.omit({ projectIds: true }).extend({ projectId: ManuscriptProjectIdSchema });
 
 export class ManuscriptError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -66,42 +68,80 @@ export class ManuscriptStore {
     return current;
   }
 
-  private projectDirectory(projectId: string): string {
-    ManuscriptSchema.shape.projectId.parse(projectId);
-    const relative = `projects/${projectId}`;
+  private projectDirectory(linkedProjectId: string): string {
+    ManuscriptProjectIdSchema.parse(linkedProjectId);
+    const relative = `projects/${linkedProjectId}`;
     const projectFile = this.safePath(`${relative}/project.json`);
     if (!fs.existsSync(projectFile)) throw new ManuscriptError(404, "project_not_found", "Project not found.");
     return relative;
   }
 
-  private directory(projectId: string, manuscriptId: string): string {
+  private directory(manuscriptId: string): string {
     ManuscriptSchema.shape.id.parse(manuscriptId);
-    return `${this.projectDirectory(projectId)}/manuscripts/${manuscriptId}`;
+    return `manuscripts/${manuscriptId}`;
   }
 
-  private metadata(projectId: string, manuscriptId: string): Manuscript {
-    const file = this.safePath(`${this.directory(projectId, manuscriptId)}/manuscript.json`);
-    if (!fs.existsSync(file)) throw new ManuscriptError(404, "manuscript_not_found", "Manuscript not found.");
-    const result = ManuscriptSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
-    if (result.id !== manuscriptId || result.projectId !== projectId) {
-      throw new ManuscriptError(409, "manuscript_identity_changed", "Manuscript identity does not match its project.");
+  private migrateLegacy(onlyId?: string): void {
+    const projects = this.safePath("projects");
+    if (!fs.existsSync(projects)) return;
+    const pending: { source: string; target: string }[] = [];
+    const ids = new Set<string>();
+    for (const owner of fs.readdirSync(projects)) {
+      if (!ManuscriptProjectIdSchema.safeParse(owner).success) continue;
+      const directory = this.safePath(`projects/${owner}/manuscripts`);
+      if (!fs.existsSync(directory)) continue;
+      for (const id of fs.readdirSync(directory)) {
+        if ((onlyId && id !== onlyId) || !ManuscriptSchema.shape.id.safeParse(id).success) continue;
+        const source = this.safePath(`projects/${owner}/manuscripts/${id}`);
+        const manifest = this.safePath(`projects/${owner}/manuscripts/${id}/manuscript.json`);
+        if (!fs.existsSync(manifest)) continue;
+        const legacy = LegacyManuscriptSchema.parse(JSON.parse(fs.readFileSync(manifest, "utf8")));
+        if (legacy.id !== id || legacy.projectId !== owner) throw new ManuscriptError(409, "manuscript_identity_changed", "Legacy manuscript identity does not match its folder.");
+        const target = this.safePath(this.directory(id));
+        if (ids.has(id) || fs.existsSync(target)) throw new ManuscriptError(409, "manuscript_migration_conflict", "Two manuscript folders share an ID. Resolve the duplicate before migrating; neither copy was overwritten.");
+        ids.add(id); pending.push({ source, target });
+      }
     }
+    // Move the complete folder atomically, including history and candidates. Metadata
+    // upgrades on read, so a restart between rename and upgrade is recoverable.
+    for (const { source, target } of pending) {
+      this.safePath(`manuscripts/${path.basename(target)}`, true);
+      fs.renameSync(source, target);
+    }
+  }
+
+  private metadata(manuscriptId: string): Manuscript {
+    const file = this.safePath(`${this.directory(manuscriptId)}/manuscript.json`);
+    if (!fs.existsSync(file)) this.migrateLegacy(manuscriptId);
+    if (!fs.existsSync(file)) throw new ManuscriptError(404, "manuscript_not_found", "Manuscript not found.");
+    const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    const legacy = LegacyManuscriptSchema.safeParse(raw);
+    const result = ManuscriptSchema.parse(legacy.success && !("projectIds" in (raw as object))
+      ? { ...legacy.data, projectIds: [legacy.data.projectId] } : raw);
+    if (result.id !== manuscriptId) {
+      throw new ManuscriptError(409, "manuscript_identity_changed", "Manuscript identity does not match its folder.");
+    }
+    if (legacy.success) atomicWrite(file, `${JSON.stringify(result, null, 2)}\n`);
     return result;
   }
 
-  list(projectId: string): Manuscript[] {
-    const directory = this.safePath(`${this.projectDirectory(projectId)}/manuscripts`);
+  list(linkedProjectId?: string): Manuscript[] {
+    if (linkedProjectId) this.projectDirectory(linkedProjectId);
+    this.migrateLegacy();
+    const directory = this.safePath("manuscripts");
     if (!fs.existsSync(directory)) return [];
     return fs.readdirSync(directory).filter((id) => ManuscriptSchema.shape.id.safeParse(id).success)
-      .filter((id) => fs.existsSync(this.safePath(`${this.projectDirectory(projectId)}/manuscripts/${id}/manuscript.json`)))
-      .map((id) => this.metadata(projectId, id)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      .filter((id) => fs.existsSync(this.safePath(`${this.directory(id)}/manuscript.json`)))
+      .map((id) => this.metadata(id)).filter((item) => !linkedProjectId || item.projectIds.includes(linkedProjectId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.name.localeCompare(b.name));
   }
 
-  create(projectId: string, input: { name: string }): ManuscriptDocument {
-    const { name } = CreateManuscriptRequestSchema.parse(input);
+  create(input: z.input<typeof CreateManuscriptRequestSchema>): ManuscriptDocument {
+    const { name, projectIds } = CreateManuscriptRequestSchema.parse(input);
+    projectIds.forEach((id) => this.projectDirectory(id));
     const id = `manuscript_${crypto.randomBytes(8).toString("hex")}`;
-    const relative = `${this.projectDirectory(projectId)}/manuscripts/${id}`;
-    const metadata: Manuscript = { id, projectId, name, entryFile: "main.tex", createdAt: new Date().toISOString() };
+    const relative = this.directory(id);
+    const metadata: Manuscript = { id, projectIds: [...projectIds].sort(), name, entryFile: "main.tex", createdAt: new Date().toISOString() };
     const directory = this.safePath(`${relative}/manuscript.json`, true);
     try {
       fs.writeFileSync(this.safePath(`${relative}/main.tex`), [
@@ -115,17 +155,31 @@ export class ManuscriptStore {
       fs.writeFileSync(this.safePath(`${relative}/references.bib`), "", { flag: "wx" });
       // Publish the manifest last; interrupted creation is never listed as a valid manuscript.
       atomicWrite(directory, `${JSON.stringify(metadata, null, 2)}\n`);
-      for (const file of this.read(projectId, id).files) this.snapshot(projectId, id, file, "created");
+      for (const file of this.read(id).files) this.snapshot(id, file, "created");
     } catch (error) {
       fs.rmSync(path.dirname(directory), { recursive: true, force: true });
       throw error;
     }
-    return this.read(projectId, id);
+    return this.read(id);
   }
 
-  read(projectId: string, manuscriptId: string): ManuscriptDocument {
-    const metadata = this.metadata(projectId, manuscriptId);
-    const directory = this.directory(projectId, manuscriptId);
+  updateProjects(manuscriptId: string, input: z.infer<typeof UpdateManuscriptProjectsRequestSchema>): Manuscript {
+    const request = UpdateManuscriptProjectsRequestSchema.parse(input);
+    const current = this.metadata(manuscriptId);
+    const next = [...request.projectIds].sort();
+    const same = (a: string[], b: string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+    if (same(current.projectIds, next)) return current;
+    if (!same(current.projectIds, request.expectedProjectIds)) throw new ManuscriptError(409, "manuscript_links_changed", "Project links changed elsewhere. Reload them before saving again.");
+    // Existing links can survive a deleted project; newly added links must exist.
+    next.filter((id) => !current.projectIds.includes(id)).forEach((id) => this.projectDirectory(id));
+    const updated = { ...current, projectIds: next };
+    atomicWrite(this.safePath(`${this.directory(manuscriptId)}/manuscript.json`), `${JSON.stringify(updated, null, 2)}\n`);
+    return updated;
+  }
+
+  read(manuscriptId: string): ManuscriptDocument {
+    const metadata = this.metadata(manuscriptId);
+    const directory = this.directory(manuscriptId);
     const files: ManuscriptFile[] = [];
     let bytes = 0;
     const walk = (prefix: string, depth: number) => {
@@ -150,15 +204,15 @@ export class ManuscriptStore {
     return { ...metadata, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
   }
 
-  writeFile(projectId: string, manuscriptId: string, input: WriteManuscriptFileRequest, reason: "saved" | "restored" | "candidate" = "saved"): ManuscriptFile {
+  writeFile(manuscriptId: string, input: WriteManuscriptFileRequest, reason: "saved" | "restored" | "candidate" = "saved"): ManuscriptFile {
     const parsed = WriteManuscriptFileRequestSchema.parse(input);
-    const document = this.read(projectId, manuscriptId);
+    const document = this.read(manuscriptId);
     const current = document.files.find((file) => file.path === parsed.path);
     if (!current && document.files.some((file) => file.path.toLowerCase() === parsed.path.toLowerCase())) {
       throw new ManuscriptError(409, "path_conflict", "A file already uses that name with different capitalization.");
     }
     if ((current?.revision ?? null) !== parsed.expectedRevision) {
-      if (current?.content === parsed.content) { this.snapshot(projectId, manuscriptId, current, reason); return current; }
+      if (current?.content === parsed.content) { this.snapshot(manuscriptId, current, reason); return current; }
       throw new ManuscriptError(409, "manuscript_file_changed", "This file changed elsewhere. Review the saved version before saving again.");
     }
     const bytes = Buffer.byteLength(parsed.content);
@@ -166,84 +220,84 @@ export class ManuscriptStore {
     if (bytes > MAX_FILE_BYTES || total > MAX_DOCUMENT_BYTES || (!current && document.files.length >= 64)) {
       throw new ManuscriptError(413, "manuscript_limit", "Manuscript sources exceed the file or size limit.");
     }
-    const filePath = this.safePath(`${this.directory(projectId, manuscriptId)}/${parsed.path}`, true);
-    if (current) this.snapshot(projectId, manuscriptId, current, "external");
+    const filePath = this.safePath(`${this.directory(manuscriptId)}/${parsed.path}`, true);
+    if (current) this.snapshot(manuscriptId, current, "external");
     atomicWrite(filePath, parsed.content);
     const saved = { path: parsed.path, content: parsed.content, revision: revision(parsed.content) };
-    this.snapshot(projectId, manuscriptId, saved, reason);
+    this.snapshot(manuscriptId, saved, reason);
     return saved;
   }
 
-  deleteFile(projectId: string, manuscriptId: string, input: { path: string; expectedRevision: string }): void {
+  deleteFile(manuscriptId: string, input: { path: string; expectedRevision: string }): void {
     const parsed = DeleteManuscriptFileRequestSchema.parse(input);
-    const document = this.read(projectId, manuscriptId);
+    const document = this.read(manuscriptId);
     if (parsed.path === document.entryFile) throw new ManuscriptError(400, "entry_file_required", "The entry file cannot be deleted.");
     const current = document.files.find((file) => file.path === parsed.path);
     if (!current) throw new ManuscriptError(404, "file_not_found", "File not found.");
     if (current.revision !== parsed.expectedRevision) throw new ManuscriptError(409, "manuscript_file_changed", "This file changed elsewhere. Reload before deleting it.");
-    this.snapshot(projectId, manuscriptId, current, "deleted");
-    fs.unlinkSync(this.safePath(`${this.directory(projectId, manuscriptId)}/${parsed.path}`));
+    this.snapshot(manuscriptId, current, "deleted");
+    fs.unlinkSync(this.safePath(`${this.directory(manuscriptId)}/${parsed.path}`));
   }
 
-  private historyIndex(projectId: string, manuscriptId: string, filePath: string): string {
+  private historyIndex(manuscriptId: string, filePath: string): string {
     ManuscriptPathSchema.parse(filePath);
-    return `${this.directory(projectId, manuscriptId)}/.history/${revision(filePath)}.json`;
+    return `${this.directory(manuscriptId)}/.history/${revision(filePath)}.json`;
   }
 
-  history(projectId: string, manuscriptId: string, filePath: string): ManuscriptHistoryEntry[] {
-    this.metadata(projectId, manuscriptId);
-    const index = this.safePath(this.historyIndex(projectId, manuscriptId, filePath));
+  history(manuscriptId: string, filePath: string): ManuscriptHistoryEntry[] {
+    this.metadata(manuscriptId);
+    const index = this.safePath(this.historyIndex(manuscriptId, filePath));
     const entries = fs.existsSync(index) ? z.array(ManuscriptHistoryEntrySchema).parse(JSON.parse(fs.readFileSync(index, "utf8"))) : [];
     if (entries.some((entry) => entry.path !== filePath)) throw new ManuscriptError(409, "history_changed", "History does not match the requested file.");
     return entries.reverse();
   }
 
-  private snapshot(projectId: string, manuscriptId: string, file: ManuscriptFile, reason: ManuscriptHistoryEntry["reason"], label: string | null = null): ManuscriptHistoryEntry {
-    const entries = this.history(projectId, manuscriptId, file.path);
+  private snapshot(manuscriptId: string, file: ManuscriptFile, reason: ManuscriptHistoryEntry["reason"], label: string | null = null): ManuscriptHistoryEntry {
+    const entries = this.history(manuscriptId, file.path);
     if (entries[0]?.revision === file.revision && reason !== "checkpoint" && reason !== "deleted" && reason !== "restored") return entries[0];
-    const blob = this.safePath(`${this.directory(projectId, manuscriptId)}/.history/blobs/${file.revision}.json`, true);
+    const blob = this.safePath(`${this.directory(manuscriptId)}/.history/blobs/${file.revision}.json`, true);
     if (!fs.existsSync(blob)) atomicWrite(blob, JSON.stringify(file.content));
     const entry: ManuscriptHistoryEntry = { id: `version_${crypto.randomBytes(8).toString("hex")}`, path: file.path, revision: file.revision, savedAt: new Date().toISOString(), reason, label };
     entries.unshift(entry);
-    atomicWrite(this.safePath(this.historyIndex(projectId, manuscriptId, file.path), true), `${JSON.stringify(entries.reverse(), null, 2)}\n`);
+    atomicWrite(this.safePath(this.historyIndex(manuscriptId, file.path), true), `${JSON.stringify(entries.reverse(), null, 2)}\n`);
     return entry;
   }
 
-  historicalFile(projectId: string, manuscriptId: string, filePath: string, versionId: string): ManuscriptFile {
+  historicalFile(manuscriptId: string, filePath: string, versionId: string): ManuscriptFile {
     ManuscriptHistoryEntrySchema.shape.id.parse(versionId);
-    const entry = this.history(projectId, manuscriptId, filePath).find((item) => item.id === versionId);
+    const entry = this.history(manuscriptId, filePath).find((item) => item.id === versionId);
     if (!entry) throw new ManuscriptError(404, "version_not_found", "Saved version not found.");
-    const blob = this.safePath(`${this.directory(projectId, manuscriptId)}/.history/blobs/${entry.revision}.json`);
+    const blob = this.safePath(`${this.directory(manuscriptId)}/.history/blobs/${entry.revision}.json`);
     if (!fs.existsSync(blob)) throw new ManuscriptError(409, "version_unavailable", "Saved version contents are unavailable.");
     const content = z.string().parse(JSON.parse(fs.readFileSync(blob, "utf8")));
     if (revision(content) !== entry.revision) throw new ManuscriptError(409, "version_changed", "Saved version contents failed their integrity check.");
     return { path: filePath, content, revision: entry.revision };
   }
 
-  checkpoint(projectId: string, manuscriptId: string, input: z.infer<typeof ManuscriptCheckpointRequestSchema>): ManuscriptHistoryEntry {
+  checkpoint(manuscriptId: string, input: z.infer<typeof ManuscriptCheckpointRequestSchema>): ManuscriptHistoryEntry {
     const parsed = ManuscriptCheckpointRequestSchema.parse(input);
-    const file = this.read(projectId, manuscriptId).files.find((item) => item.path === parsed.path);
+    const file = this.read(manuscriptId).files.find((item) => item.path === parsed.path);
     if (!file || file.revision !== parsed.expectedRevision) throw new ManuscriptError(409, "manuscript_file_changed", "File changed before the checkpoint. Reload first.");
-    return this.snapshot(projectId, manuscriptId, file, "checkpoint", parsed.label);
+    return this.snapshot(manuscriptId, file, "checkpoint", parsed.label);
   }
 
-  restore(projectId: string, manuscriptId: string, input: z.infer<typeof RestoreManuscriptFileRequestSchema>): ManuscriptFile {
+  restore(manuscriptId: string, input: z.infer<typeof RestoreManuscriptFileRequestSchema>): ManuscriptFile {
     const parsed = RestoreManuscriptFileRequestSchema.parse(input);
-    const saved = this.historicalFile(projectId, manuscriptId, parsed.path, parsed.versionId);
-    return this.writeFile(projectId, manuscriptId, { path: parsed.path, content: saved.content, expectedRevision: parsed.expectedRevision }, "restored");
+    const saved = this.historicalFile(manuscriptId, parsed.path, parsed.versionId);
+    return this.writeFile(manuscriptId, { path: parsed.path, content: saved.content, expectedRevision: parsed.expectedRevision }, "restored");
   }
 
-  private candidatePath(projectId: string, manuscriptId: string, batchId: string): string {
-    this.metadata(projectId, manuscriptId);
+  private candidatePath(manuscriptId: string, batchId: string): string {
+    this.metadata(manuscriptId);
     WritingCandidateBatchSchema.shape.id.parse(batchId);
-    return `${this.directory(projectId, manuscriptId)}/.candidates/${batchId}.json`;
+    return `${this.directory(manuscriptId)}/.candidates/${batchId}.json`;
   }
 
-  candidateBatch(projectId: string, manuscriptId: string, batchId: string): WritingCandidateBatch | null {
-    const file = this.safePath(this.candidatePath(projectId, manuscriptId, batchId));
+  candidateBatch(manuscriptId: string, batchId: string): WritingCandidateBatch | null {
+    const file = this.safePath(this.candidatePath(manuscriptId, batchId));
     if (!fs.existsSync(file)) return null;
     const batch = WritingCandidateBatchSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
-    if (batch.id !== batchId || batch.projectId !== projectId || batch.manuscriptId !== manuscriptId) {
+    if (batch.id !== batchId || batch.manuscriptId !== manuscriptId) {
       throw new ManuscriptError(409, "candidate_identity_changed", "Candidate identity does not match this manuscript.");
     }
     return batch;
@@ -251,15 +305,15 @@ export class ManuscriptStore {
 
   saveCandidateBatch(input: WritingCandidateBatch): void {
     const batch = WritingCandidateBatchSchema.parse(input);
-    atomicWrite(this.safePath(this.candidatePath(batch.projectId, batch.manuscriptId, batch.id), true), `${JSON.stringify(batch, null, 2)}\n`);
+    atomicWrite(this.safePath(this.candidatePath(batch.manuscriptId, batch.id), true), `${JSON.stringify(batch, null, 2)}\n`);
   }
 
-  candidateBatches(projectId: string, manuscriptId: string): WritingCandidateSummary[] {
-    this.metadata(projectId, manuscriptId);
-    const directory = this.safePath(`${this.directory(projectId, manuscriptId)}/.candidates`);
+  candidateBatches(manuscriptId: string): WritingCandidateSummary[] {
+    this.metadata(manuscriptId);
+    const directory = this.safePath(`${this.directory(manuscriptId)}/.candidates`);
     if (!fs.existsSync(directory)) return [];
     return fs.readdirSync(directory).filter((file) => /^candidates_[a-f0-9]{32}\.json$/.test(file)).map((file) => {
-      const batch = this.candidateBatch(projectId, manuscriptId, file.slice(0, -5))!;
+      const batch = this.candidateBatch(manuscriptId, file.slice(0, -5))!;
       return { id: batch.id, createdAt: batch.createdAt, status: batch.status, accepted: batch.accepted, path: batch.request.path,
         instruction: batch.request.instruction, completed: batch.candidates.filter((item) => item.status === "completed").length, total: batch.candidates.length };
     }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));

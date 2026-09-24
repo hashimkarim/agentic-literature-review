@@ -22,7 +22,7 @@ export class WritingSession {
   private recoveryKeys = new Map<string, Map<string, string>>();
 
   constructor(readonly document: ManuscriptDocument, private write: (input: WriteManuscriptFileRequest) => Promise<ManuscriptFile>, private storage: StoragePort | null, private clientId: string) {
-    this.prefix = `litagent:writing:${document.projectId}:${document.id}:`;
+    this.prefix = `litagent:writing:${document.id}:`;
     this.snapshot = { files: Object.fromEntries(document.files.map((file) => [file.path, { ...file, savedContent: file.content, state: "saved" as const, error: null }])), storageError: null };
     this.recover();
   }
@@ -52,7 +52,11 @@ export class WritingSession {
       const recovered = new Map<string, Recovery>();
       for (let i = 0; i < this.storage.length; i++) {
         const key = this.storage.key(i);
-        if (!key?.startsWith(this.prefix)) continue;
+        // Legacy recovery keys included the owning project. Match the exact document
+        // ID, regardless of current links, and only remove old keys after a safe save.
+        const parts = key?.split(":");
+        const legacy = parts?.length === 6 && parts[0] === "litagent" && parts[1] === "writing" && parts[3] === this.document.id;
+        if (!key || (!key.startsWith(this.prefix) && !legacy)) continue;
         let parsed: ReturnType<typeof RecoverySchema.safeParse>;
         try { parsed = RecoverySchema.safeParse(JSON.parse(this.storage.getItem(key) ?? "null")); } catch { continue; }
         if (!parsed.success) continue;

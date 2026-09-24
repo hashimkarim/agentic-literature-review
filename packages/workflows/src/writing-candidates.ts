@@ -39,12 +39,12 @@ export function writingCandidatePrompt(batch: WritingCandidateBatch, variant: nu
 export class WritingCandidateService {
   private active = new Map<string, Promise<void>>();
   constructor(private readonly store: ManuscriptStore, private readonly runtime: Runtime, private readonly validateTarget: (target: WritingTarget) => void) {}
-  private key(projectId: string, manuscriptId: string, id: string) { return `${projectId}/${manuscriptId}/${id}`; }
+  private key(manuscriptId: string, id: string) { return `${manuscriptId}/${id}`; }
 
-  get(projectId: string, manuscriptId: string, id: string): WritingCandidateBatch {
-    const batch = this.store.candidateBatch(projectId, manuscriptId, id);
+  get(manuscriptId: string, id: string): WritingCandidateBatch {
+    const batch = this.store.candidateBatch(manuscriptId, id);
     if (!batch) throw new ManuscriptError(404, "candidates_not_found", "Candidate batch not found.");
-    if (batch.status === "running" && !this.active.has(this.key(projectId, manuscriptId, id))) {
+    if (batch.status === "running" && !this.active.has(this.key(manuscriptId, id))) {
       batch.status = "interrupted";
       for (const candidate of batch.candidates) if (["running", "queued"].includes(candidate.status)) {
         candidate.status = "interrupted"; candidate.error = "Generation was interrupted. No automatic retry was made.";
@@ -54,32 +54,32 @@ export class WritingCandidateService {
     return batch;
   }
 
-  list(projectId: string, manuscriptId: string) {
-    for (const summary of this.store.candidateBatches(projectId, manuscriptId)) {
-      if (summary.status === "running") this.get(projectId, manuscriptId, summary.id);
+  list(manuscriptId: string) {
+    for (const summary of this.store.candidateBatches(manuscriptId)) {
+      if (summary.status === "running") this.get(manuscriptId, summary.id);
     }
-    return this.store.candidateBatches(projectId, manuscriptId);
+    return this.store.candidateBatches(manuscriptId);
   }
 
-  start(projectId: string, manuscriptId: string, input: CreateWritingCandidates): WritingCandidateBatch {
+  start(manuscriptId: string, input: CreateWritingCandidates): WritingCandidateBatch {
     const request = CreateWritingCandidatesSchema.parse(input);
     const id = `candidates_${request.requestId.replaceAll("-", "")}`;
-    const existing = this.store.candidateBatch(projectId, manuscriptId, id);
+    const existing = this.store.candidateBatch(manuscriptId, id);
     if (existing) {
       if (JSON.stringify(existing.request) !== JSON.stringify(request)) throw new ManuscriptError(409, "candidate_request_changed", "This request ID already belongs to another generation.");
-      return this.get(projectId, manuscriptId, id);
+      return this.get(manuscriptId, id);
     }
     if (this.active.size >= 3) throw new ManuscriptError(429, "writing_busy", "Three writing batches are already running. Finish or cancel one first.");
-    if (this.store.candidateBatches(projectId, manuscriptId).length >= 250) throw new ManuscriptError(413, "candidate_limit", "This manuscript has reached its 250 candidate-batch limit.");
-    const file = this.store.read(projectId, manuscriptId).files.find((item) => item.path === request.path);
+    if (this.store.candidateBatches(manuscriptId).length >= 250) throw new ManuscriptError(413, "candidate_limit", "This manuscript has reached its 250 candidate-batch limit.");
+    const file = this.store.read(manuscriptId).files.find((item) => item.path === request.path);
     if (!file || file.revision !== request.expectedRevision) throw new ManuscriptError(409, "manuscript_file_changed", "Save and reload the current file before generating candidates.");
     if (!file.path.endsWith(".tex") || request.to > file.content.length || !file.content.slice(request.from, request.to).trim()) {
       throw new ManuscriptError(400, "invalid_writing_selection", "Select non-empty prose in a TeX file.");
     }
     request.targets.forEach(this.validateTarget);
-    const source = this.store.checkpoint(projectId, manuscriptId, { path: file.path, expectedRevision: file.revision, label: "Before candidate generation" });
+    const source = this.store.checkpoint(manuscriptId, { path: file.path, expectedRevision: file.revision, label: "Before candidate generation" });
     const batch: WritingCandidateBatch = {
-      id, projectId, manuscriptId, createdAt: new Date().toISOString(), status: "running", request,
+      id, manuscriptId, createdAt: new Date().toISOString(), status: "running", request,
       sourceVersionId: source.id, selectedText: file.content.slice(request.from, request.to),
       contextBefore: file.content.slice(Math.max(0, request.from - 1500), request.from), contextAfter: file.content.slice(request.to, request.to + 1500),
       candidates: request.targets.flatMap((target) => Array.from({ length: target.count }, (_, index) => ({
@@ -88,7 +88,7 @@ export class WritingCandidateService {
       }))), accepting: null, accepted: null
     };
     this.store.saveCandidateBatch(batch);
-    const key = this.key(projectId, manuscriptId, id);
+    const key = this.key(manuscriptId, id);
     // Publish the pending promise before execution; a GET cannot misclassify this new batch as orphaned.
     const finished = Promise.resolve().then(() => this.execute(batch)).catch(() => {
       // Storage failures leave durable running records, reconciled as interrupted on the next read.
@@ -99,7 +99,7 @@ export class WritingCandidateService {
 
   private async execute(original: WritingCandidateBatch): Promise<void> {
     for (const queued of original.candidates) {
-      let batch = this.get(original.projectId, original.manuscriptId, original.id);
+      let batch = this.get(original.manuscriptId, original.id);
       if (batch.status !== "running") return;
       let candidate = batch.candidates.find((item) => item.id === queued.id)!;
       candidate.status = "running";
@@ -109,7 +109,7 @@ export class WritingCandidateService {
         const session = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: candidate.id,
           cwd: this.store.root, prompt: writingCandidatePrompt(batch, candidate.variant) });
         const result = await session.finished;
-        batch = this.get(original.projectId, original.manuscriptId, original.id);
+        batch = this.get(original.manuscriptId, original.id);
         if (batch.status !== "running") return;
         candidate = batch.candidates.find((item) => item.id === queued.id)!;
         if (result.status !== "completed") {
@@ -121,7 +121,7 @@ export class WritingCandidateService {
           candidate.status = "completed"; candidate.text = output.text;
         }
       } catch {
-        batch = this.get(original.projectId, original.manuscriptId, original.id);
+        batch = this.get(original.manuscriptId, original.id);
         if (batch.status !== "running") return;
         candidate = batch.candidates.find((item) => item.id === queued.id)!;
         candidate.status = "failed";
@@ -129,12 +129,12 @@ export class WritingCandidateService {
       }
       this.store.saveCandidateBatch(batch);
     }
-    const batch = this.get(original.projectId, original.manuscriptId, original.id);
+    const batch = this.get(original.manuscriptId, original.id);
     if (batch.status === "running") { batch.status = "completed"; this.store.saveCandidateBatch(batch); }
   }
 
-  cancel(projectId: string, manuscriptId: string, id: string): WritingCandidateBatch {
-    const batch = this.get(projectId, manuscriptId, id);
+  cancel(manuscriptId: string, id: string): WritingCandidateBatch {
+    const batch = this.get(manuscriptId, id);
     if (batch.status !== "running") return batch;
     const running = batch.candidates.filter((item) => item.status === "running");
     batch.status = "cancelled";
@@ -146,20 +146,20 @@ export class WritingCandidateService {
     return batch;
   }
 
-  accept(projectId: string, manuscriptId: string, id: string, input: z.infer<typeof AcceptWritingCandidateSchema>) {
+  accept(manuscriptId: string, id: string, input: z.infer<typeof AcceptWritingCandidateSchema>) {
     const request = AcceptWritingCandidateSchema.parse(input);
-    const batch = this.get(projectId, manuscriptId, id);
+    const batch = this.get(manuscriptId, id);
     if (batch.status === "running") throw new ManuscriptError(409, "candidates_running", "Wait for generation to finish or cancel remaining candidates before accepting.");
     const candidate = batch.candidates.find((item) => item.id === request.candidateId);
     if (!candidate || candidate.status !== "completed" || candidate.text === null) throw new ManuscriptError(400, "candidate_unavailable", "Choose a completed candidate.");
     if (request.expectedRevision !== batch.request.expectedRevision) throw new ManuscriptError(409, "candidate_stale", "The draft changed after generation. Generate new alternatives for the current text.");
-    const base = this.store.historicalFile(projectId, manuscriptId, batch.request.path, batch.sourceVersionId);
+    const base = this.store.historicalFile(manuscriptId, batch.request.path, batch.sourceVersionId);
     if (base.revision !== batch.request.expectedRevision || base.content.slice(batch.request.from, batch.request.to) !== batch.selectedText) {
       throw new ManuscriptError(409, "candidate_source_changed", "The saved candidate source no longer matches its revision.");
     }
     const content = base.content.slice(0, batch.request.from) + candidate.text + base.content.slice(batch.request.to);
     const revision = hash(content);
-    const current = this.store.read(projectId, manuscriptId).files.find((item) => item.path === base.path);
+    const current = this.store.read(manuscriptId).files.find((item) => item.path === base.path);
     const prior = batch.accepted ?? batch.accepting;
     if (prior && (prior.candidateId !== candidate.id || prior.revision !== revision)) throw new ManuscriptError(409, "candidate_already_selected", "Another candidate was already selected for this batch.");
     if (!current || (current.revision !== base.revision && !(prior && current.revision === revision))) {
@@ -172,7 +172,7 @@ export class WritingCandidateService {
     // Persist intent before the file write. A lost response or crash retries the same edit, never another candidate.
     batch.accepting = prior ?? { candidateId: candidate.id, revision, acceptedAt: new Date().toISOString() };
     this.store.saveCandidateBatch(batch);
-    const saved = this.store.writeFile(projectId, manuscriptId, { path: base.path, content, expectedRevision: base.revision }, "candidate");
+    const saved = this.store.writeFile(manuscriptId, { path: base.path, content, expectedRevision: base.revision }, "candidate");
     batch.accepted = batch.accepting; batch.accepting = null;
     this.store.saveCandidateBatch(batch);
     return saved;

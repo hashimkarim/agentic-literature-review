@@ -6,8 +6,8 @@ import { api } from "./api";
 export interface WritingSelection { file: ManuscriptFile; from: number; to: number }
 const audiences = ["Layperson", "Undergraduate", "Graduate", "Doctoral / specialist"];
 
-export function WritingCandidatesDialog({ projectId, manuscriptId, selection, providers, onClose, onCreated }: {
-  projectId: string; manuscriptId: string; selection: WritingSelection; providers: AgentProvider[];
+export function WritingCandidatesDialog({ manuscriptId, selection, providers, onClose, onCreated }: {
+  manuscriptId: string; selection: WritingSelection; providers: AgentProvider[];
   onClose: () => void; onCreated: (batch: WritingCandidateBatch) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -29,7 +29,7 @@ export function WritingCandidatesDialog({ projectId, manuscriptId, selection, pr
     const fingerprint = JSON.stringify(body);
     if (attempt.current?.fingerprint !== fingerprint) attempt.current = { fingerprint, requestId: crypto.randomUUID() };
     try {
-      const batch = await api.createWritingCandidates(projectId, manuscriptId, { ...body, requestId: attempt.current.requestId });
+      const batch = await api.createWritingCandidates(manuscriptId, { ...body, requestId: attempt.current.requestId });
       onCreated(batch);
     } catch (error) { setError(error instanceof Error ? error.message : "Could not start generation."); } finally { setBusy(false); }
   }
@@ -58,8 +58,8 @@ export function WritingCandidatesDialog({ projectId, manuscriptId, selection, pr
   </dialog>;
 }
 
-export function WritingCandidatesPanel({ projectId, manuscriptId, file, initialBatchId, busy, onCompare, onClearComparison, onAccept, onClose }: {
-  projectId: string; manuscriptId: string; file: ManuscriptFile; initialBatchId: string | null; busy: boolean;
+export function WritingCandidatesPanel({ manuscriptId, file, initialBatchId, busy, onCompare, onClearComparison, onAccept, onClose }: {
+  manuscriptId: string; file: ManuscriptFile; initialBatchId: string | null; busy: boolean;
   onCompare: (batch: WritingCandidateBatch, candidateId: string) => void;
   onClearComparison: () => void;
   onAccept: (batch: WritingCandidateBatch, candidateId: string) => Promise<void>; onClose: () => void;
@@ -74,14 +74,14 @@ export function WritingCandidatesPanel({ projectId, manuscriptId, file, initialB
   useEffect(() => {
     let current = true;
     setLoading(true); setError(null);
-    api.writingCandidates(projectId, manuscriptId).then((items) => {
+    api.writingCandidates(manuscriptId).then((items) => {
       if (!current) return;
       const filtered = items.filter((item) => item.path === file.path);
       setSummaries(filtered); setActiveId((id) => filtered.some((item) => item.id === id) ? id : filtered[0]?.id ?? null);
       setLoading(false);
     }).catch((error) => { if (current) { setError(error.message); setLoading(false); } });
     return () => { current = false; };
-  }, [projectId, manuscriptId, file.path, refresh]);
+  }, [manuscriptId, file.path, refresh]);
   useEffect(() => { if (initialBatchId) { setActiveId(initialBatchId); setRefresh((n) => n + 1); } }, [initialBatchId]);
   useEffect(() => {
     let current = true;
@@ -90,7 +90,7 @@ export function WritingCandidatesPanel({ projectId, manuscriptId, file, initialB
     if (!activeId) return;
     const load = async () => {
       try {
-        const next = await api.writingCandidate(projectId, manuscriptId, activeId);
+        const next = await api.writingCandidate(manuscriptId, activeId);
         if (!current) return;
         setBatch(next); setError(null);
         if (next.status === "running") timer = setTimeout(() => void load(), 800);
@@ -98,7 +98,7 @@ export function WritingCandidatesPanel({ projectId, manuscriptId, file, initialB
     };
     void load();
     return () => { current = false; clearTimeout(timer); };
-  }, [projectId, manuscriptId, activeId, refresh]);
+  }, [manuscriptId, activeId, refresh]);
   const action = async (fn: () => Promise<void>) => {
     setPending(true); setError(null);
     try { await fn(); setRefresh((n) => n + 1); } catch (error) { setError(error instanceof Error ? error.message : "Candidate action failed."); } finally { setPending(false); }
@@ -109,7 +109,7 @@ export function WritingCandidatesPanel({ projectId, manuscriptId, file, initialB
     {error && <p role="alert" className="writing-error">{error}</p>}
     {batch && <>
       <div className="writing-candidate-context"><span className="writing-draft-notice">{batch.accepted ? "Selection accepted" : "Unverified drafts"}</span><span role="status">{batch.status}</span><p>{batch.request.instruction}</p><small>{audiences[batch.request.audience]} / {batch.request.expectedRevision.slice(0, 8)}</small>
-        {batch.status === "running" && <button type="button" disabled={pending} onClick={() => void action(async () => { await api.cancelWritingCandidates(projectId, manuscriptId, batch.id); })}><Square size={13} />Stop generation</button>}
+        {batch.status === "running" && <button type="button" disabled={pending} onClick={() => void action(async () => { await api.cancelWritingCandidates(manuscriptId, batch.id); })}><Square size={13} />Stop generation</button>}
         {!batch.accepted && file.revision !== batch.request.expectedRevision && <p className="writing-error">Source changed. These alternatives cannot replace the current draft.</p>}
       </div>
       <ol>{batch.candidates.map((candidate, index) => <li key={candidate.id}>

@@ -86,11 +86,13 @@ projects/{projectId}/
   paper-links.json
   notes/*.md
   outputs/*.md
-  manuscripts/{manuscriptId}/main.tex
-  manuscripts/{manuscriptId}/sections/*.tex
-  manuscripts/{manuscriptId}/references.bib
-  manuscripts/{manuscriptId}/.history/
-  manuscripts/{manuscriptId}/.candidates/
+manuscripts/{manuscriptId}/
+  manuscript.json              # projectIds references, no owning project
+  main.tex
+  sections/*.tex
+  references.bib
+  .history/
+  .candidates/
 workflows/{runId}.jsonl
 exports/{projectId}.bib
 .litagent/index.sqlite

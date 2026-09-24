@@ -104,7 +104,7 @@ try {
     await page.getByRole("textbox", { name: "TeX source", exact: true }).waitFor();
     const [metadata] = await request<Array<{ id: string }>>(`/projects/${project.id}/manuscripts`);
     assert.ok(metadata);
-    const base = `/projects/${project.id}/manuscripts/${metadata.id}`;
+    const base = `/manuscripts/${metadata.id}`;
     const current = async () => (await request<ManuscriptDocument>(base)).files.find((file) => file.path === "main.tex")!;
     const first = "\\section{Introduction}\nA synthetic result is documented here.\n";
     await page.getByRole("textbox", { name: "TeX source", exact: true }).fill(first);

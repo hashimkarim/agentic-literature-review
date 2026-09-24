@@ -18,10 +18,12 @@ it("serves real manuscript CRUD, validation and conflict responses without a pro
   const project = repo.createProject({ name: "HTTP writing" });
   const app = express();
   app.use(express.json());
-  app.use("/api/projects/:id/manuscripts", manuscriptRoutes(new ManuscriptStore(root)));
+  const store = new ManuscriptStore(root);
+  app.use("/api/manuscripts", manuscriptRoutes(store));
+  app.use("/api/projects/:id/manuscripts", manuscriptRoutes(store));
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/projects/${project.id}/manuscripts`;
+  const base = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts`;
   const send = (url: string, method: string, body: unknown) => fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   try {
     expect(await (await fetch(base)).json()).toEqual([]);
@@ -29,6 +31,13 @@ it("serves real manuscript CRUD, validation and conflict responses without a pro
     const created = await send(base, "POST", { name: "First paper" });
     expect(created.status).toBe(201);
     const document = await created.json() as import("@litagent/contracts").ManuscriptDocument;
+    expect(document.projectIds).toEqual([]);
+    expect((await send(`${base}/${document.id}/projects`, "PUT", { projectIds: [project.id], expectedProjectIds: [] })).status).toBe(200);
+    expect(await (await fetch(`${base}?projectId=${project.id}`)).json()).toMatchObject([{ id: document.id, projectIds: [project.id] }]);
+    const legacy = base.replace("/api/manuscripts", `/api/projects/${project.id}/manuscripts`);
+    expect((await fetch(`${legacy}/${document.id}`)).status).toBe(200);
+    expect((await send(`${base}/${document.id}/projects`, "PUT", { projectIds: ["missing"], expectedProjectIds: [project.id] })).status).toBe(404);
+    expect((await send(`${base}/${document.id}/projects`, "PUT", { projectIds: [], expectedProjectIds: [] })).status).toBe(409);
     const main = document.files.find((file) => file.path === "main.tex")!;
     const endpoint = `${base}/${document.id}/files`;
     const saved = await send(endpoint, "PUT", { path: main.path, content: "New source", expectedRevision: main.revision });
@@ -51,7 +60,7 @@ it("serves candidate creation, review, persistence and conflict-safe acceptance 
   const repo = new LitAgentRepository(root); repo.init();
   const project = repo.createProject({ name: "HTTP candidates" });
   const store = new ManuscriptStore(root);
-  const document = store.create(project.id, { name: "Synthetic manuscript" });
+  const document = store.create({ name: "Synthetic manuscript", projectIds: [project.id] });
   const file = document.files.find((item) => item.path === "main.tex")!;
   let calls = 0;
   const service = new WritingCandidateService(store, {

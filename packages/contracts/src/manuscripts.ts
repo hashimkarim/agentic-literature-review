@@ -5,6 +5,9 @@ export const ManuscriptPathSchema = z.string().max(240).regex(
   "Use a relative .tex or .bib path with letters, numbers, hyphens and underscores."
 );
 export const ManuscriptRevisionSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const ManuscriptProjectIdSchema = z.string().regex(/^[A-Za-z0-9_-]+$/).max(100);
+export const ManuscriptProjectIdsSchema = z.array(ManuscriptProjectIdSchema).max(100)
+  .refine((ids) => new Set(ids).size === ids.length, "Project links must be unique.");
 export const ManuscriptFileSchema = z.object({
   path: ManuscriptPathSchema,
   content: z.string().max(250_000),
@@ -12,7 +15,7 @@ export const ManuscriptFileSchema = z.object({
 });
 export const ManuscriptSchema = z.object({
   id: z.string().regex(/^manuscript_[a-f0-9]{16}$/),
-  projectId: z.string().regex(/^[A-Za-z0-9_-]+$/).max(100),
+  projectIds: ManuscriptProjectIdsSchema,
   name: z.string().trim().min(1).max(160),
   entryFile: ManuscriptPathSchema,
   createdAt: z.string().datetime()
@@ -21,7 +24,12 @@ export const ManuscriptDocumentSchema = ManuscriptSchema.extend({
   files: z.array(ManuscriptFileSchema).max(64)
 });
 export const CreateManuscriptRequestSchema = z.object({
-  name: ManuscriptSchema.shape.name
+  name: ManuscriptSchema.shape.name,
+  projectIds: ManuscriptProjectIdsSchema.default([])
+}).strict();
+export const UpdateManuscriptProjectsRequestSchema = z.object({
+  projectIds: ManuscriptProjectIdsSchema,
+  expectedProjectIds: ManuscriptProjectIdsSchema
 }).strict();
 export const WriteManuscriptFileRequestSchema = z.object({
   path: ManuscriptPathSchema,

@@ -81,6 +81,7 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 const manuscripts = new ManuscriptStore(repo.root);
 const writingCandidates = new WritingCandidateService(manuscripts, new AgentHarness({ catalog: providers }), writingTargetValidator(providers, () => providerSettings.read()));
+app.use("/api/manuscripts", manuscriptRoutes(manuscripts, writingCandidates));
 app.use("/api/projects/:id/manuscripts", manuscriptRoutes(manuscripts, writingCandidates));
 
 function asyncHandler(
