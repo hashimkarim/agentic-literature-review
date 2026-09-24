@@ -37,7 +37,7 @@ export function useWritingBuild(manuscriptId: string) {
     finally { mutating.current = false; if (alive.current) setPending(false); }
   }
   return { state, error, pending, refresh: () => { actionFailed.current = false; return refresh(); },
-    compile: (save: () => Promise<Record<string, string>>) => change(async () => api.compileManuscript(manuscriptId, { requestId: crypto.randomUUID(), revisions: await save() })),
+    compile: (save: () => Promise<Record<string, string>>, entryFile: string) => change(async () => api.compileManuscript(manuscriptId, { requestId: crypto.randomUUID(), entryFile, revisions: await save() })),
     cancel: () => change(async () => state?.latest ? api.cancelManuscriptBuild(manuscriptId, state.latest.id) : api.manuscriptBuilds(manuscriptId))
   };
 }
