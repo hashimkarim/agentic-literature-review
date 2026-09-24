@@ -67,6 +67,7 @@ export interface PdfHighlight {
 
 export interface PdfReaderProps {
   source: string;
+  readOnly?: boolean;
   highlights?: PdfHighlight[];
   annotations?: PdfAnnotation[];
   onAnnotationsChange?: Dispatch<SetStateAction<PdfAnnotation[]>>;
@@ -130,6 +131,7 @@ const annotationTools: Array<{ mode: Exclude<AnnotationMode, "idle">; label: str
 
 export function PdfReader({
   source,
+  readOnly = false,
   highlights = [],
   annotations,
   onAnnotationsChange,
@@ -229,14 +231,14 @@ export function PdfReader({
               ))}
             </div>
           ) : null}
-          <PdfAnnotationMenu
+          {!readOnly && <PdfAnnotationMenu
             annotationMode={annotationMode}
             setAnnotationMode={setAnnotationMode}
             annotationStyle={annotationStyle}
             setAnnotationStyle={setAnnotationStyle}
             annotationCount={manualHighlights.length}
             onClearAnnotations={clearAnnotations}
-          />
+          />}
         </div>
       </div>
     </div>
@@ -377,7 +379,8 @@ function PdfToolbar({
           onFocus={(event) => {
             if (typeof scale !== "number") {
               setZoomDraft("100");
-              window.requestAnimationFrame(() => event.currentTarget.select());
+              const input = event.currentTarget;
+              window.requestAnimationFrame(() => input.select());
             }
           }}
           onChange={(event) => {
@@ -582,12 +585,17 @@ function IsolatedReactRoot({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const root = createRoot(host);
+    const container = document.createElement("div");
+    container.style.height = "100%";
+    host.appendChild(container);
+    const root = createRoot(container);
     rootRef.current = root;
     return () => {
       rootRef.current = null;
-      root.unmount();
-      host.replaceChildren();
+      // A nested root cannot unmount synchronously during its parent's commit.
+      // Detach its own container; let React remove its children after the commit.
+      container.remove();
+      queueMicrotask(() => root.unmount());
     };
   }, []);
 
