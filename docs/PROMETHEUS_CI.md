@@ -1,4 +1,40 @@
-# Prometheus CI handoff
+# Prometheus CI
+
+## Provisioned Runner (2026-09-25)
+
+Repository `hashimkarim/agentic-literature-review` now has dedicated runner
+**prometheus-literature-01**, GitHub runner ID **2**, verified online with
+`self-hosted`, `Linux`, `X64`, `prometheus-ci` labels before workflow activation.
+Real job results will be recorded after execution.
+
+- Stack `/var/docker/literature-review-ci`, Compose project `literature-review-ci`.
+  Reproducible source: `deploy/ci-runner/`.
+- Standalone Ubuntu 24.04 image; checksummed runner 2.337.0, Node 24.14.0 and
+  Bun 1.3.14. No dependency on or changes to the SDK runner image/stack.
+- UID 1001, all capabilities dropped, no-new-privileges, 2 GiB RAM, 2 CPUs,
+  private bridge, unique volumes. No host Docker socket, production mounts,
+  provider credentials, PATs or SSH keys.
+- Short-lived registration token supplied on stdin through
+  `ACTIONS_RUNNER_INPUT_TOKEN`; never persisted in Compose/source control.
+- Root-owned `.sh` wrapper and TypeScript policy admit only this repository's
+  `refs/heads/chat-reliability` and push/manual events. PR and main-ref rejection
+  were tested. Repository approval policy is `all_external_contributors`.
+- `RUNNER_MANUALLY_TRAP_SIG=1` and `stop_grace_period: 2m` use the official
+  listener's signal forwarding. Neither adds a model execution timeout.
+
+The workflow independently enforces the same source restrictions. This is a
+persistent trusted-source runner, not a sandbox for untrusted PRs. Review branch
+and workflow changes before publishing. Build/run only this stack; preserve
+existing registration and unrelated stacks. No host-wide prune/volume deletion.
+
+`.github/workflows/ci.yml` runs exact-lockfile install, typecheck, tests with two
+workers, and build. Its 20-minute CI job limit is unrelated to agent runs.
+Only deterministic/disposable fixtures are used. Native compiler checks remain
+opt-in; skipped checks are not compiler validation. Interactive UI verification
+uses native T3 on the workstation. macOS/Windows coverage stays paused. No
+hosted compute, publishing workflow or production deployment is configured.
+
+## Original Handoff (Superseded Readiness)
 
 Requested 2026-09-25. Repository:
 `https://github.com/hashimkarim/agentic-literature-review` (the local remote still

@@ -1,0 +1,35 @@
+name: LitAgent Linux
+on:
+  push:
+    branches: [chat-reliability]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: litagent-linux-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  check:
+    if: github.repository == 'hashimkarim/agentic-literature-review' && github.ref == 'refs/heads/chat-reliability' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, linux, x64, prometheus-ci]
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      NODE_OPTIONS: --max-old-space-size=1536
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          node --version
+          bun --version
+          git lfs version
+      - name: Install exact lockfile
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Test
+        run: bun run test --maxWorkers=2
+      - name: Build
+        run: bun run build
