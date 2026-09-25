@@ -215,7 +215,7 @@ describe("AgenticDriver integration", () => {
     expect(() =>
       catalog.validateSettings(instance.id, { command: "/bin/sh" }),
     ).toThrow(/command/);
-  });
+  }, 15_000); // Discovery has a bounded 10s transport watchdog; allow loaded CI to finish it.
 
   it("keeps active runs while removed catalog entries block new work in cached adapters", async () => {
     let release!: () => void, started!: () => void;
