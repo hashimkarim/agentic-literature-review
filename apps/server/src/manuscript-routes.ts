@@ -44,6 +44,9 @@ export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCan
   });
   router.put("/:manuscriptId/projects", (req, res) => res.json(store.updateProjects(param(req.params, "manuscriptId"), req.body)));
   router.get("/:manuscriptId", (req, res) => res.json(store.read(param(req.params, "manuscriptId"))));
+  router.get("/:manuscriptId/comments", (req, res) => res.json(store.comments(param(req.params, "manuscriptId"))));
+  router.post("/:manuscriptId/comments", (req, res) => res.status(201).json(store.createComment(param(req.params, "manuscriptId"), req.body)));
+  router.patch("/:manuscriptId/comments/:commentId", (req, res) => res.json(store.updateComment(param(req.params, "manuscriptId"), param(req.params, "commentId"), req.body)));
   router.post("/:manuscriptId/tree", (req, res) => res.json(store.changeTree(param(req.params, "manuscriptId"), req.body)));
   router.post("/:manuscriptId/upload", multer({ storage: multer.memoryStorage(), limits: { fileSize: manuscriptLimits.asset, files: 1, fields: 2, fieldSize: 1000, parts: 4 } }).single("file"), (req, res) => {
     if (!req.file) throw new ManuscriptError(400, "file_required", "Choose a file to upload.");

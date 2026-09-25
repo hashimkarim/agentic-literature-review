@@ -10,11 +10,14 @@ import {
   ManuscriptNodePathSchema, ManuscriptAssetPathSchema, ManuscriptTreeRequestSchema, ImportManuscriptRequestSchema,
   WritingCandidateBatchSchema, type WritingCandidateBatch, type WritingCandidateSummary,
   WritingAttachmentSchema, WritingAttachmentInputSchema, type WritingAttachment,
+  CreateManuscriptCommentSchema, UpdateManuscriptCommentSchema, ManuscriptCommentSchema,
+  type ManuscriptComment, type ManuscriptCommentView, type CommentSelection, type CommentAnchor,
   type Manuscript, type ManuscriptDocument, type ManuscriptFile,
   type WriteManuscriptFileRequest, type ManuscriptHistoryEntry
 } from "@litagent/contracts";
 import { manuscriptLimits, sourceRevision, sourceKind, validateTreePaths } from "./manuscript-files";
 import type { ManuscriptImportData } from "./manuscript-import";
+import { locateComment } from "./comment-anchor";
 
 const MAX_FILE_BYTES = manuscriptLimits.textFile;
 const MAX_DOCUMENT_BYTES = manuscriptLimits.textTotal;
@@ -155,6 +158,94 @@ export class ManuscriptStore {
   }
 
   describe(manuscriptId: string): Manuscript { return this.metadata(manuscriptId); }
+
+  private commentRecords(manuscriptId: string): ManuscriptComment[] {
+    const directory = this.safePath(`${this.directory(manuscriptId)}/.comments`);
+    if (!fs.existsSync(directory)) return [];
+    const files = fs.readdirSync(directory).filter((name) => /^comment_[a-f0-9]{24}\.json$/.test(name));
+    if (files.length > 500) throw new ManuscriptError(413, "comment_limit", "This document exceeds 500 comment threads.");
+    return files.map((name) => {
+      const file = this.safePath(`${this.directory(manuscriptId)}/.comments/${name}`);
+      if (fs.statSync(file).size > 256_000) throw new ManuscriptError(413, "comment_limit", "Comment thread is too large.");
+      const record = ManuscriptCommentSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
+      if (record.manuscriptId !== manuscriptId || `${record.id}.json` !== name || (record.status !== "deleted" && !record.anchor)) throw new ManuscriptError(409, "comment_identity_changed", "Comment identity does not match this document.");
+      return record;
+    });
+  }
+
+  private commentView(record: ManuscriptComment, document: ManuscriptDocument): ManuscriptCommentView {
+    const { creationHash: _hash, lastOperation: _operation, ...publicRecord } = record;
+    return { ...publicRecord, location: record.anchor ? locateComment(record.anchor, document.files.find((file) => file.path === record.anchor!.path)) : null };
+  }
+
+  comments(manuscriptId: string): ManuscriptCommentView[] {
+    const document = this.read(manuscriptId);
+    return this.commentRecords(manuscriptId).filter((record) => record.status !== "deleted")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).map((record) => this.commentView(record, document));
+  }
+
+  private commentAnchor(selection: CommentSelection, document: ManuscriptDocument): CommentAnchor {
+    const file = document.files.find((item) => item.path === selection.path);
+    if (!file || file.revision !== selection.revision || file.content.slice(selection.from, selection.to) !== selection.quote) {
+      throw new ManuscriptError(409, "comment_source_changed", "Selected text changed. Save and select it again before commenting.");
+    }
+    return { ...selection, prefix: file.content.slice(Math.max(0, selection.from - 48), selection.from), suffix: file.content.slice(selection.to, selection.to + 48) };
+  }
+
+  private saveComment(record: ManuscriptComment, records: ManuscriptComment[]): void {
+    const checked = ManuscriptCommentSchema.parse(record);
+    const bytes = JSON.stringify(checked, null, 2);
+    if (Buffer.byteLength(bytes) > 256_000 || records.filter((item) => item.id !== record.id).reduce((size, item) => size + Buffer.byteLength(JSON.stringify(item, null, 2)), Buffer.byteLength(bytes)) > 8_000_000) {
+      throw new ManuscriptError(413, "comment_limit", "Comments exceed the document or thread size limit.");
+    }
+    atomicWrite(this.safePath(`${this.directory(record.manuscriptId)}/.comments/${record.id}.json`, true), `${bytes}\n`);
+  }
+
+  createComment(manuscriptId: string, input: unknown): ManuscriptCommentView {
+    const request = CreateManuscriptCommentSchema.parse(input);
+    const document = this.read(manuscriptId), records = this.commentRecords(manuscriptId);
+    const id = `comment_${revision(request.requestId).slice(0, 24)}`, creationHash = revision(JSON.stringify(request));
+    const existing = records.find((item) => item.id === id);
+    if (existing) {
+      if (existing.creationHash !== creationHash || existing.status === "deleted") throw new ManuscriptError(409, "comment_request_changed", "This comment request was already used or deleted.");
+      return this.commentView(existing, document);
+    }
+    if (records.length >= 500) throw new ManuscriptError(413, "comment_limit", "This document has reached 500 comment threads.");
+    const now = new Date().toISOString();
+    const record: ManuscriptComment = { id, manuscriptId, version: 1, status: "open", anchor: this.commentAnchor(request.selection, document), createdAt: now, updatedAt: now,
+      messages: [{ id: request.requestId, author: "local", body: request.body, createdAt: now, editedAt: null }], creationHash, lastOperation: null };
+    this.saveComment(record, records);
+    return this.commentView(record, document);
+  }
+
+  updateComment(manuscriptId: string, commentId: string, input: unknown): ManuscriptCommentView {
+    ManuscriptCommentSchema.shape.id.parse(commentId);
+    const request = UpdateManuscriptCommentSchema.parse(input);
+    const document = this.read(manuscriptId), records = this.commentRecords(manuscriptId);
+    const record = records.find((item) => item.id === commentId);
+    if (!record) throw new ManuscriptError(404, "comment_not_found", "Comment thread not found.");
+    const hash = revision(JSON.stringify(request));
+    if (record.lastOperation?.id === request.requestId && record.lastOperation.hash === hash) return this.commentView(record, document);
+    if (record.version !== request.expectedVersion || record.lastOperation?.id === request.requestId) throw new ManuscriptError(409, "comment_changed", "This thread changed elsewhere. Refresh comments before trying again.");
+    if (record.status === "deleted") throw new ManuscriptError(404, "comment_not_found", "Comment thread was deleted.");
+    const now = new Date().toISOString();
+    if (request.action === "reply") {
+      if (record.messages.length >= 100) throw new ManuscriptError(413, "comment_limit", "This thread has reached 100 messages.");
+      if (record.status !== "open") throw new ManuscriptError(409, "comment_resolved", "Reopen this thread before replying.");
+      record.messages.push({ id: request.requestId, body: request.body, author: "local", createdAt: now, editedAt: null });
+    } else if (request.action === "edit" || request.action === "delete-message") {
+      const message = record.messages.find((message) => message.id === request.messageId && message.body !== null);
+      if (!message) throw new ManuscriptError(404, "comment_message_not_found", "Comment message not found.");
+      message.body = request.action === "edit" ? request.body : null; message.editedAt = now;
+    } else if (request.action === "delete") {
+      // Retain only a retry tombstone, not deleted comment text or source excerpts.
+      record.status = "deleted"; record.messages = []; record.anchor = null;
+    } else if (request.action === "reattach") record.anchor = this.commentAnchor(request.selection, document);
+    else record.status = request.action === "resolve" ? "resolved" : "open";
+    record.version++; record.updatedAt = now; record.lastOperation = { id: request.requestId, hash };
+    this.saveComment(record, records);
+    return this.commentView(record, document);
+  }
 
   writingAttachments(manuscriptId: string): WritingAttachment[] {
     this.metadata(manuscriptId);
@@ -400,6 +491,14 @@ export class ManuscriptStore {
       const existing = fs.existsSync(target) ? z.array(ManuscriptHistoryEntrySchema).parse(JSON.parse(fs.readFileSync(target, "utf8"))) : [];
       const ids = new Set(inherited.map((entry) => entry.id));
       atomicWrite(target, JSON.stringify([...existing.filter((entry) => !ids.has(entry.id)), ...inherited]));
+    }
+    // Replay-safe under the existing move journal; comments follow renamed files.
+    const comments = this.commentRecords(manuscriptId);
+    for (const record of comments) {
+      const moved = move.files.find((file) => file.from === record.anchor?.path);
+      if (!moved || !record.anchor) continue;
+      record.anchor.path = moved.to; record.version++; record.updatedAt = new Date().toISOString();
+      this.saveComment(record, comments);
     }
     const manifest = this.safePath(`${directory}/manuscript.json`);
     const metadata = ManuscriptSchema.parse(JSON.parse(fs.readFileSync(manifest, "utf8")));

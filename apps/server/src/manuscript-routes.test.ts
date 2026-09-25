@@ -13,6 +13,33 @@ import type { WritingCandidateBatch } from "@litagent/contracts";
 import { ManuscriptImportPreviewSchema, type TexRuntimeStatus } from "@litagent/contracts";
 import { manuscriptRoutes } from "./manuscript-routes";
 
+it("stores revision-checked comments over HTTP without changing source or exported files", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-comments-http-"));
+  const store = new ManuscriptStore(root), document = store.create({ name: "Review fixture" });
+  const file = document.files.find((file) => file.path === "main.tex")!;
+  const app = express(); app.use(express.json()); app.use("/api/manuscripts", manuscriptRoutes(store));
+  const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
+  const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts/${document.id}`;
+  const mutate = (suffix: string, method: string, body: unknown) => fetch(url + suffix, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    const selection = { path: file.path, revision: file.revision, from: 0, to: 14, quote: file.content.slice(0, 14) };
+    expect((await mutate("/comments", "POST", { requestId: randomUUID(), body: "Stale", selection: { ...selection, revision: "0".repeat(64) } })).status).toBe(409);
+    const response = await mutate("/comments", "POST", { requestId: randomUUID(), body: "Choose a journal class.", selection });
+    expect(response.status).toBe(201);
+    let thread = await response.json() as import("@litagent/contracts").ManuscriptCommentView;
+    expect(thread.location?.state).toBe("attached");
+    const resolve = { action: "resolve", requestId: randomUUID(), expectedVersion: 1 };
+    thread = await (await mutate(`/comments/${thread.id}`, "PATCH", resolve)).json() as typeof thread;
+    expect(thread.status).toBe("resolved");
+    expect((await mutate(`/comments/${thread.id}`, "PATCH", { action: "reopen", requestId: randomUUID(), expectedVersion: 1 })).status).toBe(409);
+    expect((await mutate(`/comments/${thread.id}`, "PATCH", { action: "reply", requestId: randomUUID(), expectedVersion: thread.version, body: "", author: "someone-else" })).status).toBe(400);
+    expect(await (await fetch(url + "/comments")).json()).toEqual([thread]);
+    expect(store.read(document.id)).toEqual(document);
+    const archive = unzipSync(new Uint8Array(await (await fetch(url + "/archive")).arrayBuffer()));
+    expect(Object.keys(archive).some((name) => name.includes(".comments"))).toBe(false);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { force: true, recursive: true }); }
+});
+
 it("keeps writing attachment selection and exact context app-owned over HTTP", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-context-http-"));
   const repo = new LitAgentRepository(root); repo.init();
