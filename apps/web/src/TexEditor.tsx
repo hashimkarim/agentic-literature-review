@@ -17,7 +17,8 @@ const theme = EditorView.theme({
   ".cm-gutters": { backgroundColor: "var(--bg-secondary)", color: "var(--text-muted)", borderColor: "var(--border-primary)" },
   ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--surface-highlight-alt)" },
   ".cm-cursor": { borderLeftColor: "var(--text-primary)" },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--editor-selection-bg)" },
+  // Match the focused drawSelection rule, which is more specific than a plain descendant.
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--editor-selection-bg)" },
   ".cm-panels, .cm-tooltip": { color: "var(--text-primary)", backgroundColor: "var(--surface-elevated)", borderColor: "var(--border-line)" },
   ".cm-textfield, .cm-button": { color: "var(--text-primary)", background: "var(--surface-input)", border: "1px solid var(--border-line)" }
 });
