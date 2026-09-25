@@ -59,6 +59,7 @@
         "@litagent/contracts": "*",
         "@litagent/pdf": "*",
         "@litagent/ui": "*",
+        "@radix-ui/react-select": "2.2.6",
         "codemirror": "6.0.2",
         "cytoscape": "^3.33.1",
         "fflate": "0.8.3",

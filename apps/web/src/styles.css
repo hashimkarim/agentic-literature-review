@@ -85,8 +85,8 @@
 /* ============================================================
    BASE
    ============================================================ */
-:root { --editor-selection-bg:#334b70; --editor-selection-text:#ffffff; }
-[data-theme="light"] { --editor-selection-bg:#c6dcfa; --editor-selection-text:#12243b; }
+:root { color-scheme: dark; --editor-selection-bg:#334b70; --editor-selection-text:#ffffff; }
+[data-theme="light"] { color-scheme: light; --editor-selection-bg:#c6dcfa; --editor-selection-text:#12243b; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
@@ -99,6 +99,8 @@ body {
 #root { height: 100vh; }
 i[data-lucide] { width: 16px; height: 16px; stroke-width: 1.75; flex-shrink: 0; }
 button { font-family: var(--font-sans); }
+select option, select optgroup { background: var(--surface-elevated); color: var(--text-primary); }
+select option:disabled { color: var(--text-secondary); }
 ::selection { background:#c6dcfa; color:#12243b; }
 
 ::-webkit-scrollbar { width: 11px; height: 11px; }
@@ -697,7 +699,10 @@ button { font-family: var(--font-sans); }
 
 /* provider selector */
 .la-modelbar { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border-bottom: 1px solid var(--border-light); background: var(--bg-secondary-alt); }
-.la-modelpick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; background: var(--surface-input); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 5px 9px; cursor: pointer; font: var(--text-caption); color: var(--text-secondary); white-space: nowrap; overflow: hidden; }
+.la-modelpick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; background: var(--surface-input); border: 1px solid var(--border-line); border-radius: var(--radius-sm); padding: 3px 6px; font: var(--text-caption); color: var(--text-secondary); }
+.la-modelpick > svg { flex-shrink: 0; }
+.la-modelpick .la-dropdown-trigger { flex: 1; width: 0; }
+.la-modelpick-separator { align-self: stretch; width: 1px; background: var(--border-line); margin: 4px 0; }
 .la-modelpick i:first-child { width: 13px; height: 13px; color: var(--accent-bright); }
 .la-modelpick .spacer { flex: 1; }
 .la-modelpick i:last-child { width: 13px; height: 13px; color: var(--text-muted); }

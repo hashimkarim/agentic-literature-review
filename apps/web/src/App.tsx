@@ -35,6 +35,7 @@ import { workflowLabels } from "@litagent/ui";
 import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
 import { ChatSessions } from "./chat-sessions";
 import { DriverConnectionSettings } from "./DriverConnectionSettings";
+import { Select } from "./Select";
 import { FileImportDialog } from "./FileImportDialog";
 import { savedCitationHash, type SavedCitationSources } from "./citation-revision";
 import { useChatScroll } from "./use-chat-scroll";
@@ -271,39 +272,21 @@ function ModelPicker({
   return (
     <div className="la-modelpick" title="Provider and model">
       <Icon name="cpu" size={13} />
-      <select aria-label="Provider" value={resolvedProviderId} onChange={(event) => onProviderChange(event.currentTarget.value)} style={nativeSelectStyle} disabled={candidates.length === 0}>
-        {selectedDriver && !provider ? <option value={providerId}>{providerId} (unavailable)</option> : null}
-        {candidates.length === 0 && !selectedDriver ? <option value="codex">No providers found</option> : null}
-        {candidates.map((candidate) => (
-          <option key={candidate.id} value={candidate.id} disabled={!candidate.installed || !candidate.enabled || candidate.driver?.available === false}>
-            {candidate.label}
-            {!candidate.installed ? " (missing)" : !candidate.enabled ? " (disabled)" : ""}
-          </option>
-        ))}
-      </select>
-      <span style={{ color: "var(--text-muted)" }}>·</span>
-      <select aria-label="Model" value={model ?? ""} onChange={(event) => onModelChange(event.currentTarget.value || null)} style={nativeSelectStyle} disabled={!provider}>
-        <option value="">{selectedDriver ? "Select model" : "CLI default"}</option>
-        {selectedDriver && model && !provider?.models.includes(model) ? <option value={model} disabled>{model} (unavailable)</option> : null}
-        {provider?.models.map((candidate) => (
-          <option key={candidate} value={candidate}>
-            {candidate}
-          </option>
-        ))}
-      </select>
+      <Select compact label="Provider" value={resolvedProviderId} onChange={onProviderChange} disabled={candidates.length === 0} placeholder="No providers found" options={[
+        ...(selectedDriver && !provider ? [{ value: providerId, label: providerId, disabled: true, detail: "Unavailable" }] : []),
+        ...candidates.map((candidate) => ({ value: candidate.id, label: candidate.label,
+          disabled: !candidate.installed || !candidate.enabled || candidate.driver?.available === false,
+          detail: !candidate.installed ? "Missing" : !candidate.enabled ? "Disabled" : candidate.driver?.available === false ? "Unavailable" : undefined })),
+      ]} />
+      <span className="la-modelpick-separator" aria-hidden="true" />
+      <Select compact label="Model" value={model ?? ""} onChange={(value) => onModelChange(value || null)} disabled={!provider} options={[
+        { value: "", label: selectedDriver ? "Select model" : "CLI default" },
+        ...(selectedDriver && model && !provider?.models.includes(model) ? [{ value: model, label: model, disabled: true, detail: "Unavailable" }] : []),
+        ...(provider?.models.map((value) => ({ value, label: value })) ?? []),
+      ]} />
     </div>
   );
 }
-
-const nativeSelectStyle: CSSProperties = {
-  minWidth: 0,
-  border: 0,
-  outline: 0,
-  background: "transparent",
-  color: "var(--text-primary)",
-  font: "inherit",
-  maxWidth: 132
-};
 
 function PanelHead({ title, count, children }: { title: string; count?: number; children?: ReactNode }) {
   return (
@@ -3910,13 +3893,11 @@ function DriverProviderCard({ provider, onUpdateProvider, onConnectProvider, onR
       <div className="la-fieldgroup full"><p role={!driver.available ? "alert" : undefined} style={{ margin: 0, font: "var(--text-caption)", color: "var(--text-secondary)" }}>{driver.message}</p></div>
       <div className="la-fieldgroup full">
         <label htmlFor={`model-${provider.id}`}>Default model</label>
-        <div className="la-field" style={{ padding: "7px 10px" }}>
-          {driver.restrictedModels ? <select id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy || catalogOnly} onChange={(event) => setModel(event.currentTarget.value)} style={{ ...nativeSelectStyle, maxWidth: "100%", width: "100%", minHeight: 34 }}>
-            <option value="">{catalogOnly ? "No models permitted by host" : "Select a permitted model"}</option>
-            {model && !provider.models.includes(model) ? <option value={model} disabled>{model} (no longer permitted)</option> : null}
-            {provider.models.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select> : <input id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy} onChange={(event) => setModel(event.currentTarget.value)} placeholder="Enter an explicit model ID" />}
-        </div>
+        {driver.restrictedModels ? <Select id={`model-${provider.id}`} label={`Model for ${driver.instanceId}`} value={model} disabled={busy || catalogOnly} onChange={setModel} options={[
+          { value: "", label: catalogOnly ? "No models permitted by host" : "Select a permitted model" },
+          ...(model && !provider.models.includes(model) ? [{ value: model, label: model, disabled: true, detail: "No longer permitted" }] : []),
+          ...provider.models.map((value) => ({ value, label: value })),
+        ]} /> : <div className="la-field"><input id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy} onChange={(event) => setModel(event.currentTarget.value)} placeholder="Enter an explicit model ID" /></div>}
         {!driver.restrictedModels ? <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>The host does not publish a model allowlist. Enter the exact model you intend to use.</span> : null}
       </div>
       {driver.modelCatalog && <div className="la-fieldgroup full driver-model-catalog">

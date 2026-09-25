@@ -3,6 +3,7 @@ import { Check, Eye, Files, ListChecks, Plus, Sparkles, Trash2, X } from "lucide
 import type { AgentProvider, CreateWritingCandidates, ManuscriptFile, WritingAction, WritingAssistantOptions, WritingCandidateBatch, WritingContext, WritingContextSelection, WritingTarget } from "@litagent/contracts";
 import { api } from "./api";
 import { WritingSources } from "./WritingSources";
+import { Select } from "./Select";
 import type { WritingSelection } from "./WritingCandidates";
 import type { WritingView } from "./writing-view";
 
@@ -56,19 +57,19 @@ export function WritingAssistant({ manuscriptId, file, selection, providers, vis
     </div>
     {tab === "sources" ? <WritingSources manuscriptId={manuscriptId} selected={sources} onChange={setSources} /> : tab === "drafts" ? drafts : <form className="writing-assistant-compose" onSubmit={(event) => { event.preventDefault(); void run(prepare); }}><div className="writing-compose-fields">
       <div className="writing-assistant-target"><code title={file?.path}>{file?.path ?? "No text file"}</code><small>{length ? `${length.toLocaleString()} characters selected` : `Cursor / line ${file ? file.content.slice(0, selection.from).split("\n").length : 1}`}</small></div>
-      <label>Task<select value={action} onChange={(event) => setAction(event.target.value as WritingAction)}>{actions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>Task<Select label="Writing task" value={action} onChange={(value) => setAction(value as WritingAction)} options={actions.map(([value, label]) => ({ value, label }))} /></label>
       <label>Writing request<textarea aria-label="Writing request" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="What should this text accomplish?" rows={4} maxLength={2000} required /></label>
       <label className="writing-audience">Audience<output>{audiences[audience]}</output><input type="range" aria-label="Writing audience" min={0} max={3} step={1} value={audience} onChange={(event) => setAudience(Number(event.target.value))} /><span><span>Layperson</span><span>Doctoral</span></span></label>
       <details className="writing-preferences"><summary>Style and complexity</summary><div className="writing-preference-grid">
         <label>Target words<input type="number" min={30} max={2000} value={wordBudget} onChange={(event) => setWordBudget(Number(event.target.value))} required /></label>
         <label>Language<input value={language} maxLength={80} onChange={(event) => setLanguage(event.target.value)} required /></label>
-        <label>Terminology<select value={jargon} onChange={(event) => setJargon(event.target.value as typeof jargon)}><option value="minimal">Minimal jargon</option><option value="define">Define terms</option><option value="specialist">Specialist</option></select></label>
-        <label>Math detail<select value={math} onChange={(event) => setMath(event.target.value as typeof math)}><option value="conceptual">Conceptual</option><option value="equations">Equations</option><option value="derivation">Derivations</option></select></label>
+        <label>Terminology<Select label="Terminology" value={jargon} onChange={(value) => setJargon(value as typeof jargon)} options={[{ value: "minimal", label: "Minimal jargon" }, { value: "define", label: "Define terms" }, { value: "specialist", label: "Specialist" }]} /></label>
+        <label>Math detail<Select label="Math detail" value={math} onChange={(value) => setMath(value as typeof math)} options={[{ value: "conceptual", label: "Conceptual" }, { value: "equations", label: "Equations" }, { value: "derivation", label: "Derivations" }]} /></label>
       </div><label>Style constraints<textarea value={style} maxLength={2000} rows={2} onChange={(event) => setStyle(event.target.value)} /></label></details>
       <button type="button" className="writing-context-button" onClick={() => setTab("sources")}><Files size={15} />{selectedCount ? `${selectedCount} selected sources` : "Select evidence and context"}</button>
       <fieldset className="writing-targets" disabled={pending}><legend>Models and alternatives</legend>{targets.map((target, index) => <div className="writing-target" key={index}>
-        <label>Connection<select aria-label={`Assistant connection ${index + 1}`} value={target.providerId} onChange={(event) => updateTarget(index, { providerId: event.target.value, model: "" })}><option value="">Select connection</option>{available.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
-        <label>Model<select aria-label={`Assistant model ${index + 1}`} value={target.model} onChange={(event) => updateTarget(index, { model: event.target.value })}><option value="">Select model</option>{available.find((provider) => provider.id === target.providerId)?.models.map((model) => <option key={model}>{model}</option>)}</select></label>
+        <label>Connection<Select label={`Assistant connection ${index + 1}`} value={target.providerId} onChange={(value) => updateTarget(index, { providerId: value, model: "" })} disabled={pending || !available.length} options={[{ value: "", label: "Select connection" }, ...available.map((provider) => ({ value: provider.id, label: provider.label }))]} /></label>
+        <label>Model<Select label={`Assistant model ${index + 1}`} value={target.model} onChange={(value) => updateTarget(index, { model: value })} disabled={pending || !target.providerId} options={[{ value: "", label: "Select model" }, ...(available.find((provider) => provider.id === target.providerId)?.models.map((value) => ({ value, label: value })) ?? [])]} /></label>
         <label>Outputs<input type="number" aria-label={`Assistant outputs ${index + 1}`} min={1} max={3} value={target.count} onChange={(event) => updateTarget(index, { count: Math.min(3, Math.max(1, Number(event.target.value) || 1)) })} /></label>
         <button type="button" className="writing-tool" title="Remove model" aria-label={`Remove assistant model ${index + 1}`} disabled={targets.length === 1} onClick={() => setTargets((items) => items.filter((_, i) => i !== index))}><Trash2 size={15} /></button>
       </div>)}<button type="button" disabled={targets.length >= 3 || total >= 6} onClick={() => setTargets((items) => [...items, { providerId: "", model: "", count: 1 }])}><Plus size={14} />Add model</button></fieldset>

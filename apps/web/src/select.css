@@ -1,0 +1,33 @@
+.la-dropdown-trigger {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px;
+  border: 1px solid var(--border-line); border-radius: 4px;
+  background: var(--surface-input); color: var(--text-primary); font: inherit;
+  text-align: left; cursor: pointer; letter-spacing: 0;
+}
+.la-dropdown-trigger.compact { min-height: 28px; padding: 4px 6px; background: transparent; border-color: transparent; }
+.la-dropdown-trigger:hover:not(:disabled), .la-dropdown-trigger[data-state="open"] { background: var(--surface-highlight-alt); }
+.la-dropdown-trigger:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+.la-dropdown-trigger:disabled { color: var(--text-secondary); cursor: not-allowed; }
+.la-dropdown-trigger svg { flex-shrink: 0; }
+.la-dropdown-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.la-dropdown-menu {
+  z-index: 1000; width: max(280px, var(--radix-select-trigger-width)); max-width: calc(100vw - 24px);
+  max-height: min(360px, var(--radix-select-content-available-height)); overflow: hidden;
+  border: 1px solid var(--border-line); border-radius: 6px;
+  background: var(--surface-elevated); color: var(--text-primary); box-shadow: var(--shadow-lg);
+  font: var(--text-body-sm); letter-spacing: 0;
+}
+.la-dropdown-viewport { padding: 5px; }
+.la-dropdown-label { padding: 6px 10px 8px; font: var(--text-caption); color: var(--text-secondary); }
+.la-dropdown-option {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; position: relative;
+  min-height: 36px; padding: 8px 10px 8px 30px; border-radius: 3px;
+  color: var(--text-primary); cursor: pointer; user-select: none; outline: none; overflow-wrap: anywhere;
+}
+.la-dropdown-option[data-state="checked"] { background: var(--surface-selection); color: var(--text-high); }
+.la-dropdown-option[data-highlighted] { background: var(--surface-highlight); color: var(--text-high); }
+.la-dropdown-option[data-disabled] { color: var(--text-secondary); cursor: not-allowed; }
+.la-dropdown-indicator { position: absolute; left: 9px; display: flex; color: var(--accent-bright); }
+.la-dropdown-detail { margin-left: auto; color: var(--text-secondary); font-size: 11px; }
+.la-dropdown-scroll { display: flex; justify-content: center; align-items: center; height: 22px; color: var(--text-secondary); }

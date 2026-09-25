@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Plug, RefreshCw, Settings2 } from "lucide-react";
 import type { DriverConnection } from "@litagent/contracts";
 import { api } from "./api";
+import { Select } from "./Select";
 
 export function DriverConnectionSettings({ connection, onRefresh }: { connection: DriverConnection | null; onRefresh: () => Promise<DriverConnection> }) {
   const [editing, setEditing] = useState(false);
@@ -32,7 +33,7 @@ export function DriverConnectionSettings({ connection, onRefresh }: { connection
     <div className="driver-connection-body">
       {open && <form onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <label>Driver address<input type="url" aria-label="Driver address" placeholder="http://127.0.0.1:7433" value={url} onChange={(event) => setUrl(event.target.value)} required disabled={busy} /></label>
-        <label>Credential<select aria-label="Driver credential type" value={mode} onChange={(event) => { setMode(event.target.value as typeof mode); setCredential(""); }} disabled={busy}><option value="token">Bearer token</option><option value="tokenFile">Local token file</option></select></label>
+        <label>Credential<Select label="Driver credential type" value={mode} onChange={(value) => { setMode(value as typeof mode); setCredential(""); }} disabled={busy} options={[{ value: "token", label: "Bearer token" }, { value: "tokenFile", label: "Local token file" }]} /></label>
         <label>{mode === "token" ? "Bearer token" : "Token file path"}<input type={mode === "token" ? "password" : "text"} aria-label={mode === "token" ? "Driver bearer token" : "Driver token file path"} autoComplete="off" spellCheck={false} value={credential} onChange={(event) => setCredential(event.target.value)} placeholder={connection?.configured ? "Leave blank to keep the saved credential" : mode === "tokenFile" ? "/absolute/path/to/token" : "Private driver credential"} disabled={busy} /></label>
         <button type="submit" className="la-btn la-btn-primary" disabled={busy || !url.trim() || (!connection?.configured && !credential.trim())}><Plug size={15} />{busy ? "Connecting..." : "Save connection"}</button>
       </form>}

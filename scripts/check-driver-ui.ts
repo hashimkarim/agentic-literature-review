@@ -168,7 +168,8 @@ try {
       .isDisabled(),
     true,
   );
-  await card.getByLabel("Model for mock", { exact: true }).selectOption("demo");
+  await card.getByRole("combobox", { name: "Model for mock", exact: true }).click();
+  await page.getByRole("option", { name: "demo", exact: true }).click();
   await card
     .getByRole("button", { name: "Enable provider", exact: true })
     .click();
@@ -201,11 +202,13 @@ try {
   await card
     .getByRole("button", { name: "Refresh status", exact: true })
     .click();
-  await card
+  await card.getByRole("combobox", { name: "Model for mock", exact: true }).click();
+  await page
     .getByRole("option", { name: "new-model", exact: true })
     .waitFor({ state: "attached" });
+  await page.keyboard.press("Escape");
   assert.equal(
-    await card.getByLabel("Model for mock", { exact: true }).inputValue(),
+    (await card.getByRole("combobox", { name: "Model for mock", exact: true }).textContent())?.trim(),
     "demo",
   );
   assert.equal(await card.getByText("Enabled", { exact: true }).count(), 1);
@@ -238,7 +241,7 @@ try {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await card.getByText("Disabled", { exact: true }).waitFor();
   assert.equal(
-    await card.getByLabel("Model for mock", { exact: true }).inputValue(),
+    (await card.getByRole("combobox", { name: "Model for mock", exact: true }).textContent())?.trim(),
     "demo",
   );
   for (const endpoint of [
