@@ -188,6 +188,7 @@ try {
     await page.getByRole("status").filter({ hasText: /^Recovered draft$/ }).waitFor();
     await page.getByRole("button", { name: "Save recovered draft", exact: true }).click();
     await waitFor(current, (file) => file.content === "Recovered local work");
+    await page.getByLabel("More writing actions", { exact: true }).click();
     await page.getByRole("button", { name: "New TeX or BibTeX file", exact: true }).click();
     await page.getByRole("textbox", { name: "Relative file path", exact: true }).fill("sections/methods.tex");
     await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click();
@@ -196,6 +197,7 @@ try {
     await page.getByRole("textbox", { name: "TeX source", exact: true }).fill("\\section{Methods}\nSynthetic protocol.");
     await waitFor(() => request<ManuscriptDocument>(base), (doc) => doc.files.some((file) => file.path === "sections/methods.tex" && file.content.includes("Synthetic protocol")));
     const downloadPromise = page.waitForEvent("download");
+    await page.getByLabel("More writing actions", { exact: true }).click();
     await page.getByRole("button", { name: "Export TeX sources", exact: true }).click();
     const download = await downloadPromise;
     const zip = path.join(output, `sources-${width}.zip`); await download.saveAs(zip);
@@ -208,9 +210,12 @@ try {
     await page.reload();
     await openWriting(page);
     await page.getByRole("textbox", { name: "TeX source", exact: true }).waitFor();
+    assert.match(await page.getByRole("textbox", { name: "TeX source", exact: true }).innerText(), /Synthetic protocol/);
+    await page.getByRole("tab", { name: "main.tex", exact: true }).click();
     assert.match(await page.getByRole("textbox", { name: "TeX source", exact: true }).innerText(), /Recovered local work/);
     const source = page.getByRole("textbox", { name: "TeX source", exact: true });
     await source.click(); await source.press("ControlOrMeta+a");
+    await page.getByLabel("More writing actions", { exact: true }).click();
     await page.getByRole("button", { name: "Generate alternatives", exact: true }).click();
     await page.getByRole("combobox", { name: "Connection 1", exact: true }).selectOption("driver.writing-a");
     await page.getByRole("combobox", { name: "Model 1", exact: true }).selectOption("fixture-a");
@@ -237,6 +242,7 @@ try {
     await page.getByText("Selection accepted", { exact: true }).waitFor();
     await page.getByRole("button", { name: "File history", exact: true }).click();
     await page.getByRole("button", { name: /Accepted candidate/ }).waitFor();
+    await page.getByLabel("More writing actions", { exact: true }).click();
     await page.getByRole("button", { name: "Saved alternatives", exact: true }).click();
     await page.getByText("Selection accepted", { exact: true }).waitFor();
     const batches = await request<Array<{ id: string }>>(`${base}/candidates`);
@@ -244,6 +250,7 @@ try {
     assert.deepEqual(accepted.candidates.map((candidate) => candidate.status), ["completed", "failed", "completed"]);
     assert.equal(accepted.accepted?.candidateId, accepted.candidates[2]!.id);
     await source.click(); await source.press("ControlOrMeta+a");
+    await page.getByLabel("More writing actions", { exact: true }).click();
     await page.getByRole("button", { name: "Generate alternatives", exact: true }).click();
     await page.getByRole("combobox", { name: "Connection 1", exact: true }).selectOption("driver.writing-a");
     await page.getByRole("combobox", { name: "Model 1", exact: true }).selectOption("fixture-a");
@@ -260,6 +267,7 @@ try {
     const cancelledBefore = cancellations;
     holdGeneration = true;
     await source.click(); await source.press("ControlOrMeta+a");
+    await page.getByLabel("More writing actions", { exact: true }).click();
     await page.getByRole("button", { name: "Generate alternatives", exact: true }).click();
     await page.getByRole("combobox", { name: "Connection 1", exact: true }).selectOption("driver.writing-a");
     await page.getByRole("combobox", { name: "Model 1", exact: true }).selectOption("fixture-b");
@@ -274,7 +282,11 @@ try {
     assert.equal((await current()).content, "New manual wording after generation.");
     await page.reload(); await openWriting(page);
     await page.getByRole("textbox", { name: "TeX source", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Saved alternatives", exact: true }).click();
+    await page.getByLabel("More writing actions", { exact: true }).click();
+    // Saved alternatives also remain open after a reload.
+    if (!await page.getByRole("button", { name: "Saved alternatives", exact: true }).getAttribute("aria-pressed").then((value) => value === "true")) {
+      await page.getByRole("button", { name: "Saved alternatives", exact: true }).click();
+    } else await page.keyboard.press("Escape");
     await page.getByRole("combobox", { name: "Generation batch", exact: true }).selectOption(accepted.id);
     await page.getByText("Selection accepted", { exact: true }).waitFor();
     assert.equal(sdkCalls.length - beforeCalls, 5, "Reload must not replay generation");

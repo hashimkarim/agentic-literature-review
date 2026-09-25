@@ -19,6 +19,13 @@ of this work. All generated text remains a draft until explicitly accepted.
    separate; temporary comparisons and compilation no longer overwrite layout.
    Typecheck and 201 tests pass; native preview verified split layout, two file
    tabs, collapsed folders and Sources after reloading the imported thesis.
+5. Implemented: a consolidated writing toolbar, collapsible desktop file pane,
+   compact save/build footer and source/PDF divider with pointer and keyboard
+   resizing. The split ratio is retained and adapts to stacked panes on narrow
+   screens. Native preview checks cover 1920, 1440, 860 and 390 pixels, menu
+   dismissal, file-drawer controls, keyboard resizing, reload and nonblank PDF
+   canvas pixels. Existing browser regression scripts now explicitly choose
+   their layout and account for restored tabs/panels and the actions menu.
 
 Backend validation: typecheck and 196 tests pass, including literal quote/ID checks,
 separate semantic review, unsupported-result rejection, explicit bibliography

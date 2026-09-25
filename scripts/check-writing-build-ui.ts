@@ -63,6 +63,7 @@ The preview contains two pages. Source history and project links remain independ
     await page.screenshot({ path: path.join(output, `documents-${width}.png`) });
     await page.getByRole("button", { name: document.name, exact: true }).click();
     await page.getByRole("textbox", { name: "TeX source", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Split source and PDF", exact: true }).click();
     await page.getByRole("button", { name: "Compile", exact: true }).click();
     await page.getByText("Build succeeded", { exact: true }).waitFor({ timeout: 120_000 });
     const canvas = page.locator(".writing-preview canvas").first();
@@ -101,6 +102,8 @@ The preview contains two pages. Source history and project links remain independ
     await page.getByText("Build failed", { exact: true }).waitFor({ timeout: 30_000 });
     const failed = await request<TexBuildState>(`${base}/builds`);
     assert.equal(failed.lastSuccessful?.id, first.lastSuccessful?.id);
+    assert.equal(await page.getByRole("button", { name: "Source only", exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByRole("button", { name: "Split source and PDF", exact: true }).click();
     await page.getByText("Earlier revision", { exact: true }).waitFor();
     const location = failed.latest?.diagnostics.find((item) => item.path === "main.tex" && item.line);
     assert.ok(location);

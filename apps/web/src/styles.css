@@ -116,10 +116,11 @@ button { font-family: var(--font-sans); }
 .la-wordmark .dot { width: 7px; height: 7px; border-radius: 2px; background: var(--accent-primary); }
 .la-titlecenter {
   flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;
-  font: var(--text-caption); color: var(--text-muted);
+  font: var(--text-caption); color: var(--text-muted); min-width:0; overflow:hidden; white-space:nowrap;
 }
 .la-titlecenter .crumb { color: var(--text-secondary); }
 .la-titlecenter i { width: 13px; height: 13px; }
+@media (max-width:600px) { .la-titlecenter { visibility:hidden; } }
 .la-titleactions { display: flex; align-items: center; gap: 4px; }
 
 /* theme switch */

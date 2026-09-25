@@ -85,6 +85,7 @@ try {
     await page.waitForFunction(() => { const image = document.querySelector<HTMLImageElement>(".writing-image-preview img"); return !!image?.complete && image.naturalWidth > 0; });
     await showFiles(); await page.getByRole("button", { name: "New folder", exact: true }).click();
     await page.getByRole("textbox", { name: "Relative file path", exact: true }).fill("drafts"); await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click(); await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page.getByLabel("More writing actions", { exact: true }).click();
     await page.getByRole("button", { name: "New TeX or BibTeX file", exact: true }).click();
     await page.getByRole("textbox", { name: "Relative file path", exact: true }).fill("drafts/result.tex"); await page.getByRole("dialog").getByRole("button", { name: "Save", exact: true }).click(); await page.getByRole("dialog").waitFor({ state: "hidden" });
     await editor.fill("Saved chapter with history."); await until(current, (doc) => doc.files.some((file) => file.path === "drafts/result.tex" && file.content.includes("history")));
@@ -97,10 +98,11 @@ try {
     await showFiles(); await page.getByRole("combobox", { name: "Main TeX file", exact: true }).selectOption("chapters/result.tex"); await until(current, (doc) => doc.entryFile === "chapters/result.tex");
     await page.getByRole("combobox", { name: "Main TeX file", exact: true }).selectOption("main.tex"); await until(current, (doc) => doc.entryFile === "main.tex");
     await select("main.tex");
+    await page.getByRole("button", { name: "Split source and PDF", exact: true }).click();
     await page.getByRole("button", { name: "Compile", exact: true }).click(); await page.getByText("Build succeeded", { exact: true }).waitFor({ timeout: 120_000 });
     await page.locator(".writing-preview canvas").first().waitFor();
     await page.screenshot({ path: path.join(output, `editor-${width}.png`) });
-    const download = page.waitForEvent("download"); await page.getByRole("button", { name: "Export TeX sources", exact: true }).click();
+    const download = page.waitForEvent("download"); await page.getByLabel("More writing actions", { exact: true }).click(); await page.getByRole("button", { name: "Export TeX sources", exact: true }).click();
     const downloaded = await (await download).path(); assert.ok(downloaded);
     const files = unzipSync(fs.readFileSync(downloaded)); assert.deepEqual(Buffer.from(files["figures/plot.png"]!), png); assert.ok(files["chapters/result.tex"]); assert.ok(files["custom.sty"]);
     assert.equal(await page.locator(".writing-workspace").evaluate((node) => node.scrollWidth > node.clientWidth + 1), false);
