@@ -14,14 +14,14 @@ const Checkpoint = z.object({
   scope: ReviewEvidenceScopeSchema,
   stages: z.array(z.object({
     runId: z.string().regex(/^run_[A-Za-z0-9_-]+$/), request: StageRequest,
-    state: z.enum(["pending", "dispatched", "completed", "blocked"]), message: z.string().nullable()
+    state: z.enum(["pending", "dispatched", "awaiting_review", "completed", "blocked"]), message: z.string().nullable()
   })).min(1).max(500)
 });
 
 /** Single-backend, synchronous checkpoint coordinator; execution stays in WorkflowEngine. */
 export class ReviewStages {
   constructor(private repo: LitAgentRepository, private index: SearchIndex,
-    private workflows: Pick<WorkflowEngine, "startWorkflow" | "readRun" | "hasActiveRun">) {}
+    private workflows: Pick<WorkflowEngine, "startWorkflow" | "readRun" | "hasActiveRun" | "listComparisonArtifacts" | "listSynthesisArtifacts">) {}
 
   create(scope: ReviewEvidenceScope, requests: unknown[]) {
     const evidence = new ReviewEvidence(this.repo, this.index, scope);
@@ -44,6 +44,30 @@ export class ReviewStages {
     return Checkpoint.parse(JSON.parse(fs.readFileSync(this.repo.resolve(`workflows/reviews/${id}.json`), "utf8")));
   }
 
+  artifacts(id: string, runId: string) {
+    const checkpoint = this.read(id);
+    const stage = checkpoint.stages.find((candidate) => candidate.runId === runId);
+    if (!stage) throw new Error("Workflow is not part of this review.");
+    const evidence = new ReviewEvidence(this.repo, this.index, checkpoint.scope);
+    const projectId = checkpoint.scope.projectId;
+    const papers = stage.request.paperIds;
+    const records = stage.request.type === "metadata-extraction"
+      ? papers.flatMap((paperId) => this.repo.listMetadataProposals(paperId).map((p) => ({ ...p, evidence: p.fields.flatMap((field) => field.evidence) })))
+      : stage.request.type === "relevance-tagging"
+        ? projectId ? this.repo.listRelevanceProposals(projectId) : []
+        : stage.request.type === "key-findings"
+          ? papers.flatMap((paperId) => this.repo.listResearchFindingProposals(paperId, { projectId }).map((p) => ({ ...p, evidence: p.items.flatMap((item) => item.evidence) })))
+          : stage.request.type === "compare-papers"
+            ? this.workflows.listComparisonArtifacts(projectId).map((p) => ({ ...p, evidence: p.rows.flatMap((row) => row.cells.flatMap((cell) => cell.evidence)) }))
+            : projectId ? this.workflows.listSynthesisArtifacts(projectId).map((p) => ({ ...p, evidence: p.sections.flatMap((section) => section.claims.flatMap((claim) => claim.evidence)) })) : [];
+    return records.filter((record) => record.runId === runId).map((record) => ({
+      id: record.id, runId, kind: stage.request.type, decision: record.status,
+      // Existing approval is retained, never presented as automatic proof of support.
+      support: "not_assessed" as const,
+      evidence: record.evidence.map((ref) => evidence.passage({ paperId: ref.paperId, passageId: ref.passageId, quote: ref.quote }))
+    }));
+  }
+
   advance(id: string) {
     const checkpoint = this.read(id);
     new ReviewEvidence(this.repo, this.index, checkpoint.scope).assertCurrent();
@@ -55,7 +79,18 @@ export class ReviewStages {
         if (run.id !== stage.runId || run.type !== stage.request.type || run.providerId !== stage.request.providerId || run.model !== stage.request.model || run.projectId !== stage.request.projectId || JSON.stringify(run.scope.paperIds) !== JSON.stringify(stage.request.paperIds)) {
           throw new Error("Persisted workflow does not match the reserved review stage.");
         }
-        if (run.status === "completed") { stage.state = "completed"; stage.message = null; this.write(checkpoint); continue; }
+        if (run.status === "completed") {
+          const artifacts = this.artifacts(id, run.id);
+          if (!artifacts.length) {
+            stage.state = "blocked"; stage.message = "Completed workflow has no proposal record; reconcile its output before advancing.";
+            this.write(checkpoint); return checkpoint;
+          }
+          if (artifacts.some((artifact) => artifact.decision === "pending" || artifact.decision === "draft")) {
+            stage.state = "awaiting_review"; stage.message = "Accept or reject the existing proposals before advancing.";
+            this.write(checkpoint); return checkpoint;
+          }
+          stage.state = "completed"; stage.message = null; this.write(checkpoint); continue;
+        }
         stage.state = this.workflows.hasActiveRun(run.id) ? "dispatched" : "blocked";
         stage.message = stage.state === "blocked" ? "Existing workflow needs reconciliation; it will not be replayed automatically." : null;
         this.write(checkpoint); return checkpoint;
