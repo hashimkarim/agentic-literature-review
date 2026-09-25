@@ -2323,9 +2323,17 @@ export class WorkflowEngine {
     });
   }
 
-  startWorkflow(input: WorkflowStartRequest): WorkflowRun {
+  hasActiveRun(runId: string): boolean {
+    return this.harness.listSessions().some((session) => session.runId === runId);
+  }
+
+  startWorkflow(input: WorkflowStartRequest, reservedRunId?: string): WorkflowRun {
     const parsed = WorkflowStartRequestSchema.parse(input);
-    const runId = createId("run");
+    if (parsed.options.tools || parsed.options.requiredTools) throw new Error("Tool-enabled workflows require a qualified application tool bridge; no request was dispatched.");
+    if (parsed.providerId !== "local-heuristic" && !this.isProviderBackedRun(parsed.providerId)) throw new Error("Selected provider is unavailable; no fallback was selected.");
+    const runId = reservedRunId ?? createId("run");
+    if (!/^run_[A-Za-z0-9_-]+$/.test(runId)) throw new Error("Invalid reserved workflow ID.");
+    if (fs.existsSync(this.repo.resolve(`workflows/${runId}.run.json`))) throw new Error("Workflow ID already dispatched; reconcile its existing result instead of replaying.");
     const eventsPath = `workflows/${runId}.jsonl`;
     const absoluteEventsPath = this.repo.resolve(eventsPath);
     const timestamp = nowIso();
