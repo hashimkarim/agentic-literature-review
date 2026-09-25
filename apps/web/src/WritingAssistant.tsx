@@ -4,17 +4,18 @@ import type { AgentProvider, CreateWritingCandidates, ManuscriptFile, WritingAct
 import { api } from "./api";
 import { WritingSources } from "./WritingSources";
 import type { WritingSelection } from "./WritingCandidates";
+import type { WritingView } from "./writing-view";
 
 const actions: Array<[WritingAction, string]> = [["draft", "Draft text"], ["outline", "Build an outline"], ["storyline", "Develop a storyline"], ["rewrite", "Rewrite"], ["expand", "Expand"], ["shorten", "Shorten"], ["simplify", "Simplify"], ["formalize", "Academic tone"], ["grammar", "Grammar and spelling"], ["citations", "Find supporting citations"], ["review", "Review argument and claims"]];
 const audiences = ["Layperson", "Undergraduate", "Graduate", "Doctoral"];
 const startsAtCursor = new Set<WritingAction>(["draft", "outline", "storyline", "review"]);
 type Prepared = { request: CreateWritingCandidates; context: WritingContext; selection: WritingSelection };
 
-export function WritingAssistant({ manuscriptId, file, selection, providers, visible, disabled, capture, onClose, onCreated, drafts }: {
+export function WritingAssistant({ manuscriptId, file, selection, providers, visible, disabled, tab, setTab, capture, onClose, onCreated, drafts }: {
   manuscriptId: string; file: ManuscriptFile | undefined; selection: { from: number; to: number }; providers: AgentProvider[]; visible: boolean; disabled: boolean;
+  tab: WritingView["assistantTab"]; setTab: (tab: WritingView["assistantTab"]) => void;
   capture: () => Promise<WritingSelection>; onClose: () => void; onCreated: (batch: WritingCandidateBatch) => void; drafts: ReactNode;
 }) {
-  const [tab, setTab] = useState<"compose" | "sources" | "drafts">("compose");
   const [action, setAction] = useState<WritingAction>("draft");
   const [instruction, setInstruction] = useState("");
   const [audience, setAudience] = useState(2);

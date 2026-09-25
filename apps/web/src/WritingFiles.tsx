@@ -4,15 +4,16 @@ import { PdfReader } from "@litagent/pdf";
 import type { ManuscriptDocument } from "@litagent/contracts";
 import { api } from "./api";
 
-export function WritingFileTree({ files, folders, selected, mainFile, disabled, onSelect }: {
+export function WritingFileTree({ files, folders, selected, mainFile, disabled, collapsedFolders, onCollapsedFoldersChange, onSelect }: {
   files: { path: string; asset?: boolean; dirty?: boolean }[]; folders: string[]; selected: string; mainFile: string; disabled: boolean;
+  collapsedFolders: string[]; onCollapsedFoldersChange: (paths: string[]) => void;
   onSelect: (path: string, folder: boolean) => void;
 }) {
-  const [collapsed, setCollapsed] = useState(new Set<string>());
+  const collapsed = new Set(collapsedFolders);
   const directories = new Set(folders);
   for (const file of files) { const parts = file.path.split("/"); while (parts.length > 1) { parts.pop(); directories.add(parts.join("/")); } }
   const nodes = [...directories].map((path) => ({ path, folder: true, asset: false, dirty: false })).concat(files.map((file) => ({ path: file.path, folder: false, asset: !!file.asset, dirty: !!file.dirty })));
-  const toggle = (path: string) => setCollapsed((current) => { const next = new Set(current); if (!next.delete(path)) next.add(path); return next; });
+  const toggle = (path: string) => { const next = new Set(collapsed); if (!next.delete(path)) next.add(path); onCollapsedFoldersChange([...next]); };
   function children(parent: string, level: number): ReactNode {
     return nodes.filter((node) => node.path.split("/").slice(0, -1).join("/") === parent).sort((a, b) => Number(b.folder) - Number(a.folder) || a.path.localeCompare(b.path)).map((node) => {
       const expanded = !collapsed.has(node.path);

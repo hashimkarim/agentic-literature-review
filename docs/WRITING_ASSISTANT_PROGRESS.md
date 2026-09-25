@@ -12,6 +12,13 @@ of this work. All generated text remains a draft until explicitly accepted.
    multiple candidates, claim/source validation, recoverable acceptance/history.
 3. Implemented: persistent assistant sidebar, source selection, evidence inspection,
    bibliography actions, audience/style settings and responsive interaction tests.
+4. Implemented (2026-09-25): versioned browser view preferences per document.
+   Source/PDF layout, active file, open tabs, collapsed folders, assistant tab,
+   right-panel choice and build-output visibility survive refresh/reopening.
+   Missing paths are reconciled against the current tree. Draft recovery stays
+   separate; temporary comparisons and compilation no longer overwrite layout.
+   Typecheck and 201 tests pass; native preview verified split layout, two file
+   tabs, collapsed folders and Sources after reloading the imported thesis.
 
 Backend validation: typecheck and 196 tests pass, including literal quote/ID checks,
 separate semantic review, unsupported-result rejection, explicit bibliography

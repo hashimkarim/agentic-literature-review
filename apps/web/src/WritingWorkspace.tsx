@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode, type SetStateAction } from "react";
 import { FileCode2, FilePlus2, Plus, Save, History, Download, Trash2, Undo2, Redo2, Search, X, RotateCcw, BookmarkPlus, RefreshCw, ChevronLeft, Check, AlertTriangle, Sparkles, ListChecks, Link2, FolderKanban, Play, Square, Columns2, FileText, Terminal, Upload, FolderPlus, FolderTree, Pencil } from "lucide-react";
 import { undo, redo } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
@@ -12,6 +12,8 @@ import { useWritingBuild, WritingPreview, WritingBuildLog } from "./WritingBuild
 import { WritingImport } from "./WritingImport";
 import { WritingFileTree, WritingFileTabs, WritingAsset } from "./WritingFiles";
 import { WritingAssistant } from "./WritingAssistant";
+import { useBrowserPreference } from "./browser-preferences";
+import { defaultWritingView, parseWritingView, reconcileWritingView, writingViewKey, type WritingView } from "./writing-view";
 import "./writing.css";
 
 function Tool({ label, children, ...props }: { label: string; children: ReactNode } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -154,9 +156,16 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     return new WritingSession(document, (input) => api.writeManuscriptFile(id, input), storage, clientId);
   });
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
-  const [active, setActive] = useState(document.files.some((file) => file.path === document.entryFile) ? document.entryFile : document.files[0]?.path ?? "");
-  const [selected, setSelected] = useState(document.entryFile);
-  const [openFiles, setOpenFiles] = useState([document.entryFile]);
+  const [view, setView] = useBrowserPreference(writingViewKey(id), defaultWritingView(document, window.innerWidth > 1100), (value) => parseWritingView(value, document, window.innerWidth > 1100));
+  function preference<K extends keyof WritingView>(key: K, value: SetStateAction<WritingView[K]>) {
+    setView((previous) => ({ ...previous, [key]: typeof value === "function" ? (value as (current: WritingView[K]) => WritingView[K])(previous[key]) : value }));
+  }
+  const { active, selected, openFiles, buildLogOpen } = view;
+  const setActive = (value: string) => preference("active", value);
+  const setSelected = (value: string) => preference("selected", value);
+  const setOpenFiles = (value: SetStateAction<string[]>) => preference("openFiles", value);
+  const setBuildLogOpen = (value: SetStateAction<boolean>) => preference("buildLogOpen", value);
+  const setViewMode = (value: WritingView["mode"]) => preference("mode", value);
   const [filesOpen, setFilesOpen] = useState(false);
   const upload = useRef<HTMLInputElement>(null);
   const file = state.files[active];
@@ -169,13 +178,17 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState({ from: 0, to: 0 });
   const [generating, setGenerating] = useState<WritingSelection | null>(null);
-  const [candidatesOpen, setCandidatesOpen] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(() => window.innerWidth > 1100);
+  const candidatesOpen = view.panel === "candidates", assistantOpen = view.panel === "assistant", historyOpen = view.panel === "history";
+  function setPanelOpen(panel: WritingView["panel"], value: SetStateAction<boolean>) {
+    preference("panel", (current) => (typeof value === "function" ? value(current === panel) : value) ? panel : current === panel ? "none" : current);
+  }
+  const setCandidatesOpen = (value: SetStateAction<boolean>) => setPanelOpen("candidates", value);
+  const setAssistantOpen = (value: SetStateAction<boolean>) => setPanelOpen("assistant", value);
   const [initialBatchId, setInitialBatchId] = useState<string | null>(null);
   const [candidateReview, setCandidateReview] = useState<{ before: string; after: string; label: string } | null>(null);
   const build = useWritingBuild(id);
-  const [viewMode, setViewMode] = useState<"source" | "split" | "preview">("source");
-  const [buildLogOpen, setBuildLogOpen] = useState(false);
+  // A temporary comparison must not overwrite the user's preferred editor layout.
+  const viewMode = candidateReview || historical || remote ? "source" : view.mode;
   const [jump, setJump] = useState<{ path: string; line: number } | null>(null);
   const historyRequest = useRef(0);
   const editor = useRef<EditorView | null>(null);
@@ -186,7 +199,13 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     view.dispatch({ selection: { anchor: line.from, head: line.to }, effects: EditorView.scrollIntoView(line.from, { y: "center" }) });
     view.focus(); setJump(null);
   }, [active, jump]);
-  useEffect(() => { if (build.state?.latest?.status === "failed") setBuildLogOpen(true); }, [build.state?.latest?.id, build.state?.latest?.status]);
+  const observedBuild = useRef<string | null>(null);
+  useEffect(() => {
+    const latest = build.state?.latest;
+    if (!latest) return;
+    if (observedBuild.current === `${latest.id}:running` && latest.status === "failed") setBuildLogOpen(true);
+    observedBuild.current = `${latest.id}:${latest.status}`;
+  }, [build.state?.latest?.id, build.state?.latest?.status]);
   useEffect(() => () => { session.dispose(); }, [session]);
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => { if (Object.values(session.getSnapshot().files).some((file) => file.state !== "saved")) { event.preventDefault(); event.returnValue = ""; } };
@@ -194,21 +213,23 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [session]);
   useEffect(() => { historyRequest.current++; setHistory(null); setHistorical(null); setRemote(null); setError(null); setCandidateReview(null); setInitialBatchId(null); }, [active]);
+  useEffect(() => {
+    if (!historyOpen || !file) return;
+    void loadHistory().catch((error) => setError(error instanceof Error ? error.message : "Could not load history."));
+    return () => { historyRequest.current++; };
+  }, [active, historyOpen]);
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(null); try { await action(); } catch (error) { setError(error instanceof Error ? error.message : "Operation failed."); } finally { setBusy(false); } };
   const requireSaved = async () => { if (!await session.flush()) throw new Error("Save or resolve pending file changes first."); };
   const folderPath = tree.folders?.includes(selected) ? selected : selected.split("/").slice(0, -1).join("/");
   function selectFile(path: string) {
     setActive(path); setSelected(path); setFilesOpen(false);
     setOpenFiles((files) => files.includes(path) ? files : [...files, path]);
-    if (viewMode === "preview") setViewMode("source");
   }
   function acceptTree(next: ManuscriptDocument) {
-    const names = [...next.files, ...(next.assets ?? [])].map((file) => file.path);
     for (const name of Object.keys(session.getSnapshot().files)) if (!next.files.some((file) => file.path === name)) session.remove(name);
     for (const file of next.files) session.acceptRemote(file);
     setTree(next);
-    setOpenFiles((files) => { const kept = files.filter((name) => names.includes(name)); return kept.length ? kept : [next.entryFile]; });
-    if (!names.includes(active)) selectFile(next.entryFile);
+    setView((current) => reconcileWritingView(current, next));
   }
   async function savedTree() {
     await requireSaved();
@@ -220,8 +241,10 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
   }
   async function loadHistory() {
     const request = ++historyRequest.current;
-    const items = await api.manuscriptHistory(id, active);
-    if (request === historyRequest.current) { setHistory(items); setHistorical(null); }
+    try {
+      const items = await api.manuscriptHistory(id, active);
+      if (request === historyRequest.current) { setHistory(items); setHistorical(null); }
+    } catch (error) { if (request === historyRequest.current) throw error; }
   }
   async function exportSources() {
     await requireSaved();
@@ -237,7 +260,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     if (!diagnostic.path || !diagnostic.line) return;
     const current = session.getSnapshot().files[diagnostic.path];
     if (!current || current.state !== "saved" || current.revision !== source.revisions[diagnostic.path]) { setError("This error refers to an earlier source revision. Compile your current draft for an accurate location."); return; }
-    setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); setViewMode(window.innerWidth > 1100 ? "split" : "source");
+    setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); if (view.mode === "preview") setViewMode("split");
     selectFile(diagnostic.path); setJump({ path: diagnostic.path, line: diagnostic.line });
   }
   const canGenerate = viewMode !== "preview" && !!file && active.endsWith(".tex") && selection.to > selection.from && selection.to - selection.from <= 8000 && !compare && !candidateReview;
@@ -245,7 +268,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     bibliographyPaths={Object.keys(state.files).filter((name) => /\.bib$/i.test(name))}
     onClose={() => { setCandidatesOpen(false); setAssistantOpen(false); setCandidateReview(null); }}
     onClearComparison={() => setCandidateReview(null)}
-    onCompare={(batch, candidateId) => { const index = batch.candidates.findIndex((candidate) => candidate.id === candidateId); const item = batch.candidates[index]; if (item?.text !== null && item?.text !== undefined) { setViewMode("source"); setHistorical(null); setRemote(null); setCandidateReview({ before: batch.selectedText, after: item.text, label: `Candidate ${index + 1} / ${item.model}` }); } }}
+    onCompare={(batch, candidateId) => { const index = batch.candidates.findIndex((candidate) => candidate.id === candidateId); const item = batch.candidates[index]; if (item?.text !== null && item?.text !== undefined) { setHistorical(null); setRemote(null); setCandidateReview({ before: batch.selectedText, after: item.text, label: `Candidate ${index + 1} / ${item.model}` }); } }}
     onAccept={async (batch, candidateId) => {
       setBusy(true);
       try {
@@ -287,14 +310,13 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
         setAssistantOpen(false);
         setGenerating({ file: { path: current.path, content: current.content, revision: current.revision }, from: range.from, to: range.to });
       })}><Sparkles size={16} /></Tool>
-      <Tool label="Saved alternatives" disabled={busy || !file} aria-pressed={candidatesOpen} onClick={() => { setViewMode("source"); setAssistantOpen(false); setCandidatesOpen((open) => !open); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); }}><ListChecks size={16} /></Tool>
-      <Tool label="File history" disabled={busy || !file} aria-pressed={history !== null} onClick={() => { setViewMode("source"); setAssistantOpen(false); setCandidatesOpen(false); setCandidateReview(null); if (history) { setHistory(null); setHistorical(null); } else void run(loadHistory); }}><History size={16} /></Tool>
+      <Tool label="Saved alternatives" disabled={busy || !file} aria-pressed={candidatesOpen} onClick={() => { setCandidatesOpen((open) => !open); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); }}><ListChecks size={16} /></Tool>
+      <Tool label="File history" disabled={busy || !file} aria-pressed={historyOpen} onClick={() => { setPanelOpen("history", !historyOpen); setCandidateReview(null); setHistorical(null); setRemote(null); }}><History size={16} /></Tool>
       <Tool label="Export TeX sources" disabled={busy} onClick={() => void run(exportSources)}><Download size={16} /></Tool>
       <button type="button" className="writing-assistant-toggle" aria-pressed={assistantOpen} onClick={() => { setAssistantOpen((open) => !open); setFilesOpen(false); setCandidatesOpen(false); setHistory(null); setHistorical(null); setRemote(null); }}><Sparkles size={16} />AI assistant</button>
     </div>
     <div className="writing-build-toolbar">
       {compiling ? <button type="button" disabled={build.pending} onClick={() => void build.cancel()}><Square size={14} />Cancel build</button> : <button type="button" className="writing-primary" disabled={busy || build.pending || !build.state?.runtime.available} onClick={() => {
-        setViewMode(window.innerWidth > 1100 ? "split" : "preview");
         void build.compile(async () => { const latest = await savedTree(); return Object.fromEntries([...latest.files, ...(latest.assets ?? [])].map((item) => [item.path, item.revision])); }, tree.entryFile);
       }}><Play size={14} />{build.pending ? "Saving..." : "Compile"}</button>}
       <span className="writing-build-status" role="status">{compiling ? build.state?.latest?.phase ?? "Compiling..." : build.state?.latest ? ({ succeeded: "Build succeeded", failed: "Build failed", cancelled: "Build cancelled", interrupted: "Build interrupted", running: "Compiling..." })[build.state.latest.status] : build.state?.runtime.available ? "Ready to compile" : build.state ? "Compiler unavailable" : "Checking compiler..."}</span>
@@ -313,7 +335,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       {file.state !== "conflict" && <button type="button" disabled={busy} onClick={() => void session.save(active)}><Save size={14} />{file.state === "error" ? "Retry save" : "Save recovered draft"}</button>}
       <button type="button" disabled={busy} onClick={() => void run(async () => { const saved = (await api.manuscript(id)).files.find((item) => item.path === active); if (!saved) throw new Error("The saved file was deleted. Export your text before recreating it."); setHistorical(null); setRemote(saved); })}><History size={14} />Compare saved version</button>
     </div>}
-    <div className={`writing-body${history !== null ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}${assistantOpen ? " has-assistant" : ""}${filesOpen ? " files-open" : ""}`}>
+    <div className={`writing-body${historyOpen ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}${assistantOpen ? " has-assistant" : ""}${filesOpen ? " files-open" : ""}`}>
       <aside className="writing-files" aria-label="Manuscript files">
         <header><button type="button" className="writing-files-root" aria-pressed={selected === ""} onClick={() => setSelected("")} title="Document root">Files</button>
           <Tool label="New folder" disabled={busy || build.pending} onClick={() => setDialog("folder")}><FolderPlus size={15} /></Tool>
@@ -321,7 +343,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
           <Tool label="Reload files" disabled={busy || build.pending} onClick={() => void run(async () => { await requireSaved(); acceptTree(await api.manuscript(id)); })}><RefreshCw size={15} /></Tool>
         </header>
         <label className="writing-entry-selector">Main file<select aria-label="Main TeX file" value={tree.entryFile} disabled={busy || build.pending || compiling} onChange={(event) => { const path = event.target.value; void run(async () => { const latest = await savedTree(); acceptTree(await api.changeManuscriptTree(id, { action: "entry", path, expectedRevision: latest.treeRevision! })); }); }}>{Object.keys(state.files).filter((name) => /\.tex$/i.test(name)).map((name) => <option key={name}>{name}</option>)}</select></label>
-        <nav><WritingFileTree files={[...Object.values(state.files).map((file) => ({ path: file.path, dirty: file.state !== "saved" })), ...(tree.assets ?? []).map((file) => ({ path: file.path, asset: true }))]} folders={tree.folders ?? []} selected={selected} mainFile={tree.entryFile} disabled={busy} onSelect={(path, folder) => { setSelected(path); if (!folder) selectFile(path); }} /></nav>
+        <nav><WritingFileTree files={[...Object.values(state.files).map((file) => ({ path: file.path, dirty: file.state !== "saved" })), ...(tree.assets ?? []).map((file) => ({ path: file.path, asset: true }))]} folders={tree.folders ?? []} collapsedFolders={view.collapsedFolders} onCollapsedFoldersChange={(paths) => preference("collapsedFolders", paths)} selected={selected} mainFile={tree.entryFile} disabled={busy} onSelect={(path, folder) => { setSelected(path); if (!folder) selectFile(path); }} /></nav>
         <footer><span>{Object.keys(state.files).length + (tree.assets?.length ?? 0)} files</span>
           <Tool label="Rename or move selected item" disabled={busy || build.pending || !selected} onClick={() => setDialog("move")}><Pencil size={15} /></Tool>
           <Tool label="Delete selected file or folder" disabled={busy || build.pending || !selected || tree.entryFile === selected || tree.entryFile.startsWith(`${selected}/`)} onClick={() => { if (window.confirm(`Delete ${selected}${tree.folders?.includes(selected) ? " and its contents" : ""}?`)) void run(async () => { const latest = await savedTree(); acceptTree(await api.changeManuscriptTree(id, { action: "delete", path: selected, expectedRevision: latest.treeRevision! })); setSelected(""); }); }}><Trash2 size={15} /></Tool>
@@ -338,13 +360,15 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       </main>
       {viewMode !== "source" && <WritingPreview manuscriptId={id} state={build.state} stale={previewStale} onRefresh={() => void build.refresh()} />}
       </div>
-      {history !== null && <aside className="writing-history" aria-label="File history">
+      {historyOpen && <aside className="writing-history" aria-label="File history">
         <header><h2>History</h2><Tool label="Named checkpoint" disabled={busy} onClick={() => setDialog("checkpoint")}><BookmarkPlus size={16} /></Tool><Tool label="Refresh history" disabled={busy} onClick={() => void run(loadHistory)}><RefreshCw size={15} /></Tool></header>
         <div className="writing-history-path">{active}</div>
-        <ol>{history.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={historical?.entry.id === entry.id ? "active" : ""} onClick={() => void run(async () => { const request = ++historyRequest.current; const saved = await api.manuscriptVersion(id, active, entry.id); if (request === historyRequest.current) { setHistorical({ entry, file: saved }); setRemote(null); } })}><span>{entry.label ?? ({ created: "Initial version", saved: "Autosave", external: "External edit", restored: "Restored version", checkpoint: "Checkpoint", deleted: "Before deletion", candidate: "Accepted candidate" })[entry.reason]}</span><time dateTime={entry.savedAt}>{new Date(entry.savedAt).toLocaleString()}</time><code>{entry.revision.slice(0, 8)}</code></button></li>)}</ol>
+        {!history && <p className="writing-no-drafts">{file ? "Loading history..." : "Open a text file to view its history."}</p>}
+        <ol>{history?.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={historical?.entry.id === entry.id ? "active" : ""} onClick={() => void run(async () => { const request = ++historyRequest.current; const saved = await api.manuscriptVersion(id, active, entry.id); if (request === historyRequest.current) { setHistorical({ entry, file: saved }); setRemote(null); } })}><span>{entry.label ?? ({ created: "Initial version", saved: "Autosave", external: "External edit", restored: "Restored version", checkpoint: "Checkpoint", deleted: "Before deletion", candidate: "Accepted candidate" })[entry.reason]}</span><time dateTime={entry.savedAt}>{new Date(entry.savedAt).toLocaleString()}</time><code>{entry.revision.slice(0, 8)}</code></button></li>)}</ol>
       </aside>}
       {candidatesOpen && candidatePanel}
       <WritingAssistant manuscriptId={id} file={file} selection={selection} providers={providers} visible={assistantOpen} disabled={busy || !!compare || !!candidateReview || viewMode === "preview"}
+        tab={view.assistantTab} setTab={(tab) => preference("assistantTab", tab)}
         capture={async () => {
           const range = editor.current?.state.selection.main;
           if (!range || !file) throw new Error("Return to the TeX editor before generating.");
@@ -370,7 +394,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       else {
         const next = await api.changeManuscriptTree(id, { action: "move", path: selected, destination: value, expectedRevision: latest.treeRevision! });
         const renamed = (name: string) => name === selected || name.startsWith(`${selected}/`) ? value + name.slice(selected.length) : name;
-        acceptTree(next); setOpenFiles(openFiles.map(renamed)); setSelected(value); setActive(renamed(active)); setHistory(null); setHistorical(null); setCandidateReview(null);
+        acceptTree(next); setView((current) => reconcileWritingView({ ...current, active: renamed(active), selected: value, openFiles: openFiles.map(renamed), collapsedFolders: current.collapsedFolders.map(renamed) }, next)); setHistory(null); setHistorical(null); setCandidateReview(null);
       }
     }} />}
   </div>;
