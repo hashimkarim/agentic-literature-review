@@ -87,8 +87,14 @@ try {
     const assistant = page.getByRole("complementary", { name: "Writing assistant", exact: true });
     await assistant.getByRole("tab", { name: /^Sources/ }).click();
     await assistant.getByRole("checkbox", { name: /Synthetic evaluation study/ }).check();
-    await assistant.getByLabel("Source type", { exact: true }).selectOption("results");
-    await assistant.getByLabel("Attach source files", { exact: true }).setInputFiles({ name: "run.json", mimeType: "application/json", buffer: Buffer.from('{"run":"synthetic","score":0.68}') });
+    await assistant.getByRole("button", { name: "Attach files", exact: true }).click();
+    const sourceImport = page.getByRole("dialog", { name: "Attach evidence sources", exact: true });
+    await sourceImport.getByLabel("Source type", { exact: true }).selectOption("results");
+    await sourceImport.getByLabel("Import selected files", { exact: true }).setInputFiles({ name: "run.json", mimeType: "application/json", buffer: Buffer.from('{"run":"synthetic","score":0.68}') });
+    await sourceImport.getByRole("checkbox", { name: "Select visible files", exact: true }).check();
+    await sourceImport.getByRole("button", { name: /^Attach 1 file/ }).click();
+    await sourceImport.getByText("1 imported / 0 failed", { exact: true }).waitFor();
+    await sourceImport.getByRole("button", { name: "Done", exact: true }).click();
     await assistant.getByRole("checkbox", { name: /run.json/ }).check();
     await page.screenshot({ path: path.join(output, `sources-${width}.png`) });
     await assistant.getByRole("tab", { name: "Compose", exact: true }).click();

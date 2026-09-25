@@ -5,7 +5,18 @@
 Repository `hashimkarim/agentic-literature-review` now has dedicated runner
 **prometheus-literature-01**, GitHub runner ID **2**, verified online with
 `self-hosted`, `Linux`, `X64`, `prometheus-ci` labels before workflow activation.
-Real job results will be recorded after execution.
+First actual Actions validation passed on source `30e8cda7de478b1bc7df01ed7403d922ac6bf684`:
+[run 36172442009](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36172442009),
+job `108194989185`, runner ID `2` / `prometheus-literature-01` (API readback).
+Install, typecheck, tests and build all passed. No hosted runner was used.
+An idle restart of this app's runner exited cleanly and returned immediately to
+online/idle status, with no session reset or re-registration.
+The usability implementation also passed on source
+`8f1621070f29a1460591ac04a48c61a8328caf8a`:
+[run 36175714537](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36175714537),
+job `108205691476`, independently read back as runner ID `2` /
+`prometheus-literature-01`. Install, typecheck, 236 tests (two opt-in compiler
+checks skipped) and build passed. SDK runner results are not used as app evidence.
 
 - Stack `/var/docker/literature-review-ci`, Compose project `literature-review-ci`.
   Reproducible source: `deploy/ci-runner/`.

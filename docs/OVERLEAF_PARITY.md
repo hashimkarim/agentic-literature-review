@@ -129,5 +129,6 @@ no real paper/manuscript mutations during testing. Preserve authentication,
 registry SDK pin and research boundaries. The SDK thread cleared its live hold
 at 6f72acc4 on 2026-09-25; this writing review work does not require live calls.
 `tools:false` means no SDK application-tool bridge, not an empty native catalog
-or a general OS sandbox. Hosted CI/pushes are paused pending repository-scoped
-Prometheus runner readiness; local checks continue.
+or a general OS sandbox. Hosted CI remains disabled. The dedicated LitAgent
+Prometheus runner is now verified and task-branch pushes run Linux checks;
+see [app-specific CI evidence](PROMETHEUS_CI.md). macOS/Windows coverage is paused.
