@@ -17,8 +17,8 @@ References: [comments](https://docs.overleaf.com/collaborating/commenting),
 
 | ID | Capability | Current status and acceptance target |
 | --- | --- | --- |
-| OL-01 | Anchored comments, replies, edit/delete, resolve/reopen | Implemented for the local author: durable records/API, source/version checks, sidebar, source decorations and recoverable new-comment drafts. No simulated collaborators. [Acceptance](validation/writing-comments-2026-09-25.md). |
-| OL-02 | Review navigation/filtering | Implemented: current/all files, open/resolved/all, search, source highlights/jumps, stale-anchor reattachment and file-rename tracking. Ambiguous matches stay detached. [Acceptance](validation/writing-comments-2026-09-25.md). |
+| OL-01 | Anchored comments, replies, edit/delete, resolve/reopen | Implemented for the local author: shared TeX/PDF threads, durable records/API, source/version checks, sidebar, source decorations and recoverable new-comment drafts. PDF selections resolve to reviewable source ranges before posting. No simulated collaborators. [Source acceptance](validation/writing-comments-2026-09-25.md), [PDF acceptance](validation/writing-pdf-comments-2026-09-25.md). |
+| OL-02 | Review navigation/filtering | Implemented: current/all files, open/resolved/all, search, source/PDF comment highlights and jumps, stale-anchor reattachment and file-rename tracking. Stale builds and ambiguous source matches cannot silently retarget a comment. [Acceptance](validation/writing-pdf-comments-2026-09-25.md). |
 | OL-03 | Suggested replacements | Planned: persisted proposed text, visual diff, explicit accept/reject, revision-safe application and text history. |
 | OL-04 | Continuous tracked changes | Planned: grouped insert/delete operations, individual/bulk decisions, overlapping edits and undo. Candidate acceptance is not general track changes. |
 | OL-05 | Editing/reviewing/viewing modes | Planned editor behavior; actual role enforcement requires collaboration identity. Local UI mode is not access control. |
@@ -68,7 +68,7 @@ References: [compiling](https://docs.overleaf.com/getting-started/recompiling-yo
 | OL-24 | Compiler/runtime profiles | Basic and full TeX Live runtimes exist; expose supported choices and verify packaging on each OS. |
 | OL-25 | Bibliography/glossary/font builds | Full-runtime support exists; preserve isolation and dependency diagnostics. |
 | OL-26 | Auto-compile, fast/draft, clean rebuild | Planned debounced/coalesced jobs, safe cancellation, cache reset and resource limits. |
-| OL-27 | Source/PDF sync | Planned forward/inverse SyncTeX tied to build hashes; reject stale navigation. |
+| OL-27 | Source/PDF sync | Partial: comment-linked forward/inverse SyncTeX tied to full build revisions, including included files. Old PDFs require a fresh compile. Mapping is line/paragraph-level for complex TeX; general click-anywhere source/PDF navigation remains planned. [Acceptance](validation/writing-pdf-comments-2026-09-25.md). |
 | OL-28 | PDF navigation and workspace layouts | Viewer/zoom/split exist; fill gaps in thumbnails, outline/search, pop-out and per-document PDF preferences. |
 | OL-29 | Generated files | Logs exist; add allowlisted auxiliary downloads, warning filters and safe navigation. |
 | OL-30 | latexmkrc/custom builds/knitr | Imported scripts remain text. Execution needs reviewed sandbox profiles, resource/network policy and explicit opt-in. |
