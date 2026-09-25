@@ -2,7 +2,7 @@ import type { ManuscriptDocument } from "@litagent/contracts";
 
 export type WritingView = {
   mode: "source" | "split" | "preview";
-  panel: "none" | "assistant" | "history" | "candidates";
+  panel: "none" | "assistant" | "history" | "candidates" | "comments";
   assistantTab: "compose" | "sources" | "drafts";
   filesVisible: boolean;
   buildLogOpen: boolean;
@@ -43,7 +43,7 @@ export function parseWritingView(value: unknown, document: ManuscriptDocument, w
   const paths = (key: string, initial: string[]) => Array.isArray(stored[key]) ? stored[key].filter((item): item is string => typeof item === "string" && item.length <= 1024).slice(0, 2048) : initial;
   return reconcileWritingView({
     mode: choice("mode", ["source", "split", "preview"], fallback.mode),
-    panel: choice("panel", ["none", "assistant", "history", "candidates"], fallback.panel),
+    panel: choice("panel", ["none", "assistant", "history", "candidates", "comments"], fallback.panel),
     assistantTab: choice("assistantTab", ["compose", "sources", "drafts"], fallback.assistantTab),
     filesVisible: typeof stored.filesVisible === "boolean" ? stored.filesVisible : fallback.filesVisible,
     buildLogOpen: typeof stored.buildLogOpen === "boolean" ? stored.buildLogOpen : fallback.buildLogOpen,

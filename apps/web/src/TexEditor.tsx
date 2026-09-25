@@ -5,6 +5,7 @@ import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/
 import { tags } from "@lezer/highlight";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
+import { commentDecorations, setCommentMarks, type CommentMark } from "./comment-decorations";
 
 const theme = EditorView.theme({
   "&": { height: "100%", color: "var(--text-primary)", backgroundColor: "var(--bg-primary)", fontSize: "14px" },
@@ -27,14 +28,15 @@ const highlightStyle = HighlightStyle.define([
 ]);
 const extensions = [basicSetup, StreamLanguage.define(stex), syntaxHighlighting(highlightStyle), EditorView.lineWrapping, theme];
 
-export function TexEditor({ filePath, content, onChange, onView, onSelection, disabled }: {
+export function TexEditor({ filePath, content, onChange, onView, onSelection, disabled, comments = [], onComment }: {
   filePath: string; content: string; onChange: (content: string) => void; onView: (view: EditorView | null) => void; disabled: boolean;
   onSelection?: (range: { from: number; to: number }) => void;
+  comments?: CommentMark[]; onComment?: (id: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
-  const callbacks = useRef({ onChange, onView, onSelection });
-  callbacks.current = { onChange, onView, onSelection };
+  const callbacks = useRef({ onChange, onView, onSelection, onComment });
+  callbacks.current = { onChange, onView, onSelection, onComment };
   const states = useRef(new Map<string, EditorState>());
   const editable = useRef(new Compartment());
   const initial = useRef(content); initial.current = content;
@@ -45,6 +47,11 @@ export function TexEditor({ filePath, content, onChange, onView, onSelection, di
       parent: host.current,
       state: old?.doc.toString() === initial.current ? old : EditorState.create({ doc: initial.current, extensions: [
         ...extensions, EditorView.contentAttributes.of({ "aria-label": "TeX source", spellcheck: "false" }),
+        commentDecorations, EditorView.domEventHandlers({ click(event) {
+          const id = (event.target as HTMLElement).closest<HTMLElement>("[data-comment-id]")?.dataset.commentId;
+          if (id) callbacks.current.onComment?.(id);
+          return false;
+        } }),
         editable.current.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) callbacks.current.onChange(update.state.doc.toString());
@@ -62,6 +69,7 @@ export function TexEditor({ filePath, content, onChange, onView, onSelection, di
     if (editor && editor.state.doc.toString() !== content) editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: content } });
   }, [content, filePath]);
   useLayoutEffect(() => { view.current?.dispatch({ effects: editable.current.reconfigure([EditorState.readOnly.of(disabled), EditorView.editable.of(!disabled)]) }); }, [disabled, filePath]);
+  useLayoutEffect(() => { view.current?.dispatch({ effects: setCommentMarks.of(comments) }); }, [comments, filePath]);
   return <div className="writing-editor" data-file-path={filePath} ref={host} />;
 }
 

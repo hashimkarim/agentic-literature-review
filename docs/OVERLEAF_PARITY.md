@@ -17,8 +17,8 @@ References: [comments](https://docs.overleaf.com/collaborating/commenting),
 
 | ID | Capability | Current status and acceptance target |
 | --- | --- | --- |
-| OL-01 | Anchored comments, replies, edit/delete, resolve/reopen | In progress: typed durable storage/API and revision checks; UI/browser acceptance next. |
-| OL-02 | Review navigation/filtering | Implement with OL-01: current/all files, open/resolved/all, search, source highlights/jumps, stale-anchor reattachment. |
+| OL-01 | Anchored comments, replies, edit/delete, resolve/reopen | Implemented for the local author: durable records/API, source/version checks, sidebar, source decorations and recoverable new-comment drafts. No simulated collaborators. [Acceptance](validation/writing-comments-2026-09-25.md). |
+| OL-02 | Review navigation/filtering | Implemented: current/all files, open/resolved/all, search, source highlights/jumps, stale-anchor reattachment and file-rename tracking. Ambiguous matches stay detached. [Acceptance](validation/writing-comments-2026-09-25.md). |
 | OL-03 | Suggested replacements | Planned: persisted proposed text, visual diff, explicit accept/reject, revision-safe application and text history. |
 | OL-04 | Continuous tracked changes | Planned: grouped insert/delete operations, individual/bulk decisions, overlapping edits and undo. Candidate acceptance is not general track changes. |
 | OL-05 | Editing/reviewing/viewing modes | Planned editor behavior; actual role enforcement requires collaboration identity. Local UI mode is not access control. |
@@ -126,4 +126,8 @@ and branding are not features to copy.
 
 Small tested commits, real native T3 browser checks on disposable manuscripts,
 no real paper/manuscript mutations during testing. Preserve authentication,
-registry SDK pin, research boundaries and the AD-021 hold on new live Codex runs.
+registry SDK pin and research boundaries. The SDK thread cleared its live hold
+at 6f72acc4 on 2026-09-25; this writing review work does not require live calls.
+`tools:false` means no SDK application-tool bridge, not an empty native catalog
+or a general OS sandbox. Hosted CI/pushes are paused pending repository-scoped
+Prometheus runner readiness; local checks continue.

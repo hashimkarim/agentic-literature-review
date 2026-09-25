@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode, type SetStateAction } from "react";
-import { FileCode2, FilePlus2, Plus, Save, History, Download, Trash2, Undo2, Redo2, Search, X, RotateCcw, BookmarkPlus, RefreshCw, ChevronLeft, Check, AlertTriangle, Sparkles, ListChecks, Link2, FolderKanban, Play, Square, Columns2, FileText, Terminal, Upload, FolderPlus, FolderTree, Pencil, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode, type SetStateAction } from "react";
+import { FileCode2, FilePlus2, Plus, Save, History, Download, Trash2, Undo2, Redo2, Search, X, RotateCcw, BookmarkPlus, RefreshCw, ChevronLeft, Check, AlertTriangle, Sparkles, ListChecks, Link2, FolderKanban, Play, Square, Columns2, FileText, Terminal, Upload, FolderPlus, FolderTree, Pencil, PanelLeftClose, PanelLeftOpen, MessageSquare, MessageSquarePlus } from "lucide-react";
 import { undo, redo } from "@codemirror/commands";
 import { openSearchPanel } from "@codemirror/search";
 import { EditorView } from "codemirror";
-import type { AgentProvider, Manuscript, ManuscriptDocument, ManuscriptFile, ManuscriptHistoryEntry, Project, TexDiagnostic, TexBuild, WritingCandidateBatch } from "@litagent/contracts";
+import type { AgentProvider, Manuscript, ManuscriptDocument, ManuscriptFile, ManuscriptHistoryEntry, Project, TexDiagnostic, TexBuild, WritingCandidateBatch, CreateManuscriptComment, ManuscriptCommentView } from "@litagent/contracts";
 import { api, ApiError } from "./api";
 import { WritingSession } from "./writing-session";
 import { TexEditor, TextComparison } from "./TexEditor";
@@ -13,6 +13,9 @@ import { WritingImport } from "./WritingImport";
 import { WritingFileTree, WritingFileTabs, WritingAsset } from "./WritingFiles";
 import { WritingAssistant } from "./WritingAssistant";
 import { WritingActions, WritingDivider } from "./WritingLayout";
+import { WritingComments } from "./WritingComments";
+import { useWritingComments } from "./writing-comments";
+import { commentMarks } from "./comment-decorations";
 import { useBrowserPreference } from "./browser-preferences";
 import { defaultWritingView, parseWritingView, reconcileWritingView, writingViewKey, type WritingView } from "./writing-view";
 import "./writing.css";
@@ -178,7 +181,11 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState({ from: 0, to: 0 });
   const [generating, setGenerating] = useState<WritingSelection | null>(null);
-  const candidatesOpen = view.panel === "candidates", assistantOpen = view.panel === "assistant", historyOpen = view.panel === "history";
+  const candidatesOpen = view.panel === "candidates", assistantOpen = view.panel === "assistant", historyOpen = view.panel === "history", commentsOpen = view.panel === "comments";
+  const comments = useWritingComments(id, Object.values(state.files).map((file) => `${file.path}:${file.revision}`).sort().join("|"));
+  const [selectedComment, setSelectedComment] = useState<string | null>(null);
+  const [incomingComment, setIncomingComment] = useState<CreateManuscriptComment | null>(null);
+  const marks = useMemo(() => commentMarks(comments.threads, file, selectedComment, file?.state === "saved"), [comments.threads, file, selectedComment]);
   function setPanelOpen(panel: WritingView["panel"], value: SetStateAction<boolean>) {
     preference("panel", (current) => (typeof value === "function" ? value(current === panel) : value) ? panel : current === panel ? "none" : current);
   }
@@ -189,14 +196,15 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
   const build = useWritingBuild(id);
   // A temporary comparison must not overwrite the user's preferred editor layout.
   const viewMode = candidateReview || historical || remote ? "source" : view.mode;
-  const [jump, setJump] = useState<{ path: string; line: number } | null>(null);
+  const [jump, setJump] = useState<{ path: string; line: number } | { path: string; from: number; to: number; revision: string } | null>(null);
   const historyRequest = useRef(0);
   const editor = useRef<EditorView | null>(null);
   useEffect(() => {
     if (!jump || active !== jump.path || !editor.current) return;
     const view = editor.current;
-    const line = view.state.doc.line(Math.min(jump.line, view.state.doc.lines));
-    view.dispatch({ selection: { anchor: line.from, head: line.to }, effects: EditorView.scrollIntoView(line.from, { y: "center" }) });
+    if ("revision" in jump && (file?.state !== "saved" || file.revision !== jump.revision)) { setError("Comment location changed. Save the file and refresh comments."); setJump(null); return; }
+    const range = "line" in jump ? view.state.doc.line(Math.min(jump.line, view.state.doc.lines)) : jump;
+    view.dispatch({ selection: { anchor: range.from, head: range.to }, effects: EditorView.scrollIntoView(range.from, { y: "center" }) });
     view.focus(); setJump(null);
   }, [active, jump]);
   const observedBuild = useRef<string | null>(null);
@@ -265,6 +273,32 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
     selectFile(diagnostic.path); setJump({ path: diagnostic.path, line: diagnostic.line });
   }
   const canGenerate = viewMode !== "preview" && !!file && active.endsWith(".tex") && selection.to > selection.from && selection.to - selection.from <= 8000 && !compare && !candidateReview;
+  const canComment = viewMode !== "preview" && !!file && selection.to > selection.from && selection.to - selection.from <= 8000 && !compare && !candidateReview;
+  async function captureComment(): Promise<CreateManuscriptComment["selection"]> {
+    const currentEditor = editor.current;
+    const range = currentEditor?.state.selection.main;
+    if (!currentEditor || !range || range.empty || range.to - range.from > 8000) throw new Error("Select up to 8,000 characters in the source editor.");
+    const path = active, quote = currentEditor.state.sliceDoc(range.from, range.to);
+    setBusy(true);
+    try {
+      await requireSaved();
+      const current = session.getSnapshot().files[path];
+      if (!current || current.content.slice(range.from, range.to) !== quote) throw new Error("Selection changed. Select the text again.");
+      return { path, revision: current.revision, from: range.from, to: range.to, quote };
+    } finally { setBusy(false); }
+  }
+  function jumpToComment(thread: ManuscriptCommentView) {
+    const location = thread.location;
+    if (!location || location.from === null || location.to === null || !location.revision) return;
+    const current = session.getSnapshot().files[location.path];
+    if (!current || current.state !== "saved" || current.revision !== location.revision || current.content.slice(location.from, location.to) !== thread.anchor?.quote) {
+      setError("Comment location changed. Save the file and refresh comments."); return;
+    }
+    setHistorical(null); setRemote(null); setCandidateReview(null); setSelectedComment(thread.id);
+    if (view.mode === "preview") setViewMode("split");
+    selectFile(location.path); setJump({ path: location.path, from: location.from, to: location.to, revision: location.revision });
+    if (window.matchMedia("(max-width: 1100px)").matches) preference("panel", "none");
+  }
   const candidatePanel = file ? <WritingCandidatesPanel key={active} manuscriptId={id} file={file} initialBatchId={initialBatchId} busy={busy}
     bibliographyPaths={Object.keys(state.files).filter((name) => /\.bib$/i.test(name))}
     onClose={() => { setCandidatesOpen(false); setAssistantOpen(false); setCandidateReview(null); }}
@@ -312,6 +346,8 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       <Tool label="Save file" disabled={busy || !file || file.state === "saved" || file.state === "saving" || file.state === "conflict"} onClick={() => void session.save(active)}><Save size={16} /></Tool>
       </div>
       <span className="writing-spacer" />
+      <Tool label="Add comment" disabled={busy || !canComment} onClick={() => void run(async () => { const selection = await captureComment(); setIncomingComment({ requestId: crypto.randomUUID(), selection, body: "" }); preference("panel", "comments"); setFilesOpen(false); })}><MessageSquarePlus size={16} /></Tool>
+      <Tool label="Document comments" aria-pressed={commentsOpen} onClick={() => { setPanelOpen("comments", !commentsOpen); setFilesOpen(false); }}><MessageSquare size={16} /></Tool>
       <Tool label="File history" disabled={busy || !file} aria-pressed={historyOpen} onClick={() => { setPanelOpen("history", !historyOpen); setCandidateReview(null); setHistorical(null); setRemote(null); }}><History size={16} /></Tool>
       <WritingActions>
       <Tool label="New TeX or BibTeX file" disabled={busy} onClick={() => setDialog("file")}><FilePlus2 size={16} /><span>New source file</span></Tool>
@@ -335,7 +371,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       {file.state !== "conflict" && <button type="button" disabled={busy} onClick={() => void session.save(active)}><Save size={14} />{file.state === "error" ? "Retry save" : "Save recovered draft"}</button>}
       <button type="button" disabled={busy} onClick={() => void run(async () => { const saved = (await api.manuscript(id)).files.find((item) => item.path === active); if (!saved) throw new Error("The saved file was deleted. Export your text before recreating it."); setHistorical(null); setRemote(saved); })}><History size={14} />Compare saved version</button>
     </div>}
-    <div className={`writing-body${historyOpen ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}${assistantOpen ? " has-assistant" : ""}${filesOpen ? " files-open" : ""}${view.filesVisible ? "" : " files-hidden"}`}>
+    <div className={`writing-body${historyOpen ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}${assistantOpen ? " has-assistant" : ""}${commentsOpen ? " has-comments" : ""}${filesOpen ? " files-open" : ""}${view.filesVisible ? "" : " files-hidden"}`}>
       <aside className="writing-files" aria-label="Manuscript files">
         <header><button type="button" className="writing-files-root" aria-pressed={selected === ""} onClick={() => setSelected("")} title="Document root">Files</button>
           <Tool label="New folder" disabled={busy || build.pending} onClick={() => setDialog("folder")}><FolderPlus size={15} /></Tool>
@@ -357,7 +393,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
           <div className="writing-review-actions">
             <button type="button" disabled={busy} onClick={() => { setHistorical(null); setRemote(null); }}><ChevronLeft size={15} />Back to editor</button>
             {historical ? <button type="button" className="writing-primary" disabled={busy} onClick={() => void run(async () => { await requireSaved(); const current = session.getSnapshot().files[active]!; const restored = await api.restoreManuscriptFile(id, active, historical.entry.id, current.revision); session.acceptRemote(restored); setHistorical(null); await loadHistory(); })}><RotateCcw size={15} />Restore this version</button> : <><button type="button" disabled={busy} onClick={() => { session.acceptRemote(compare); setRemote(null); }}>Use saved version</button><button type="button" className="writing-primary" disabled={busy} onClick={() => { session.acceptRemote(compare, true); setRemote(null); }}>Save my version</button></>}
-          </div></> : asset ? <WritingAsset key={asset.path + asset.revision} id={id} asset={asset} /> : file ? <TexEditor filePath={active} content={file.content} disabled={busy} onChange={(content) => session.edit(active, content)} onView={(view) => { editor.current = view; }} onSelection={setSelection} /> : <div className="writing-empty"><h2>No source files</h2><button type="button" onClick={() => setDialog("file")}><FilePlus2 size={16} />New file</button></div>}
+          </div></> : asset ? <WritingAsset key={asset.path + asset.revision} id={id} asset={asset} /> : file ? <TexEditor filePath={active} content={file.content} disabled={busy} onChange={(content) => session.edit(active, content)} onView={(view) => { editor.current = view; }} onSelection={setSelection} comments={marks} onComment={(id) => { setSelectedComment(id); preference("panel", "comments"); setFilesOpen(false); }} /> : <div className="writing-empty"><h2>No source files</h2><button type="button" onClick={() => setDialog("file")}><FilePlus2 size={16} />New file</button></div>}
       </main>
       {viewMode === "split" && <WritingDivider value={view.sourcePercent} onChange={(value) => preference("sourcePercent", value)} />}
       {viewMode !== "source" && <WritingPreview manuscriptId={id} state={build.state} stale={previewStale} onRefresh={() => void build.refresh()} />}
@@ -369,6 +405,8 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
         <ol>{history?.map((entry) => <li key={entry.id}><button type="button" disabled={busy} className={historical?.entry.id === entry.id ? "active" : ""} onClick={() => void run(async () => { const request = ++historyRequest.current; const saved = await api.manuscriptVersion(id, active, entry.id); if (request === historyRequest.current) { setHistorical({ entry, file: saved }); setRemote(null); } })}><span>{entry.label ?? ({ created: "Initial version", saved: "Autosave", external: "External edit", restored: "Restored version", checkpoint: "Checkpoint", deleted: "Before deletion", candidate: "Accepted candidate" })[entry.reason]}</span><time dateTime={entry.savedAt}>{new Date(entry.savedAt).toLocaleString()}</time><code>{entry.revision.slice(0, 8)}</code></button></li>)}</ol>
       </aside>}
       {candidatesOpen && candidatePanel}
+      <WritingComments id={id} visible={commentsOpen} comments={comments} activePath={active} selected={selectedComment} onSelect={setSelectedComment} onJump={jumpToComment}
+        onClose={() => preference("panel", "none")} onCapture={captureComment} canComment={!busy && canComment} incoming={incomingComment} onConsumed={() => setIncomingComment(null)} />
       <WritingAssistant manuscriptId={id} file={file} selection={selection} providers={providers} visible={assistantOpen} disabled={busy || !!compare || !!candidateReview || viewMode === "preview"}
         tab={view.assistantTab} setTab={(tab) => preference("assistantTab", tab)}
         capture={async () => {
