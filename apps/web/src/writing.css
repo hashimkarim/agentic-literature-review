@@ -220,6 +220,13 @@
 .writing-comment-error { margin:8px 12px; padding:8px; color:var(--state-error); background:var(--bg-primary); font-size:12px; overflow-wrap:anywhere; }
 .cm-review-comment { background:color-mix(in srgb, var(--state-warning) 14%, transparent); border-bottom:1px solid var(--state-warning); }
 .cm-review-comment-selected { background:color-mix(in srgb, var(--state-warning) 24%, transparent); border-bottom-width:2px; }
+.writing-editor { position:relative; }
+.writing-selection-actions { position:absolute; z-index:30; }
+.writing-selection-actions button { box-shadow:var(--shadow-md); background:var(--surface-elevated); border-color:var(--accent-primary); min-height:32px; padding:5px 10px; }
+.cm-selected-text, .cm-selected-text * { color:var(--editor-selection-text) !important; }
+.writing-editor .cm-content::selection, .writing-editor .cm-content ::selection,
+.writing-comparison .cm-content::selection, .writing-comparison .cm-content ::selection { color:var(--editor-selection-text); background:transparent; }
+.cm-selected-text.cm-review-comment { background:transparent; }
 .writing-banner { display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--surface-elevated); border-bottom:1px solid var(--border-line); color:var(--state-warning); font-size:13px; flex-wrap:wrap; }
 .writing-banner span { flex:1; min-width:180px; overflow-wrap:anywhere; }
 .writing-diff-heading { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 32px; align-items:center; gap:10px; padding:5px 12px; background:var(--bg-secondary); color:var(--text-secondary); font-size:12px; border-bottom:1px solid var(--border-line); }

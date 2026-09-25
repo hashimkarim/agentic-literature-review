@@ -287,6 +287,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       return { path, revision: current.revision, from: range.from, to: range.to, quote };
     } finally { setBusy(false); }
   }
+  function addComment() { void run(async () => { const selection = await captureComment(); setIncomingComment({ requestId: crypto.randomUUID(), selection, body: "" }); preference("panel", "comments"); setFilesOpen(false); }); }
   function jumpToComment(thread: ManuscriptCommentView) {
     const location = thread.location;
     if (!location || location.from === null || location.to === null || !location.revision) return;
@@ -346,7 +347,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       <Tool label="Save file" disabled={busy || !file || file.state === "saved" || file.state === "saving" || file.state === "conflict"} onClick={() => void session.save(active)}><Save size={16} /></Tool>
       </div>
       <span className="writing-spacer" />
-      <Tool label="Add comment" disabled={busy || !canComment} onClick={() => void run(async () => { const selection = await captureComment(); setIncomingComment({ requestId: crypto.randomUUID(), selection, body: "" }); preference("panel", "comments"); setFilesOpen(false); })}><MessageSquarePlus size={16} /></Tool>
+      <Tool label="Add comment" disabled={busy || !canComment} onClick={addComment}><MessageSquarePlus size={16} /></Tool>
       <Tool label="Document comments" aria-pressed={commentsOpen} onClick={() => { setPanelOpen("comments", !commentsOpen); setFilesOpen(false); }}><MessageSquare size={16} /></Tool>
       <Tool label="File history" disabled={busy || !file} aria-pressed={historyOpen} onClick={() => { setPanelOpen("history", !historyOpen); setCandidateReview(null); setHistorical(null); setRemote(null); }}><History size={16} /></Tool>
       <WritingActions>
@@ -393,7 +394,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
           <div className="writing-review-actions">
             <button type="button" disabled={busy} onClick={() => { setHistorical(null); setRemote(null); }}><ChevronLeft size={15} />Back to editor</button>
             {historical ? <button type="button" className="writing-primary" disabled={busy} onClick={() => void run(async () => { await requireSaved(); const current = session.getSnapshot().files[active]!; const restored = await api.restoreManuscriptFile(id, active, historical.entry.id, current.revision); session.acceptRemote(restored); setHistorical(null); await loadHistory(); })}><RotateCcw size={15} />Restore this version</button> : <><button type="button" disabled={busy} onClick={() => { session.acceptRemote(compare); setRemote(null); }}>Use saved version</button><button type="button" className="writing-primary" disabled={busy} onClick={() => { session.acceptRemote(compare, true); setRemote(null); }}>Save my version</button></>}
-          </div></> : asset ? <WritingAsset key={asset.path + asset.revision} id={id} asset={asset} /> : file ? <TexEditor filePath={active} content={file.content} disabled={busy} onChange={(content) => session.edit(active, content)} onView={(view) => { editor.current = view; }} onSelection={setSelection} comments={marks} onComment={(id) => { setSelectedComment(id); preference("panel", "comments"); setFilesOpen(false); }} /> : <div className="writing-empty"><h2>No source files</h2><button type="button" onClick={() => setDialog("file")}><FilePlus2 size={16} />New file</button></div>}
+          </div></> : asset ? <WritingAsset key={asset.path + asset.revision} id={id} asset={asset} /> : file ? <TexEditor filePath={active} content={file.content} disabled={busy} onChange={(content) => session.edit(active, content)} onView={(view) => { editor.current = view; }} onSelection={setSelection} comments={marks} onAddComment={addComment} onComment={(id) => { setSelectedComment(id); preference("panel", "comments"); setFilesOpen(false); }} /> : <div className="writing-empty"><h2>No source files</h2><button type="button" onClick={() => setDialog("file")}><FilePlus2 size={16} />New file</button></div>}
       </main>
       {viewMode === "split" && <WritingDivider value={view.sourcePercent} onChange={(value) => preference("sourcePercent", value)} />}
       {viewMode !== "source" && <WritingPreview manuscriptId={id} state={build.state} stale={previewStale} onRefresh={() => void build.refresh()} />}

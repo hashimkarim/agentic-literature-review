@@ -71,6 +71,8 @@
 /* ============================================================
    BASE
    ============================================================ */
+:root { --editor-selection-bg:#334b70; --editor-selection-text:#ffffff; }
+[data-theme="light"] { --editor-selection-bg:#c6dcfa; --editor-selection-text:#12243b; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
@@ -83,7 +85,7 @@ body {
 #root { height: 100vh; }
 i[data-lucide] { width: 16px; height: 16px; stroke-width: 1.75; flex-shrink: 0; }
 button { font-family: var(--font-sans); }
-::selection { background: #7289da55; }
+::selection { background:#c6dcfa; color:#12243b; }
 
 ::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-thumb { background: var(--accent-deep); border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
@@ -1877,6 +1879,7 @@ button { font-family: var(--font-sans); }
   white-space: pre;
   cursor: text;
 }
+.pdf-reader-shell .textLayer ::selection { color:transparent; background:rgba(82, 142, 230, 0.3); }
 
 .pdf-reader-shell .TextHighlight__part {
   mix-blend-mode: normal;
