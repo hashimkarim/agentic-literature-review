@@ -35,6 +35,7 @@ import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, t
 import { ChatSessions } from "./chat-sessions";
 import { savedCitationHash, type SavedCitationSources } from "./citation-revision";
 import { useChatScroll } from "./use-chat-scroll";
+import { booleanPreference, choicePreference, useBrowserPreference } from "./browser-preferences";
 
 type Screen = "library" | "projects" | "writing" | "search" | "settings" | "presets";
 const WritingWorkspace = lazy(() => import("./WritingWorkspace"));
@@ -1122,7 +1123,7 @@ function App() {
 }
 
 function LibraryScreen(props: WorkspaceProps & { projects: Project[] }) {
-  const [tool, setTool] = useState<WorkspaceTool>("papers");
+  const [tool, setTool] = useBrowserPreference<WorkspaceTool>("litagent:view:v1:library:tool", "papers", choicePreference(["papers", "workflows", "map", "notes", "exports"]));
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const tagOptions = useMemo(() => [...new Set(props.papers.flatMap((paper) => paper.tags))].slice(0, 16), [props.papers]);
@@ -1220,7 +1221,7 @@ interface WorkspaceProps {
 }
 
 function ProjectScreen(props: WorkspaceProps & { projects: Project[]; project: UiProject; activeProjectId: string | null; onProjectChange: (projectId: string) => void }) {
-  const [tool, setTool] = useState<WorkspaceTool>("papers");
+  const [tool, setTool] = useBrowserPreference<WorkspaceTool>(`litagent:view:v1:project:${props.activeProjectId ?? "none"}:tool`, "papers", choicePreference(["papers", "workflows", "map", "notes", "exports"]));
   const [activeRq, setActiveRq] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const filtered = useMemo(
@@ -1330,7 +1331,7 @@ function LibraryFilters({
   toggleTag: (tag: string) => void;
   onImportPapers: () => void;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useBrowserPreference("litagent:view:v1:library:filters-collapsed", false, booleanPreference);
   const types = [...new Set(papers.map((paper) => paper.type))];
   if (collapsed) {
     return <CollapsedRail title="Library filters" icon="library-big" side="left" onExpand={() => setCollapsed(false)} />;
@@ -1430,7 +1431,7 @@ function ProjectContext({
   toggleTag: (tag: string) => void;
 }) {
   const [projOpen, setProjOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useBrowserPreference("litagent:view:v1:project:context-collapsed", false, booleanPreference);
   if (collapsed) return <CollapsedRail title={project.name} icon="folder-kanban" side="left" onExpand={() => setCollapsed(false)} />;
   return (
     <div className="la-col la-colborder-r" style={{ width: 240, background: "var(--bg-secondary)" }}>
@@ -1530,7 +1531,7 @@ function CollapsedRail({ title, icon, side, onExpand }: { title: string; icon: s
 }
 
 function PaperListPane({ papers, selId, onSelect, title, showScreen = true, filterNote }: { papers: UiPaper[]; selId: string | null; onSelect: (paperId: string) => void; title: string; showScreen?: boolean; filterNote?: string | null }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useBrowserPreference("litagent:view:v1:papers:list-collapsed", false, booleanPreference);
   const [query, setQuery] = useState("");
   const filtered = papers.filter((paper) => paperMatchesQuery(paper, query));
   if (collapsed) return <CollapsedRail title={title} icon="files" side="left" onExpand={() => setCollapsed(false)} />;
@@ -1604,18 +1605,15 @@ function Reader({
   activePdfAnnotationId: string | null;
   activePdfAnnotationKey: number;
 }) {
-  const [tab, setTab] = useState<ReaderTab>("pdf");
-  const [side, setSide] = useState(false);
-  useEffect(() => setSide(false), [paper?.id]);
+  const [tab, setTab] = useBrowserPreference<ReaderTab>("litagent:view:v1:reader:tab", "pdf", choicePreference(["pdf", "markdown", "notes"]));
+  const [side, setSide] = useBrowserPreference("litagent:view:v1:reader:split", false, booleanPreference);
   useEffect(() => {
     if (!citationTarget || citationTarget.paperId !== paper?.id) return;
     setTab(citationTarget.pdf.available ? "pdf" : "markdown");
-    setSide(false);
   }, [citationTarget, paper?.id]);
   useEffect(() => {
     if (!activePdfAnnotationId) return;
     setTab("pdf");
-    setSide(false);
   }, [activePdfAnnotationId, activePdfAnnotationKey]);
   if (!paper) return <Empty icon="file-search" title="No paper selected" desc="Import or select a paper to open the reader." />;
   return (
@@ -1633,7 +1631,7 @@ function Reader({
         ))}
         <span className="spacer" />
         <div className="rtools">
-          <button type="button" className="la-iconbtn" title="Side-by-side PDF + Markdown" onClick={() => setSide((current) => !current)} style={side ? { color: "var(--accent-bright)", background: "var(--overlay-hover)" } : undefined}>
+          <button type="button" className="la-iconbtn" title="Side-by-side PDF + Markdown" aria-label="Side-by-side PDF + Markdown" aria-pressed={side} onClick={() => setSide((current) => !current)} style={side ? { color: "var(--accent-bright)", background: "var(--overlay-hover)" } : undefined}>
             <Icon name="columns-2" size={15} />
           </button>
           <button type="button" className="la-iconbtn" title="Highlight"><Icon name="highlighter" size={15} /></button>
@@ -2553,10 +2551,10 @@ function AgentPanel({
   onCancelWorkflow,
   onOpenCitation
 }: WorkspaceProps & { contextLabel: string; scopeProjectId: string | null }) {
-  const [tab, setTab] = useState<"details" | "ask" | "evidence" | "annotations" | "queue">("details");
+  const [tab, setTab] = useBrowserPreference("litagent:view:v1:inspector:tab", "details" as "details" | "ask" | "evidence" | "annotations" | "queue", choicePreference(["details", "ask", "evidence", "annotations", "queue"]));
   const [qaScope, setQaScope] = useState<"paper" | "context">("paper");
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useBrowserPreference("litagent:view:v1:inspector:collapsed", false, booleanPreference);
   const effectiveQaScope = selectedPaper ? qaScope : "context";
   const askPaperId = effectiveQaScope === "paper" ? selectedPaper?.id ?? null : null;
   const contextScopeLabel = scopeProjectId ? "Project" : "Global";
@@ -3901,7 +3899,7 @@ function SettingsScreen({
   onConnectProvider: (providerId: string) => void;
   status: AppStatus | null;
 }) {
-  const [section, setSection] = useState<SettingsSection>("providers");
+  const [section, setSection] = useBrowserPreference<SettingsSection>("litagent:view:v1:settings:section", "providers", choicePreference(["providers", "defaults", "appearance", "storage", "about"]));
   return (
     <div className="la-screen">
       <div className="la-settings">

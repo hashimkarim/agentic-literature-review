@@ -1,6 +1,6 @@
 # LitAgent Roadmap And Progress
 
-Updated: 2026-09-24
+Updated: 2026-09-25
 
 LitAgent is a local-first, project-centered literature review workspace. Papers
 are canonical global records; projects reference them with their own screening
@@ -39,6 +39,15 @@ state/UI, retrieval, evidence validation, workflow checkpoints and approval UI,
 using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENTS.md).
 
 ## Delivery Snapshot
+
+Workspace usability (2026-09-25): writing documents retain source/PDF mode,
+split ratio, file tabs/folder expansion, assistant view and panel visibility in
+versioned browser storage. The writing toolbar is consolidated and its file pane
+collapsible. Library/project tool tabs, reader PDF/Markdown split mode, inspector
+tabs, collapsed reading panes and Settings sections also persist. Validation:
+typecheck, 201 unit/integration tests, production build, and native preview
+reload/new-tab, comparison-return and responsive layout checks. No document
+text, model credentials or pending generation requests are stored as preferences.
 
 | Area | State | What Works Today | Main Gap |
 | --- | --- | --- | --- |
