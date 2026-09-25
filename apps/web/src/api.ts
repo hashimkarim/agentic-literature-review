@@ -318,6 +318,7 @@ export const api = {
   providerStatus: () => request<AgentProvider[]>("/api/provider-status"),
   converterStatus: () => request<ConverterStatus>("/api/converter-status"),
   driverConnection: () => request<DriverConnection>("/api/settings/driver"),
+  saveDriverConnection: (body: { url: string; token?: string; tokenFile?: string }) => request<{ connection: DriverConnection; providers: AgentProvider[] }>("/api/settings/driver", { method: "PUT", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify(body) }),
   refreshDriver: () => request<{ connection: DriverConnection; providers: AgentProvider[] }>("/api/settings/driver/refresh", { method: "POST" }),
   providerSettings: () => request<AgentProvider[]>("/api/settings/providers"),
   updateProviderSettings: (

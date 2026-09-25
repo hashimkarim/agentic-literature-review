@@ -81,7 +81,7 @@ function ProjectLinksDialog({ manuscript, projects, onUpdated, onClose }: { manu
   </dialog>;
 }
 
-export default function WritingWorkspace({ projects, providers }: { projects: Project[]; providers: AgentProvider[] }) {
+export default function WritingWorkspace({ projects, providers, onConfigureProviders }: { projects: Project[]; providers: AgentProvider[]; onConfigureProviders: () => void }) {
   const [manuscripts, setManuscripts] = useState<Manuscript[]>([]);
   const [active, setActive] = useState<string | null>(() => { try { return localStorage.getItem("la-writing-document"); } catch { return null; } });
   const [document, setDocument] = useState<ManuscriptDocument | null>(null);
@@ -125,7 +125,7 @@ export default function WritingWorkspace({ projects, providers }: { projects: Pr
     </header>
     {error && <div className="writing-banner" role="alert">{error}<Tool label="Retry loading documents" onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={16} /></Tool></div>}
     {active ? currentDocument ? <>
-      <ManuscriptEditor key={currentDocument.id} document={currentDocument} providers={providers} />
+      <ManuscriptEditor key={currentDocument.id} document={currentDocument} providers={providers} onConfigureProviders={onConfigureProviders} />
     </> : <div className="writing-empty"><FileCode2 size={32} /><h2>{error ? "Document unavailable" : "Loading document..."}</h2></div> : <>
       <div className="writing-document-filters">
         <label className="writing-document-search"><Search size={16} /><input type="search" aria-label="Find documents" placeholder="Find documents..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>
@@ -149,7 +149,7 @@ export default function WritingWorkspace({ projects, providers }: { projects: Pr
   </section>;
 }
 
-function ManuscriptEditor({ document, providers }: { document: ManuscriptDocument; providers: AgentProvider[] }) {
+function ManuscriptEditor({ document, providers, onConfigureProviders }: { document: ManuscriptDocument; providers: AgentProvider[]; onConfigureProviders: () => void }) {
   const { id } = document;
   const [tree, setTree] = useState(document);
   const [session] = useState(() => {
@@ -363,7 +363,8 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       <Tool label="Saved alternatives" disabled={busy || !file} aria-pressed={candidatesOpen} onClick={() => { setCandidatesOpen((open) => !open); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); }}><ListChecks size={16} /><span>Saved alternatives</span></Tool>
       <Tool label="Export TeX sources" disabled={busy} onClick={() => void run(exportSources)}><Download size={16} /><span>Export TeX sources</span></Tool>
       </WritingActions>
-      <button type="button" className="writing-assistant-toggle" title="AI assistant" aria-label="AI assistant" aria-pressed={assistantOpen} onClick={() => { setAssistantOpen((open) => !open); setFilesOpen(false); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); }}><Sparkles size={16} /><span>AI assistant</span></button>
+      <button type="button" className="writing-assistant-toggle" title="Document sources" aria-label="Document sources" onClick={() => { setAssistantOpen(true); preference("assistantTab", "sources"); setFilesOpen(false); }}><Link2 size={16} /><span>Sources</span></button>
+      <button type="button" className="writing-assistant-toggle" title="AI assistant" aria-label="AI assistant" aria-pressed={assistantOpen} onClick={() => { setAssistantOpen((open) => !open); preference("assistantTab", "compose"); setFilesOpen(false); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); }}><Sparkles size={16} /><span>AI assistant</span></button>
     </div>
     {build.error && <div className="writing-banner" role="alert"><AlertTriangle size={16} /><span>{build.error}</span><Tool label="Refresh build status" onClick={() => void build.refresh()}><RefreshCw size={16} /></Tool></div>}
     {(error || state.storageError) && <div className="writing-banner" role="alert"><AlertTriangle size={16} />{error ?? state.storageError}</div>}
@@ -409,7 +410,7 @@ function ManuscriptEditor({ document, providers }: { document: ManuscriptDocumen
       <WritingComments id={id} visible={commentsOpen} comments={comments} activePath={active} selected={selectedComment} onSelect={setSelectedComment} onJump={jumpToComment}
         onClose={() => preference("panel", "none")} onCapture={captureComment} canComment={!busy && canComment} incoming={incomingComment} onConsumed={() => setIncomingComment(null)} />
       <WritingAssistant manuscriptId={id} file={file} selection={selection} providers={providers} visible={assistantOpen} disabled={busy || !!compare || !!candidateReview || viewMode === "preview"}
-        tab={view.assistantTab} setTab={(tab) => preference("assistantTab", tab)}
+        tab={view.assistantTab} setTab={(tab) => preference("assistantTab", tab)} onConfigureProviders={onConfigureProviders}
         capture={async () => {
           const range = editor.current?.state.selection.main;
           if (!range || !file) throw new Error("Return to the TeX editor before generating.");

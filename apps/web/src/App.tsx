@@ -34,9 +34,11 @@ import { workflowLabels } from "@litagent/ui";
 
 import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
 import { ChatSessions } from "./chat-sessions";
+import { DriverConnectionSettings } from "./DriverConnectionSettings";
+import { FileImportDialog } from "./FileImportDialog";
 import { savedCitationHash, type SavedCitationSources } from "./citation-revision";
 import { useChatScroll } from "./use-chat-scroll";
-import { booleanPreference, choicePreference, useBrowserPreference } from "./browser-preferences";
+import { booleanPreference, choicePreference, useBrowserPreference, writePreference } from "./browser-preferences";
 
 type Screen = "library" | "projects" | "writing" | "search" | "settings" | "presets";
 const WritingWorkspace = lazy(() => import("./WritingWorkspace"));
@@ -472,8 +474,7 @@ function App() {
   const [pdfAnnotations, setPdfAnnotations] = useState<PdfAnnotation[]>([]);
   const [activePdfAnnotation, setActivePdfAnnotation] = useState<{ id: string; version: number } | null>(null);
   const [isPending, startTransition] = useTransition();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const importProjectIdRef = useRef<string | null>(null);
+  const [paperImport, setPaperImport] = useState<{ projectId: string | null; mode: "files" | "local" | "zotero" } | null>(null);
   const seenTerminalWorkflowIdsRef = useRef<Set<string>>(new Set());
 
   const setTheme = useCallback((nextTheme: string) => {
@@ -522,28 +523,9 @@ function App() {
     [activeProjectId, projectEntries]
   );
 
-  const openImportPicker = useCallback((projectId: string | null) => {
-    importProjectIdRef.current = projectId;
-    fileInputRef.current?.click();
+  const openImportPicker = useCallback((projectId: string | null, mode: "files" | "local" | "zotero" = "files") => {
+    setPaperImport({ projectId, mode });
   }, []);
-
-  const importSelectedFiles = useCallback(
-    (files: FileList | null) => {
-      const selected = Array.from(files ?? []).filter((file) => file.name.toLowerCase().endsWith(".pdf"));
-      if (selected.length === 0) return;
-      const projectId = importProjectIdRef.current;
-      startTransition(() => {
-        void (async () => {
-          for (const file of selected) {
-            await api.importPaper({ file, projectId });
-          }
-          await reloadPapers(projectId);
-          if (projectId) setProjectDetails(await api.project(projectId));
-        })();
-      });
-    },
-    [reloadPapers]
-  );
 
   const loadProject = useCallback(async (projectId: string | null) => {
     if (!projectId) {
@@ -919,18 +901,8 @@ function App() {
 
   return (
     <div className="la-app">
+      {paperImport && <FileImportDialog kind="pdf" initialMode={paperImport.mode} projectId={paperImport.projectId} projectName={projects.find((project) => project.id === paperImport.projectId)?.name} onClose={() => setPaperImport(null)} onImported={async () => { await reloadPapers(paperImport.projectId); if (paperImport.projectId) setProjectDetails(await api.project(paperImport.projectId)); }} />}
       <div className="la-titlebar">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="application/pdf,.pdf"
-          multiple
-          hidden
-          onChange={(event) => {
-            importSelectedFiles(event.currentTarget.files);
-            event.currentTarget.value = "";
-          }}
-        />
         <div className="la-traffic">
           <span style={{ background: "#ff5f57" }} />
           <span style={{ background: "#febc2e" }} />
@@ -1079,7 +1051,7 @@ function App() {
             onOpenCitation={openCitation}
           />
         ) : null}
-        {screen === "writing" ? <Suspense fallback={<div className="la-screen">Loading documents...</div>}><WritingWorkspace projects={projects} providers={providers} /></Suspense> : null}
+        {screen === "writing" ? <Suspense fallback={<div className="la-screen">Loading documents...</div>}><WritingWorkspace projects={projects} providers={providers} onConfigureProviders={() => { writePreference("litagent:view:v1:settings:section", "providers"); setScreen("settings"); }} /></Suspense> : null}
         {screen === "search" ? (
           <SearchScreen
             papers={libraryPapers}
@@ -1169,7 +1141,7 @@ function LibraryScreen(props: WorkspaceProps & { projects: Project[] }) {
             tagOptions={tagOptions}
             tagFilter={tagFilter}
             toggleTag={(tag) => setTagFilter((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]))}
-            onImportPapers={() => props.onImportPapers(null)}
+            onImportPapers={(mode) => props.onImportPapers(null, mode)}
           />
           <PaperListPane
             papers={filtered}
@@ -1236,7 +1208,7 @@ interface WorkspaceProps {
   onRunWorkflow: (type: WorkflowType, paperIds?: string[], query?: string | null, options?: Record<string, unknown>) => void;
   onCancelWorkflow: (runId: string) => void;
   onConvert: (paperId: string) => void;
-  onImportPapers: (projectId: string | null) => void;
+  onImportPapers: (projectId: string | null, mode?: "files" | "local" | "zotero") => void;
   onOpenCitation: (ref: EvidenceRef, projectId: string | null, sources?: SavedCitationSources) => void;
 }
 
@@ -1349,7 +1321,7 @@ function LibraryFilters({
   tagOptions: string[];
   tagFilter: string[];
   toggleTag: (tag: string) => void;
-  onImportPapers: () => void;
+  onImportPapers: (mode?: "files" | "local" | "zotero") => void;
 }) {
   const [collapsed, setCollapsed] = useBrowserPreference("litagent:view:v1:library:filters-collapsed", false, booleanPreference);
   const types = [...new Set(papers.map((paper) => paper.type))];
@@ -1367,7 +1339,7 @@ function LibraryFilters({
       </div>
       <div className="scroll" style={{ flex: 1 }}>
         <div style={{ padding: "10px 12px" }}>
-          <Btn variant="primary" icon="upload" style={{ width: "100%" }} onClick={onImportPapers}>
+          <Btn variant="primary" icon="upload" style={{ width: "100%" }} onClick={() => onImportPapers()}>
             Import papers
           </Btn>
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
@@ -1377,7 +1349,7 @@ function LibraryFilters({
             <Btn variant="ghost" sm icon="link" style={{ flex: 1 }}>
               arXiv
             </Btn>
-            <Btn variant="ghost" sm icon="library" style={{ flex: 1 }}>
+            <Btn variant="ghost" sm icon="library" style={{ flex: 1 }} onClick={() => onImportPapers("zotero")}>
               Zotero
             </Btn>
           </div>
@@ -3937,7 +3909,7 @@ function DriverProviderCard({ provider, onUpdateProvider, onConnectProvider, onR
       <div className="la-fieldgroup full">
         <label htmlFor={`model-${provider.id}`}>Default model</label>
         <div className="la-field" style={{ padding: "7px 10px" }}>
-          {driver.restrictedModels ? <select id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy} onChange={(event) => setModel(event.currentTarget.value)} style={{ ...nativeSelectStyle, maxWidth: "100%", width: "100%" }}>
+          {driver.restrictedModels ? <select id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy} onChange={(event) => setModel(event.currentTarget.value)} style={{ ...nativeSelectStyle, maxWidth: "100%", width: "100%", minHeight: 34 }}>
             <option value="">Select a permitted model</option>
             {model && !provider.models.includes(model) ? <option value={model} disabled>{model} (no longer permitted)</option> : null}
             {provider.models.map((value) => <option key={value} value={value}>{value}</option>)}
@@ -3953,21 +3925,6 @@ function DriverProviderCard({ provider, onUpdateProvider, onConnectProvider, onR
       <Btn sm icon="save" disabled={busy || !validModel} onClick={() => { void action(save); }}>Save model</Btn>
       {provider.enabled ? <Btn sm icon="log-out" disabled={busy} onClick={() => { void action(() => onUpdateProvider(provider.id, { enabled: false, connected: false })); }}>Disable</Btn>
         : <Btn variant="primary" sm icon="link" disabled={busy || !driver.available || !validModel} onClick={() => { void action(async () => { await save(); await onConnectProvider(provider.id); }); }}>Enable provider</Btn>}
-    </div>
-  </section>;
-}
-
-function DriverConnectionPanel({ connection, onRefresh }: { connection: DriverConnection | null; onRefresh: () => Promise<DriverConnection> }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return <section className="la-provider" aria-label="AgenticDriver connection">
-    <div className="phead"><div className="picon"><Icon name="plug" size={19} /></div><div className="pinfo"><div className="pname">AgenticDriver connection</div><div className="pstatus">{connection?.endpoint ?? "Server configuration"}</div></div>
-      <Btn sm icon="refresh-cw" disabled={busy || !connection?.configured} onClick={() => { setBusy(true); setError(null); void onRefresh().catch(() => setError("Could not refresh the driver connection. Check the LitAgent server and try again.")).finally(() => setBusy(false)); }}>{busy ? "Refreshing…" : "Refresh driver catalog"}</Btn>
-    </div>
-    <div style={{ padding: "0 16px 14px", font: "var(--text-caption)", color: "var(--text-secondary)" }}>
-      <p role={connection?.status === "error" ? "alert" : "status"}>{connection?.message ?? "Loading driver connection…"}</p>
-      <p>Driver credentials stay on the LitAgent server. Refresh checks availability and models; it does not generate text or interrupt active runs.</p>
-      {error ? <p role="alert">{error}</p> : null}
     </div>
   </section>;
 }
@@ -4025,10 +3982,10 @@ function SettingsScreen({
                   <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 2 }}>AgenticDriver instances and local CLI providers for document workflows and cited Q&A.</div>
                 </div>
                 <span style={{ flex: 1 }} />
-                <Btn variant="ghost" sm icon="refresh-cw">Re-scan PATH</Btn>
               </div>
-              <DriverConnectionPanel connection={driverConnection} onRefresh={onRefreshDriver} />
-              {providers.map((provider) => <ProviderCard key={provider.id} provider={provider} onUpdateProvider={onUpdateProvider} onConnectProvider={onConnectProvider} onRefreshDriver={onRefreshDriver} />)}
+              <DriverConnectionSettings connection={driverConnection} onRefresh={onRefreshDriver} />
+              {providers.filter((provider) => provider.id.startsWith("driver.")).map((provider) => <ProviderCard key={provider.id} provider={provider} onUpdateProvider={onUpdateProvider} onConnectProvider={onConnectProvider} onRefreshDriver={onRefreshDriver} />)}
+              <details className="driver-legacy"><summary>Legacy local CLI adapters</summary>{providers.filter((provider) => !provider.id.startsWith("driver.")).map((provider) => <ProviderCard key={provider.id} provider={provider} onUpdateProvider={onUpdateProvider} onConnectProvider={onConnectProvider} onRefreshDriver={onRefreshDriver} />)}</details>
             </div>
           ) : null}
           {section === "defaults" ? (

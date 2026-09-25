@@ -1,5 +1,19 @@
 @import "./tokens.css";
 
+.driver-connection .phead { flex-wrap:wrap; gap:10px; }
+.driver-connection .phead > button { display:grid; place-items:center; width:32px; height:32px; border:1px solid var(--border-line); border-radius:5px; background:var(--surface-input); color:var(--text-primary); }
+.driver-health { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--state-warning); }
+.driver-health.ready { color:var(--state-success); }
+.driver-connection-body { padding:0 16px 16px; font-size:13px; color:var(--text-secondary); }
+.driver-connection-body form { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:12px; }
+.driver-connection-body label { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.driver-connection-body label:nth-child(3) { grid-column:1/-1; }
+.driver-connection-body input, .driver-connection-body select { width:100%; min-width:0; padding:8px; border:1px solid var(--border-line); border-radius:5px; background:var(--surface-input); color:var(--text-primary); }
+.driver-connection-body button { justify-self:start; display:flex; align-items:center; gap:6px; }
+.driver-legacy { margin-top:20px; }
+.driver-legacy > summary { padding:10px 0; cursor:pointer; color:var(--text-secondary); font-size:13px; }
+@media(max-width:600px) { .driver-connection-body form { grid-template-columns:minmax(0,1fr); } }
+
 /* ============================================================
    LitAgent — app shell + theme layers over Comfy tokens
    Default (no data-theme) = Comfy navy. data-theme="dark" =

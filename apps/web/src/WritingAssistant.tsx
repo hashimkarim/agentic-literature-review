@@ -11,9 +11,10 @@ const audiences = ["Layperson", "Undergraduate", "Graduate", "Doctoral"];
 const startsAtCursor = new Set<WritingAction>(["draft", "outline", "storyline", "review"]);
 type Prepared = { request: CreateWritingCandidates; context: WritingContext; selection: WritingSelection };
 
-export function WritingAssistant({ manuscriptId, file, selection, providers, visible, disabled, tab, setTab, capture, onClose, onCreated, drafts }: {
+export function WritingAssistant({ manuscriptId, file, selection, providers, visible, disabled, tab, setTab, capture, onClose, onCreated, drafts, onConfigureProviders }: {
   manuscriptId: string; file: ManuscriptFile | undefined; selection: { from: number; to: number }; providers: AgentProvider[]; visible: boolean; disabled: boolean;
   tab: WritingView["assistantTab"]; setTab: (tab: WritingView["assistantTab"]) => void;
+  onConfigureProviders: () => void;
   capture: () => Promise<WritingSelection>; onClose: () => void; onCreated: (batch: WritingCandidateBatch) => void; drafts: ReactNode;
 }) {
   const [action, setAction] = useState<WritingAction>("draft");
@@ -71,7 +72,7 @@ export function WritingAssistant({ manuscriptId, file, selection, providers, vis
         <label>Outputs<input type="number" aria-label={`Assistant outputs ${index + 1}`} min={1} max={3} value={target.count} onChange={(event) => updateTarget(index, { count: Math.min(3, Math.max(1, Number(event.target.value) || 1)) })} /></label>
         <button type="button" className="writing-tool" title="Remove model" aria-label={`Remove assistant model ${index + 1}`} disabled={targets.length === 1} onClick={() => setTargets((items) => items.filter((_, i) => i !== index))}><Trash2 size={15} /></button>
       </div>)}<button type="button" disabled={targets.length >= 3 || total >= 6} onClick={() => setTargets((items) => [...items, { providerId: "", model: "", count: 1 }])}><Plus size={14} />Add model</button></fieldset>
-      {!available.length && <p className="writing-error" role="alert">No enabled AgenticDriver connection. Configure one in Settings.</p>}
+      {!available.length && <div className="writing-draft-notice" role="status"><p>No connected writing provider.</p><button type="button" onClick={onConfigureProviders}>Connect provider</button></div>}
       {!validFile && <p className="writing-draft-notice">{!file?.path.endsWith(".tex") ? "Open a TeX file to write." : length > 8000 ? "Selection exceeds 8,000 characters." : "This task requires a text selection."}</p>}
       {total > 6 && <p className="writing-error">Choose at most six outputs.</p>}
       {error && !preview && <p className="writing-error" role="alert">{error}</p>}
