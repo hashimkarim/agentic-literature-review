@@ -103,3 +103,13 @@ Keep Better Auth plus AuthYard on the explicitly qualified connector contract;
 the SDK package rename does not qualify a renamed AuthYard connector. Separate
 fixture/install evidence from live-provider acceptance: native Antigravity
 tool isolation remains blocked, with no new real-account inference certified.
+
+## Authorized Codex Check (2026-09-25)
+
+The published client was exercised through the actual writing UI against the
+user-selected local Codex host, model `gpt-6-luna`, medium effort. Synthetic-only
+generation, selected-source evidence navigation and cancellation during review
+were observed; no manuscript edit was accepted. This supersedes the earlier
+absence of live evidence for this selected route, not the separate Antigravity
+isolation status. Startup-only catalog discovery still blocks full connection
+refresh acceptance on this branch. See the [run IDs, checks and remaining gaps](validation/writing-live-2026-09-25.md).

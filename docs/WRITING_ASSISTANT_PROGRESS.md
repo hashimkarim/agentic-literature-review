@@ -1,8 +1,9 @@
 # Writing Assistant Delivery
 
 The writing assistant uses the existing AgenticDriver execution boundary. No
-provider adapter, account, authentication or live-inference migration is part
-of this work. All generated text remains a draft until explicitly accepted.
+provider adapter, account or authentication migration is part of this work.
+All generated text remains a draft until explicitly accepted. The separately
+authorized synthetic live check is recorded below; it changed no dependencies.
 
 ## Ordered Work
 
@@ -26,6 +27,11 @@ of this work. All generated text remains a draft until explicitly accepted.
    dismissal, file-drawer controls, keyboard resizing, reload and nonblank PDF
    canvas pixels. Existing browser regression scripts now explicitly choose
    their layout and account for restored tabs/panels and the actions menu.
+6. Checked (2026-09-25): actual writing UI against the authorized local Codex
+   SDK host with synthetic sources only. Explicit model selection, source/quote
+   navigation, drafting/review progress and live review cancellation worked.
+   No draft was accepted. Catalog refresh and review word-count classification
+   remain gaps; see [the live receipt](validation/writing-live-2026-09-25.md).
 
 Backend validation: typecheck and 196 tests pass, including literal quote/ID checks,
 separate semantic review, unsupported-result rejection, explicit bibliography
