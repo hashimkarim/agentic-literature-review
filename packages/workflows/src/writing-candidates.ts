@@ -9,6 +9,7 @@ import {
   type AgentProviderSettings, type CreateWritingCandidates, type WritingCandidateBatch, type WritingTarget
 } from "@litagent/contracts";
 import { WritingContextService } from "./writing-context";
+import { writingEditorial } from "./writing-editorial";
 import { assistantPrompt, inspectWritingOutput, parseWritingOutput, renderWritingOutput, validateWritingReview, writingReviewPrompt } from "./writing-assistant";
 
 type Runtime = Pick<AgentHarness, "startRun" | "cancelRun">;
@@ -131,7 +132,8 @@ export class WritingCandidateService {
         this.assertSources(batch);
         this.validateTarget({ providerId: candidate.providerId, model: candidate.model, count: 1 });
         const session = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: candidate.id,
-          cwd: this.store.root, prompt: writingCandidatePrompt(batch, candidate.variant) });
+          cwd: this.store.root, prompt: writingCandidatePrompt(batch, candidate.variant),
+          eventsPath: path.join(this.store.root, ".litagent/cache/provider-runs", candidate.id, "draft.events.jsonl") });
         const result = await session.finished;
         batch = this.get(original.manuscriptId, original.id);
         if (batch.status !== "running") return;
@@ -147,7 +149,8 @@ export class WritingCandidateService {
             this.assertSources(batch);
             candidate.phase = "reviewing"; this.store.saveCandidateBatch(batch);
             this.validateTarget({ providerId: candidate.providerId, model: candidate.model, count: 1 });
-            const reviewRun = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: `${candidate.id}_review`, cwd: this.store.root, prompt: writingReviewPrompt(output, batch) });
+            const reviewRun = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: `${candidate.id}_review`, cwd: this.store.root, prompt: writingReviewPrompt(output, batch),
+              eventsPath: path.join(this.store.root, ".litagent/cache/provider-runs", candidate.id, "review.events.jsonl") });
             const reviewed = await reviewRun.finished;
             batch = this.get(original.manuscriptId, original.id);
             if (batch.status !== "running") return;
@@ -157,6 +160,7 @@ export class WritingCandidateService {
             const review = validateWritingReview(JSON.parse(reviewed.transcript.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1")), output);
             candidate.text = renderWritingOutput(output, batch); candidate.claims = output.claims;
             candidate.warnings = output.warnings; candidate.review = review; candidate.status = "completed";
+            candidate.editorial = writingEditorial(output, batch);
           } else {
             const output = z.object({ text: z.string().min(1).max(32_000).refine((text) => text.trim().length > 0) }).strict().parse(JSON.parse(raw));
             candidate.status = "completed"; candidate.text = output.text;

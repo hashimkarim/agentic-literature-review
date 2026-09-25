@@ -50,9 +50,12 @@ it("drafts at the cursor, reviews exact evidence, inserts bibliography explicitl
   const batch = f.service.get(f.document.id, started.id), candidate = batch.candidates[0]!;
   expect(candidate.text).toContain(`\\cite{${f.source.citekey}}`);
   expect(candidate.review?.supported).toBe(true);
+  expect(candidate.editorial).toMatchObject({ wordCount: 3, targetWords: 150 });
   expect(f.runtime.startRun).toHaveBeenCalledTimes(2);
   expect(f.runtime.startRun.mock.calls[0]![0].prompt).toContain("Use cautious claims.");
   expect(f.runtime.startRun.mock.calls[1]![0].prompt).toContain("code used as evidence of measured performance");
+  expect(f.runtime.startRun.mock.calls[1]![0].prompt).toContain("Do not count words");
+  expect(f.runtime.startRun.mock.calls[1]![0].prompt).not.toContain(input.instruction);
   expect(f.store.read(f.document.id).files.find((file) => file.path === f.file.path)).toEqual(f.file);
   const acceptance = { candidateId: candidate.id, expectedRevision: f.file.revision };
   expect(() => f.service.accept(f.document.id, batch.id, acceptance)).toThrow(/bibliography/);

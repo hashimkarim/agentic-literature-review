@@ -31,6 +31,10 @@ export const WritingCandidateSchema = z.object({
   claims: z.array(WritingClaimSchema).max(40).optional(),
   warnings: z.array(z.string().max(1000)).max(20).optional(),
   review: WritingSourceReviewSchema.optional(),
+  editorial: z.object({
+    method: z.literal("tex-prose-v1"), wordCount: z.number().int().nonnegative(),
+    targetWords: z.number().int().positive(), notices: z.array(z.string().max(1000)).max(20)
+  }).optional(),
   dismissed: z.boolean().optional()
 });
 const AcceptanceSchema = z.object({
