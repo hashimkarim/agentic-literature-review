@@ -54,6 +54,13 @@ artifacts, rebuildable indexes, and CLI-backed agent workflows.
   underway. Test application behavior with fixtures through the existing
   interface; defer new live-provider experiments and runtime changes until the
   user resumes that work. Do not modify the sibling SDK as part of LitAgent tasks.
+- Legacy direct CLI providers are temporary. Once AgenticDriver clears the
+  [provider consolidation gate](docs/ROADMAP.md#provider-consolidation), remove
+  their app UI, execution adapters and direct-provider configuration paths.
+  AgenticDriver becomes the only AI execution path, not another permanent option
+  beside them. Preserve historical provider IDs and explicitly migrate or request
+  replacement of saved selections; never silently change accounts/models or
+  fall back to a legacy runtime.
 
 ## Existing Provider Adapter Rules
 

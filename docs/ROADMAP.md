@@ -40,6 +40,38 @@ new live-provider experiments. LitAgent work continues on domain data, chat
 state/UI, retrieval, evidence validation, workflow checkpoints and approval UI,
 using deterministic fixtures at the execution boundary. See [AGENTS.md](../AGENTS.md).
 
+### Provider Consolidation
+
+User requirement (2026-09-25): when AgenticDriver is fully working for LitAgent,
+remove the legacy direct-provider integration. This removes duplicate execution
+paths, not Codex/Claude/Gemini/etc. supplied by an AgenticDriver connection.
+
+Removal is pending these application-level checks:
+
+- A supported regular connection can execute, survives normal startup/reconnect,
+  and keeps credentials server-side. A catalog-only connection or the separate
+  synthetic-validation token does not satisfy this gate.
+- Settings and task controls support connection setup, provider/model discovery
+  and refresh, explicit selection, persisted enablement, and truthful offline
+  errors without account/model fallback. Inventory remains separate from grants.
+- Q&A, writing alternatives, refinement and research proposal workflows work
+  through the existing SDK adapter, including progress, cancellation, failure
+  recovery, run/usage traceability and unchanged evidence/acceptance safeguards.
+  Use deterministic coverage plus necessary authorized synthetic-data acceptance;
+  do not rerun completed live checks solely to create another receipt.
+- Migrate project/recipe/default selections only where a matching connection is
+  verified; otherwise require explicit reselection. Retain historical run,
+  citation and artifact provenance. Drain active legacy work before removing its
+  cancellation path. No deletion of the user's external CLI installations.
+- Typecheck, tests, build, native T3 UI checks and Prometheus CI pass with legacy
+  adapters absent. No legacy or heuristic fallback may conceal a driver outage.
+
+Then remove the direct CLI adapters/discovery/login routes, duplicate provider
+cards/selectors, obsolete settings and unused dependencies/tests/docs in small
+verified commits. Keep read compatibility for historical records; do not rewrite
+their provider identity. Reuse the SDK-owned management/pairing/component
+contracts when released, rather than inventing a parallel management protocol.
+
 ## Delivery Snapshot
 
 Workspace usability (2026-09-25): writing documents retain source/PDF mode,
