@@ -10,7 +10,7 @@
     "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@litagent/driver-panel-sdk": "file:../../vendor/agenticdriver-panel-3217b8d.tgz",
+    "@litagent/driver-panel-sdk": "file:../../vendor/litagent-driver-panel-3217b8d.tgz",
     "@litagent/agents": "*",
     "@litagent/contracts": "*",
     "@litagent/indexer": "*",

@@ -16,6 +16,10 @@ archive. Do not replace it by that version number or a sibling source checkout.
 Remove this transitional alias when an independently verified registry release
 includes the panel/management/pairing entrypoints and the app checks pass.
 
-The TypeScript path mapping points at the alias's installed declarations to
-prevent TypeScript from merging the two different archives' identical upstream
-package name/version identities. Runtime resolution remains the package alias.
+`litagent-driver-panel-3217b8d.tgz` is the metadata-only repack installed by the
+apps. `bun scripts/prepare-driver-panel.ts` verifies the original checksum and
+changes only package.json: name/version distinguish the candidate from the
+registry package, and removing `bin` prevents CLI installation conflicts. Every
+runtime, type, documentation and license file is unchanged. This avoids Bun and
+TypeScript deduplicating the two different upstream 0.1.0 packages. The local
+metadata suffix is not a registry version or a new upstream release.

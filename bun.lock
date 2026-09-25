@@ -34,7 +34,7 @@
       "dependencies": {
         "@litagent/agents": "*",
         "@litagent/contracts": "*",
-        "@litagent/driver-panel-sdk": "file:../../vendor/agenticdriver-panel-3217b8d.tgz",
+        "@litagent/driver-panel-sdk": "file:../../vendor/litagent-driver-panel-3217b8d.tgz",
         "@litagent/indexer": "*",
         "@litagent/library": "*",
         "@litagent/workflows": "*",
@@ -58,7 +58,7 @@
         "@codemirror/state": "6.7.6",
         "@lezer/highlight": "1.2.3",
         "@litagent/contracts": "*",
-        "@litagent/driver-panel-sdk": "file:../../vendor/agenticdriver-panel-3217b8d.tgz",
+        "@litagent/driver-panel-sdk": "file:../../vendor/litagent-driver-panel-3217b8d.tgz",
         "@litagent/pdf": "*",
         "@litagent/ui": "*",
         "@radix-ui/react-select": "2.2.6",
@@ -291,7 +291,7 @@
 
     "@litagent/desktop": ["@litagent/desktop@workspace:apps/desktop"],
 
-    "@litagent/driver-panel-sdk": ["@agenticdriver/sdk@../../vendor/agenticdriver-panel-3217b8d.tgz", { "dependencies": { "ajv": "^8.17.1", "zod": "^4.0.0" }, "bin": { "agenticdriver": "./dist/cli.js" } }, "sha512-lZd2HoqFdum4raGP574JYkeda2lH8zu2TS63J4ceCBP0qigrIeMz9hwyCEOxiC3lNLaGMVuQgqjFLhoVEVGC8Q=="],
+    "@litagent/driver-panel-sdk": ["@litagent/driver-panel-sdk@../../vendor/litagent-driver-panel-3217b8d.tgz", { "dependencies": { "ajv": "^8.17.1", "zod": "^4.0.0" } }, "sha512-yxn8NRtMAnv8CMBYWM2Rvnc7WCXcA+6yLKZrv74hKPwj+BHiUsnEZfcJ7+h5Fna00yLvRpEttgDzu/Bbw0sJHQ=="],
 
     "@litagent/indexer": ["@litagent/indexer@workspace:packages/indexer"],
 

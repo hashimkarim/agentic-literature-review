@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { connectionInvitation } from "@litagent/driver-panel-sdk/client";
 import { managedHost } from "@litagent/driver-panel-sdk/management";
 import { configuredServer } from "@litagent/driver-panel-sdk/host";
@@ -19,6 +20,27 @@ import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
 it("uses the reviewed source candidate rather than the registry archive with the same version", () => {
   const archive = fs.readFileSync(new URL("../../../vendor/agenticdriver-panel-3217b8d.tgz", import.meta.url));
   expect(createHash("sha256").update(archive).digest("hex")).toBe("65b68ebdca8d497e4e175473b55344d2640c136626b3614ffb4540284e9adb3a");
+});
+
+it("changes only package identity and CLI registration in the isolated settings package", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-panel-integrity-"));
+  try {
+    for (const [name, archive] of [["original", "agenticdriver-panel-3217b8d.tgz"], ["installed", "litagent-driver-panel-3217b8d.tgz"]]) {
+      fs.mkdirSync(path.join(root, name!));
+      execFileSync("tar", ["-xzf", new URL(`../../../vendor/${archive}`, import.meta.url).pathname, "-C", path.join(root, name!)]);
+    }
+    const files = (directory: string) => fs.readdirSync(directory, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile()).map((entry) => path.relative(directory, path.join(entry.parentPath, entry.name))).sort();
+    const original = path.join(root, "original/package"), installed = path.join(root, "installed/package");
+    expect(files(installed)).toEqual(files(original));
+    for (const file of files(original)) {
+      if (file === "package.json") continue;
+      expect(fs.readFileSync(path.join(installed, file)).equals(fs.readFileSync(path.join(original, file))), file).toBe(true);
+    }
+    const manifest = JSON.parse(fs.readFileSync(path.join(original, "package.json"), "utf8"));
+    delete manifest.bin;
+    expect(JSON.parse(fs.readFileSync(path.join(installed, "package.json"), "utf8"))).toEqual({ ...manifest, name: "@litagent/driver-panel-sdk", version: "0.1.0-litagent-panel.3217b8d" });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 async function fixture() {
