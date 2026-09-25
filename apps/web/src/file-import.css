@@ -1,0 +1,32 @@
+.file-import-dialog { width:min(760px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; background:var(--bg-primary); color:var(--text-primary); border:1px solid var(--border-line); border-radius:6px; padding:20px; }
+.file-import-dialog::backdrop { background:#0009; }
+.file-import-dialog header { display:flex; align-items:center; gap:12px; }
+.file-import-dialog h2 { margin:0; flex:1; font-size:19px; }
+.file-import-dialog button { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:7px 12px; min-height:34px; font:inherit; font-size:13px; border:1px solid var(--border-line); border-radius:5px; background:var(--surface-input); color:var(--text-primary); cursor:pointer; }
+.file-import-dialog button:disabled { opacity:.45; cursor:default; }
+.file-import-dialog .file-import-icon { padding:6px; width:34px; border-color:transparent; background:transparent; }
+.file-import-destination { display:flex; gap:8px; font-size:13px; color:var(--text-secondary); margin:12px 0 18px; }
+.file-import-tabs { display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--border-line); padding-bottom:12px; margin-bottom:16px; }
+.file-import-tabs button[aria-selected=true] { border-color:var(--accent-primary); color:var(--accent-bright); }
+.file-import-pickers { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+.file-import-path { display:flex; align-items:end; gap:10px; flex-wrap:wrap; margin:12px 0; }
+.file-import-path label { flex:1; min-width:160px; display:flex; flex-direction:column; gap:8px; font-size:13px; }
+.file-import-dialog input:not([type=checkbox]), .file-import-dialog select { min-width:0; max-width:100%; background:var(--surface-input); color:var(--text-primary); border:1px solid var(--border-line); border-radius:4px; padding:8px; font:inherit; font-size:13px; }
+.file-import-kind { display:flex; align-items:center; gap:12px; font-size:13px; margin:12px 0; }
+.file-import-search { display:flex; align-items:center; gap:8px; margin-top:18px; }
+.file-import-search input { flex:1; }
+.file-import-search span, .file-import-select-all span { color:var(--text-secondary); font-size:12px; white-space:nowrap; }
+.file-import-select-all { display:flex; align-items:center; gap:8px; font-size:13px; padding:12px 0; }
+.file-import-select-all span { margin-left:auto; }
+.file-import-list { max-height:320px; min-height:80px; overflow:auto; border-block:1px solid var(--border-line); }
+.file-import-list label { display:flex; align-items:start; gap:10px; padding:10px 4px; border-bottom:1px solid var(--border-line); font-size:13px; }
+.file-import-list label > span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.file-import-list small { color:var(--text-muted); font-size:12px; white-space:nowrap; }
+.file-import-list span small { display:block; color:var(--state-error); white-space:normal; margin-top:4px; }
+.file-import-note { color:var(--text-secondary); font-size:12px; margin:10px 0; line-height:1.6; flex-basis:100%; }
+.file-import-error { color:var(--state-error); font-size:13px; }
+.file-import-progress { display:flex; flex-direction:column; gap:7px; margin:14px 0; font-size:13px; }
+.file-import-progress progress { width:100%; accent-color:var(--accent-primary); }
+.file-import-progress small { text-overflow:ellipsis; overflow:hidden; white-space:nowrap; }
+.file-import-dialog footer { display:flex; flex-wrap:wrap; gap:10px; justify-content:flex-end; margin-top:18px; }
+.file-import-dialog .file-import-primary { background:var(--accent-primary); color:var(--bg-primary); border-color:var(--accent-primary); }
