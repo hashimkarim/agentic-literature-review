@@ -116,6 +116,13 @@ refresh acceptance on this branch. See the [run IDs, checks and remaining gaps](
 
 ## AD-035 Reconciliation (2026-09-25)
 
+Completed live application acceptance is recorded in the
+[AD-035 receipt](validation/ad-035-live-2026-09-25.md), superseding the earlier
+startup-only discovery and pending-live limitations above. It includes exact
+SDK run IDs, cited Q&A, synthetic-only writing acceptance, offline recovery,
+error/retry, host-confirmed interruption and diagnostic usage reconciliation.
+Usagestat backend ingestion and packaged-desktop certification remain separate.
+
 The connection implementation from `agenticdriver-connection-setup` commit
 `4f4be9240080c776d0b7161501e038577e9b6202` is now reconciled into the current
 workspace. Its catalog, settings UI/routes, adapter lifecycle/error handling,
