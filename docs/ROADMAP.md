@@ -8,6 +8,8 @@ state, tags, collections, notes, questions, and generated research artifacts.
 
 ## Planning Documents
 
+- [Overleaf-style writing parity](OVERLEAF_PARITY.md): feature inventory, current
+  implementation gaps, anchored comments/review and ordered delivery criteria.
 - [Writing Mode](WRITING_MODE.md): global TeX documents, linked projects, code/results and
   literature, storyline/drafting, citation finder and audience controls.
 - [Internal/external evidence discovery](EVIDENCE_SOURCES.md): search own code,
