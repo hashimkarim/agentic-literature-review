@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { AgenticClient } from "@agenticdriver/sdk/client";
+import { AgenticClient, type ClientOptions } from "@agenticdriver/sdk/client";
 import { DriverError, type ProviderInfo } from "@agenticdriver/sdk";
 import { providerPresentation } from "@agenticdriver/sdk/catalog";
 import {
@@ -44,6 +44,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
   private pendingRefresh: Promise<void> | undefined;
   private connection: DriverConnection;
   private localProviders: AgentProvider[] | undefined;
+  private discoverInstances: (() => Promise<ProviderInfo[]>) | undefined;
 
   constructor(
     private client: AgenticClient | null,
@@ -77,16 +78,28 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     };
   }
   /** Replace the connection for new work; existing streams keep their client and abort signal. */
-  async configure(url: string, token: string): Promise<void> {
+  async configure(url: string, token: ClientOptions["token"], discoverInstances?: () => Promise<ProviderInfo[]>): Promise<void> {
     const client = new AgenticClient({ url, token });
     await this.pendingRefresh;
     this.client = client;
+    this.discoverInstances = discoverInstances;
     this.replaceInventory([]);
     this.connection = {
       configured: true, endpoint: new URL(url).origin, status: "error", code: "DISCOVERY_PENDING",
       message: "Checking the configured driver connection.", checkedAt: null, refreshing: false,
     };
     await this.refresh();
+  }
+  /** Forget new-work access without interrupting already-created streams. */
+  async disconnect(): Promise<void> {
+    await this.pendingRefresh;
+    this.client = null;
+    this.discoverInstances = undefined;
+    this.replaceInventory([]);
+    this.connection = {
+      configured: false, endpoint: null, status: "unconfigured", code: "NOT_CONFIGURED",
+      message: "Connect an AgenticDriver host in Settings.", checkedAt: null, refreshing: false,
+    };
   }
   /** Read-only discovery; never starts inference or changes explicit enablement. */
   refresh(): Promise<void> {
@@ -98,7 +111,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
           // Each SDK discovery request has its own bounded I/O timeout. Runs do not.
           const [, instances] = await Promise.all([
             this.client!.protocol(),
-            this.client!.providers({ refresh: true }),
+            this.discoverInstances ? this.discoverInstances() : this.client!.providers({ refresh: true }),
           ]);
           this.replaceInventory(instances);
           this.connection = {

@@ -15,6 +15,9 @@
     "exactOptionalPropertyTypes": true,
     "baseUrl": ".",
     "paths": {
+      "@agenticdriver/sdk": ["node_modules/@agenticdriver/sdk/dist/index.d.ts"],
+      "@agenticdriver/sdk/*": ["node_modules/@agenticdriver/sdk/dist/*.d.ts"],
+      "@litagent/driver-panel-sdk/*": ["node_modules/@litagent/driver-panel-sdk/dist/*.d.ts"],
       "@litagent/contracts": ["packages/contracts/src/index.ts"],
       "@litagent/library": ["packages/library/src/index.ts"],
       "@litagent/agents": ["packages/agents/src/index.ts"],

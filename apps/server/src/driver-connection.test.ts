@@ -32,7 +32,8 @@ it("persists private local connection setup, rejects foreign origins and require
     expect(JSON.parse(text).connection.status).toBe("ready");
     expect(JSON.parse(text).providers.find((p: { id: string }) => p.id === "driver.mock").enabled).toBe(false);
     expect(fs.statSync(store.file).mode & 0o777).toBe(0o600);
-    expect(new DriverConnectionStore(store.file).read()).toEqual({ url: host.url, token });
+    expect(new DriverConnectionStore(store.file).read()).toMatchObject({ url: host.url, token });
+    expect(store.read()?.connectionId).toMatch(/^[a-f0-9-]{36}$/);
     settings.patch("driver.mock", { enabled: true, connected: true, defaultModel: "demo" }, [catalog.definition("driver.mock")!]);
     catalog.setSettings(settings.read());
     await send({ url: host.url });
