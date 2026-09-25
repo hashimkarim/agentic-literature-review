@@ -1,0 +1,13 @@
+diff --git a/dist/esm/index.js b/dist/esm/index.js
+index 4b3787d5847010784db77ec66b95d5ee1a812249..990b419f559b5167fa7e30683ba1302d9f907b64 100644
+--- a/dist/esm/index.js
++++ b/dist/esm/index.js
+@@ -228,7 +228,7 @@ var groupHighlightsByPage = (highlights) => highlights.reduce((acc, highlight) =
+     highlight.position.boundingRect.pageNumber,
+     ...highlight.position.rects.map((rect) => rect.pageNumber || 0)
+   ];
+-  pageNumbers.forEach((pageNumber) => {
++  new Set(pageNumbers).forEach((pageNumber) => {
+     acc[pageNumber] ||= [];
+     const pageSpecificHighlight = {
+       ...highlight,
