@@ -1,0 +1,50 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import express from "express";
+import { expect, it } from "vitest";
+import { AgenticDriver } from "@agenticdriver/sdk";
+import { mockProvider } from "@agenticdriver/sdk/providers";
+import { serve } from "@agenticdriver/sdk/server";
+import { AgenticDriverCatalog } from "@litagent/agents/agenticdriver";
+import { AgentProviderSettingsStore } from "@litagent/agents";
+import { DriverConnectionStore, driverConnectionRoutes } from "./driver-connection";
+
+it("persists private local connection setup, rejects foreign origins and requires explicit enablement", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-connection-"));
+  const token = "synthetic-private-driver-bearer-credential";
+  const host = await serve(new AgenticDriver({ providers: [mockProvider(() => ({ text: "Unused" }))] }), { port: 0, tokens: [{ token, subject: "fixture", providers: ["mock"] }] });
+  const catalog = new AgenticDriverCatalog(null, []);
+  const store = new DriverConnectionStore(path.join(root, ".litagent/driver-connection.json"));
+  const settings = new AgentProviderSettingsStore(path.join(root, ".litagent/provider-settings.json"));
+  const app = express(); app.use(express.json()); app.use("/driver", driverConnectionRoutes(catalog, store, settings));
+  const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
+  const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/driver`;
+  const send = (body: unknown, origin = "http://localhost:5173", local = "1") => fetch(url, { method: "PUT", headers: { "Content-Type": "application/json", Origin: origin, "X-LitAgent-Local": local }, body: JSON.stringify(body) });
+  try {
+    expect((await send({ url: host.url, token }, "https://evil.example")).status).toBe(403);
+    expect((await send({ url: host.url, token }, "http://localhost:5173", "")).status).toBe(403);
+    expect((await send({ url: "http://remote.example", token })).status).toBe(400);
+    const tokenFile = path.join(root, "private.token"); fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+    const result = await send({ url: host.url, tokenFile });
+    const text = await result.text(); expect(result.status).toBe(200);
+    expect(text).not.toContain(token); expect(text).not.toContain(tokenFile);
+    expect(JSON.parse(text).connection.status).toBe("ready");
+    expect(JSON.parse(text).providers.find((p: { id: string }) => p.id === "driver.mock").enabled).toBe(false);
+    expect(fs.statSync(store.file).mode & 0o777).toBe(0o600);
+    expect(new DriverConnectionStore(store.file).read()).toEqual({ url: host.url, token });
+    settings.patch("driver.mock", { enabled: true, connected: true, defaultModel: "demo" }, [catalog.definition("driver.mock")!]);
+    catalog.setSettings(settings.read());
+    await send({ url: host.url });
+    expect(settings.read()["driver.mock"]?.enabled).toBe(true);
+    const denied = await send({ url: host.url, token: "different-account-credential-not-permitted" });
+    expect((await denied.json() as { connection: { status: string } }).connection.status).toBe("error");
+    expect(settings.read()["driver.mock"]?.enabled).toBe(false);
+    expect(settings.read()["driver.mock"]?.defaultModel).toBe(null);
+    expect(store.prepare({ url: host.url }).token).toBe("different-account-credential-not-permitted");
+    fs.symlinkSync(tokenFile, path.join(root, "linked.token"));
+    expect((await send({ url: host.url, tokenFile: path.join(root, "linked.token") })).status).toBe(400);
+    const bad = await send({ url: `https://secret-user:${token}@example.test`, token });
+    expect(await bad.text()).not.toContain(token);
+  } finally { await host.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+});

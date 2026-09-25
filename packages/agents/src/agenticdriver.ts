@@ -46,7 +46,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
   private localProviders: AgentProvider[] | undefined;
 
   constructor(
-    private readonly client: AgenticClient | null,
+    private client: AgenticClient | null,
     instances: ProviderInfo[],
     settings: Record<string, AgentProviderSettings> = {},
     connection?: DriverConnection,
@@ -75,6 +75,18 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       ...this.connection,
       refreshing: this.pendingRefresh !== undefined,
     };
+  }
+  /** Replace the connection for new work; existing streams keep their client and abort signal. */
+  async configure(url: string, token: string): Promise<void> {
+    const client = new AgenticClient({ url, token });
+    await this.pendingRefresh;
+    this.client = client;
+    this.replaceInventory([]);
+    this.connection = {
+      configured: true, endpoint: new URL(url).origin, status: "error", code: "DISCOVERY_PENDING",
+      message: "Checking the configured driver connection.", checkedAt: null, refreshing: false,
+    };
+    await this.refresh();
   }
   /** Read-only discovery; never starts inference or changes explicit enablement. */
   refresh(): Promise<void> {
@@ -266,14 +278,10 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     return new AgenticDriverAdapter(
       this.describeInstance(id),
       id,
-      this.client ?? {
-        async *stream() {
-          throw new DriverError(
-            "PROVIDER_UNAVAILABLE",
-            "Configure the driver connection before starting a workflow.",
-          );
-        },
-      },
+      { stream: (request, options) => {
+        if (!this.client) throw new DriverError("PROVIDER_UNAVAILABLE", "Configure the driver connection before starting a workflow.");
+        return this.client.stream(request, options);
+      } },
       () => this.describeInstance(id),
     );
   }
