@@ -113,3 +113,25 @@ were observed; no manuscript edit was accepted. This supersedes the earlier
 absence of live evidence for this selected route, not the separate Antigravity
 isolation status. Startup-only catalog discovery still blocks full connection
 refresh acceptance on this branch. See the [run IDs, checks and remaining gaps](validation/writing-live-2026-09-25.md).
+
+## AD-035 Reconciliation (2026-09-25)
+
+The connection implementation from `agenticdriver-connection-setup` commit
+`4f4be9240080c776d0b7161501e038577e9b6202` is now reconciled into the current
+workspace. Its catalog, settings UI/routes, adapter lifecycle/error handling,
+installed-SDK workflow tests and browser regression script are reused. The
+published `@agenticdriver/sdk@0.1.0` pin and recent writing/view preferences are
+preserved; the old vendor archive and sibling-source configuration are not used.
+
+Native T3 preview verified explicit model selection/enablement, actual catalog
+refresh, offline status, disabling while offline, reload persistence and recovery
+without re-enablement. A disposable loopback fault proxy targets the authorized
+host without stopping it: `scripts/live-driver-proxy.ts` requires explicit opt-in;
+SIGUSR1 simulates offline discovery, SIGUSR2 rejects new runs, SIGHUP restores
+transport. These are injected failures, not an actual provider outage. It forwards
+no alternate account/model and records no credentials or prompt bodies.
+
+Typecheck, 207 tests (two opt-in compiler tests skipped), and build pass. The
+ported standalone browser script is retained for regression use; this session
+uses native T3 preview instead. Remaining live Q&A/usage and writing-review
+checks are tracked in issue #5 before final acceptance.

@@ -1,5 +1,6 @@
 import type {
   AgentProvider,
+  DriverConnection,
   ComparisonArtifact,
   Collection,
   Paper,
@@ -309,6 +310,8 @@ export const api = {
   exportBibUrl: (projectId: string) => `${API_BASE}/api/exports/${projectId}/bib`,
   providerStatus: () => request<AgentProvider[]>("/api/provider-status"),
   converterStatus: () => request<ConverterStatus>("/api/converter-status"),
+  driverConnection: () => request<DriverConnection>("/api/settings/driver"),
+  refreshDriver: () => request<{ connection: DriverConnection; providers: AgentProvider[] }>("/api/settings/driver/refresh", { method: "POST" }),
   providerSettings: () => request<AgentProvider[]>("/api/settings/providers"),
   updateProviderSettings: (
     providerId: string,

@@ -20,6 +20,7 @@
     "typecheck": "bunx tsc -b",
     "test": "bunx vitest run",
     "test:chat-ui": "bun scripts/check-chat-ui.ts",
+    "test:driver-ui": "bun scripts/check-driver-ui.ts",
     "test:writing-ui": "bunx tsx scripts/check-writing-ui.ts",
     "test:writing-assistant-ui": "bunx tsx scripts/check-writing-assistant-ui.ts",
     "test:writing-build-ui": "bunx tsx scripts/check-writing-build-ui.ts",

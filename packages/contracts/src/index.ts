@@ -474,6 +474,17 @@ export const CitationTargetRequestSchema = z.object({
 export type CitationTargetRequest = z.infer<typeof CitationTargetRequestSchema>;
 export type CitationTargetRequestInput = z.input<typeof CitationTargetRequestSchema>;
 
+export const DriverConnectionSchema = z.object({
+  configured: z.boolean(),
+  endpoint: z.string().nullable(),
+  status: z.enum(["unconfigured", "ready", "error"]),
+  code: z.string(),
+  message: z.string(),
+  checkedAt: isoDateSchema.nullable(),
+  refreshing: z.boolean()
+});
+export type DriverConnection = z.infer<typeof DriverConnectionSchema>;
+
 export const AgentProviderSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -488,7 +499,18 @@ export const AgentProviderSchema = z.object({
   models: z.array(z.string()).default([]),
   customModels: z.array(z.string()).default([]),
   lastCheckedAt: isoDateSchema.nullable().default(null),
-  connectCommand: z.string().nullable().default(null)
+  connectCommand: z.string().nullable().default(null),
+  driver: z.object({
+    instanceId: z.string(),
+    vendor: z.string(),
+    authMode: z.enum(["api-key", "cli-session", "none", "unknown"]),
+    available: z.boolean(),
+    restrictedModels: z.boolean(),
+    healthCode: z.string(),
+    message: z.string(),
+    accountLabel: z.string(),
+    iconText: z.string()
+  }).optional()
 });
 export type AgentProvider = z.infer<typeof AgentProviderSchema>;
 
