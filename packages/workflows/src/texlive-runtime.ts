@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { ManuscriptNodePathSchema, type TexRuntimeStatus } from "@litagent/contracts";
 import { TectonicCompiler, type TexCompiler, type TexCompileDocument } from "./tex-runtime";
+import { readSyncTex } from "./tex-source-map";
 
 const MAX_FILE = 16 * 1024 * 1024;
 const Manifest = z.object({
@@ -201,7 +202,7 @@ export class TexLiveCompiler implements TexCompiler {
       if (!stat.isFile() || stat.size > MAX_FILE) throw new Error("Invalid or oversized compiler PDF output.");
       const pdf = await fs.promises.readFile(output);
       if (pdf.subarray(0, 5).toString() !== "%PDF-") throw new Error("Compiler output is not a PDF.");
-      return { log, pdf };
+      return { log, pdf, synctex: await readSyncTex(output.replace(/\.pdf$/, ".synctex.gz")) };
     } catch (error) {
       signal.throwIfAborted();
       append(`\nerror: ${error instanceof Error ? error.message : "Compilation failed."}\n`);

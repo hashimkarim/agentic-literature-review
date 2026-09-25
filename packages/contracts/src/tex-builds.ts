@@ -34,3 +34,22 @@ export type TexDiagnostic = z.infer<typeof TexDiagnosticSchema>;
 export type TexBuild = z.infer<typeof TexBuildSchema>;
 export type TexRuntimeStatus = { available: boolean; version: string | null; message: string; engine?: "tectonic" | "texlive" };
 export type TexBuildState = z.infer<typeof TexBuildStateSchema> & { runtime: TexRuntimeStatus };
+
+// PDF points (72 dpi), measured from the top-left of the unrotated page.
+export const TexSourceBoxSchema = z.object({
+  path: ManuscriptPathSchema, line: z.number().int().positive(),
+  page: z.number().int().positive().max(10000),
+  x: z.number().finite().min(0).max(20000), y: z.number().finite().min(0).max(20000),
+  width: z.number().finite().positive().max(20000), height: z.number().finite().positive().max(20000)
+});
+export const TexSourceMapSchema = z.object({
+  buildId: z.string().uuid(), boxes: z.array(TexSourceBoxSchema).max(100000)
+});
+export const PdfCommentSelectionSchema = z.object({
+  page: z.number().int().positive().max(10000),
+  rects: z.array(TexSourceBoxSchema.pick({ x: true, y: true, width: true, height: true })).min(1).max(500),
+  quote: z.string().trim().min(1).max(8000)
+}).strict();
+export type TexSourceBox = z.infer<typeof TexSourceBoxSchema>;
+export type TexSourceMap = z.infer<typeof TexSourceMapSchema>;
+export type PdfCommentSelection = z.infer<typeof PdfCommentSelectionSchema>;

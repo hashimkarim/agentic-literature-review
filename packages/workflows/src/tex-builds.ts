@@ -2,9 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ManuscriptError, ManuscriptStore } from "@litagent/library";
-import { TexBuildRequestSchema, TexBuildStateSchema, type ManuscriptDocument, type TexBuild, type TexBuildState, type TexDiagnostic } from "@litagent/contracts";
+import { TexBuildRequestSchema, TexBuildStateSchema, TexSourceMapSchema, PdfCommentSelectionSchema, type ManuscriptDocument, type TexBuild, type TexBuildState, type TexDiagnostic, type TexSourceMap, type CommentSelection } from "@litagent/contracts";
 import { type TexCompiler, type TexCompileDocument } from "./tex-runtime";
 import { defaultTexCompiler } from "./texlive-runtime";
+import { sourceBoxes, sourceSelection } from "./tex-source-map";
 
 type StoredState = Omit<TexBuildState, "runtime">;
 export function texDiagnostics(log: string, paths: string[]): TexDiagnostic[] {
@@ -121,6 +122,26 @@ export class TexBuildService {
     return fs.readFileSync(file);
   }
 
+  sourceMap(manuscriptId: string, buildId: string): TexSourceMap {
+    const state = this.get(manuscriptId);
+    if (state.lastSuccessful?.id !== buildId) throw new ManuscriptError(404, "build_not_found", "No source map for this build.");
+    const file = this.file(manuscriptId, `${buildId}.map.json`);
+    if (!fs.existsSync(file)) throw new ManuscriptError(409, "source_map_unavailable", "Compile again to enable PDF comments for this document.");
+    if (fs.statSync(file).size > 24 * 1024 * 1024) throw new ManuscriptError(409, "source_map_invalid", "The source map is too large. Compile again.");
+    const map = TexSourceMapSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
+    if (map.buildId !== buildId) throw new ManuscriptError(409, "source_map_invalid", "The source map changed. Compile again.");
+    return map;
+  }
+
+  pdfCommentSelection(manuscriptId: string, buildId: string, input: unknown): CommentSelection {
+    const request = PdfCommentSelectionSchema.parse(input);
+    const map = this.sourceMap(manuscriptId, buildId);
+    const document = this.store.read(manuscriptId);
+    const build = this.get(manuscriptId).lastSuccessful!;
+    if (!sameRevisions(build.revisions, revisionsOf(document)) || build.entryFile !== document.entryFile) throw new ManuscriptError(409, "build_source_changed", "The PDF shows an earlier revision. Compile your saved changes before commenting on it.");
+    return sourceSelection(map.boxes, request, document);
+  }
+
   private async execute(document: TexCompileDocument, build: TexBuild, previous: TexBuild | null, signal: AbortSignal) {
     let successful = previous;
     try {
@@ -134,6 +155,14 @@ export class TexBuildService {
       if (result.pdf) {
         if (result.pdf.length > 16 * 1024 * 1024 || result.pdf.subarray(0, 5).toString() !== "%PDF-") throw new Error("Invalid compiler PDF output.");
         this.atomicFile(document.id, `${build.id}.pdf`, result.pdf);
+        if (result.synctex) {
+          try {
+            const map = TexSourceMapSchema.parse({ buildId: build.id, boxes: sourceBoxes(result.synctex, document) });
+            this.atomicFile(document.id, `${build.id}.map.json`, JSON.stringify(map));
+          } catch {
+            build.diagnostics = [...build.diagnostics.slice(0, 99), { severity: "warning", message: "PDF compiled, but its source map is unavailable. Source comments remain available.", path: null, line: null }];
+          }
+        }
         build.status = "succeeded";
         successful = build;
       } else {
@@ -146,6 +175,6 @@ export class TexBuildService {
     }
     build.finishedAt = new Date().toISOString();
     this.writeState(document.id, { latest: build, lastSuccessful: successful });
-    if (successful?.id === build.id && previous) fs.rmSync(this.file(document.id, `${previous.id}.pdf`), { force: true });
+    if (successful?.id === build.id && previous) for (const extension of ["pdf", "map.json"]) fs.rmSync(this.file(document.id, `${previous.id}.${extension}`), { force: true });
   }
 }

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { afterEach, expect, it } from "vitest";
 import { ManuscriptStore } from "@litagent/library";
 import type { ManuscriptDocument } from "@litagent/contracts";
@@ -18,6 +19,34 @@ function fixture(compile: TexCompiler["compile"] = async () => ({ log: "", pdf: 
   return { root, store, document, compiler, service: new TexBuildService(store, compiler) };
 }
 const request = (document: ManuscriptDocument) => ({ requestId: randomUUID(), entryFile: document.entryFile, revisions: Object.fromEntries([...document.files, ...(document.assets ?? [])].map((file) => [file.path, file.revision])) });
+
+it("persists source mapping with the build, rejects stale PDF comments and reuses canonical threads", async () => {
+  const synctex = gzipSync("SyncTeX Version:1\nInput:1:/work/main.tex\nOutput:pdf\nMagnification:1000\nUnit:1\nX Offset:0\nY Offset:0\nContent:\n{1\n(1,1:0,6578176:6578176,657818,0\n)\n}1\nPostamble:\n");
+  const f = fixture(async () => ({ log: "", pdf: Buffer.from("%PDF-synthetic"), synctex }));
+  const first = request(f.document);
+  f.service.start(f.document.id, first); await f.service.idle();
+  const reopened = new TexBuildService(f.store, f.compiler);
+  expect(reopened.sourceMap(f.document.id, first.requestId).boxes).toHaveLength(1);
+  const click = { page: 1, rects: [{ x: 10, y: 91, width: 10, height: 8 }], quote: "Rendered selection" };
+  const selection = reopened.pdfCommentSelection(f.document.id, first.requestId, click);
+  const comment = f.store.createComment(f.document.id, { requestId: randomUUID(), selection, body: "PDF-created comment" });
+  expect(f.store.comments(f.document.id)[0]!.id).toBe(comment.id);
+  expect(comment.location?.state).toBe("attached");
+  f.store.writeFile(f.document.id, { path: "main.tex", expectedRevision: selection.revision, content: "New source revision" });
+  expect(() => reopened.pdfCommentSelection(f.document.id, first.requestId, click)).toThrow("earlier revision");
+  expect(() => reopened.sourceMap(f.document.id, "../../etc/passwd")).toThrow("No source map");
+  reopened.start(f.document.id, request(f.store.read(f.document.id))); await reopened.idle();
+  expect(fs.existsSync(path.join(f.root, ".litagent/tex-builds", f.document.id, `${first.requestId}.map.json`))).toBe(false);
+  expect(f.store.comments(f.document.id)[0]!.messages[0]!.body).toBe("PDF-created comment");
+});
+
+it("keeps a valid PDF when mapping is absent or malformed without claiming comments can be mapped", async () => {
+  const f = fixture(async () => ({ log: "", pdf: Buffer.from("%PDF-synthetic"), synctex: Buffer.from("invalid") }));
+  const input = request(f.document); f.service.start(f.document.id, input); await f.service.idle();
+  expect(f.service.get(f.document.id).latest?.status).toBe("succeeded");
+  expect(f.service.get(f.document.id).latest?.diagnostics[0]?.message).toContain("source map is unavailable");
+  expect(() => f.service.sourceMap(f.document.id, input.requestId)).toThrow("Compile again");
+});
 
 it("snapshots binary assets and rejects stale assets or main-file selection", async () => {
   let copied: Buffer | undefined;

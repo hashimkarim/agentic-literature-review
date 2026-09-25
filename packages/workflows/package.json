@@ -15,6 +15,7 @@
     "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@inkylabs/synctex-js": "0.0.1",
     "@litagent/agents": "*",
     "@litagent/contracts": "*",
     "@litagent/indexer": "*",

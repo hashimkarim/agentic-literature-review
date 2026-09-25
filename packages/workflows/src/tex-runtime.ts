@@ -6,11 +6,12 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { ManuscriptDocument, TexRuntimeStatus } from "@litagent/contracts";
+import { readSyncTex } from "./tex-source-map";
 
 export type TexCompileDocument = ManuscriptDocument & { assetContents?: { path: string; bytes: Buffer }[] };
 export interface TexCompiler {
   status(): TexRuntimeStatus;
-  compile(document: TexCompileDocument, signal: AbortSignal, progress?: (phase: string) => void): Promise<{ log: string; pdf: Buffer | null }>;
+  compile(document: TexCompileDocument, signal: AbortSignal, progress?: (phase: string) => void): Promise<{ log: string; pdf: Buffer | null; synctex?: Buffer | undefined }>;
 }
 const MAX_OUTPUT = 16 * 1024 * 1024;
 const ManifestSchema = z.object({
@@ -123,7 +124,7 @@ export class TectonicCompiler implements TexCompiler {
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_OUTPUT) throw new Error("Invalid or oversized compiler output.");
       const pdf = await fs.promises.readFile(output);
       if (!pdf.subarray(0, 5).equals(Buffer.from("%PDF-"))) throw new Error("Compiler output is not a PDF.");
-      return { log: result.log, pdf };
+      return { log: result.log, pdf, synctex: await readSyncTex(output.replace(/\.pdf$/, ".synctex.gz")) };
     } finally { await fs.promises.rm(temporary, { recursive: true, force: true }); }
   }
 }

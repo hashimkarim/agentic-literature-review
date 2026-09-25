@@ -83,6 +83,8 @@ export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCan
     router.post("/:manuscriptId/context", (req, res) => res.json(context.preview(param(req.params, "manuscriptId"), req.body)));
   }
   if (builds) {
+    router.get("/:manuscriptId/builds/:buildId/source-map", (req, res) => res.json(builds.sourceMap(param(req.params, "manuscriptId"), param(req.params, "buildId"))));
+    router.post("/:manuscriptId/builds/:buildId/comment-selection", (req, res) => res.json(builds.pdfCommentSelection(param(req.params, "manuscriptId"), param(req.params, "buildId"), req.body)));
     router.get("/:manuscriptId/builds", (req, res) => res.json(builds.get(param(req.params, "manuscriptId"))));
     router.post("/:manuscriptId/builds", (req, res) => res.status(202).json(builds.start(param(req.params, "manuscriptId"), req.body)));
     router.post("/:manuscriptId/builds/:buildId/cancel", (req, res) => res.json(builds.cancel(param(req.params, "manuscriptId"), param(req.params, "buildId"))));

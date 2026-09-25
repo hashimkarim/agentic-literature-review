@@ -131,6 +131,7 @@
       "name": "@litagent/workflows",
       "version": "0.1.0",
       "dependencies": {
+        "@inkylabs/synctex-js": "0.0.1",
         "@litagent/agents": "*",
         "@litagent/contracts": "*",
         "@litagent/indexer": "*",
@@ -262,6 +263,8 @@
     "@floating-ui/react-dom": ["@floating-ui/react-dom@2.1.8", "", { "dependencies": { "@floating-ui/dom": "^1.7.6" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-cC52bHwM/n/CxS87FH0yWdngEZrjdtLW/qVruo68qg+prK7ZQ4YGdut2GyDVpoGeAYe/h899rVeOVm6Oi40k2A=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
+
+    "@inkylabs/synctex-js": ["@inkylabs/synctex-js@0.0.1", "", {}, "sha512-UPQXG4CTCGB6ezr/fKXKB8d4Yvlg+uS+L5W6+hdzs9ognVSQdG8cSoIXZwZf0twu7GvRmedmXPeRKT2nV0mjMA=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
