@@ -44,6 +44,7 @@
     "vitest": "^4.0.14"
   },
   "patchedDependencies": {
-    "react-pdf-highlighter-plus@1.1.4": "patches/react-pdf-highlighter-plus@1.1.4.patch"
+    "react-pdf-highlighter-plus@1.1.4": "patches/react-pdf-highlighter-plus@1.1.4.patch",
+    "@inkylabs/synctex-js@0.0.1": "patches/@inkylabs%2Fsynctex-js@0.0.1.patch"
   }
 }

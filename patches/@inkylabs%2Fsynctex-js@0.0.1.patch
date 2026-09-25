@@ -1,0 +1,13 @@
+diff --git a/lib/synctexParser.js b/lib/synctexParser.js
+index a020dc0aa0fd66e02fe74fc1577b06fc8eae1257..d837a4b564f8dd3992c2bd3067807340bad74d68
+--- a/lib/synctexParser.js
++++ b/lib/synctexParser.js
+@@ -30,7 +30,7 @@ var parseSyncTex = function (pdfsyncBody) {
+ 
+   pdfsyncObject.version = lineArray[0].replace('SyncTeX Version:', '');
+ 
+-  var inputPattern = /Input:([0-9]+):(.+)/;
++  var inputPattern = /Input:([0-9]+):(.*)/;
+   var offsetPattern = /(X|Y) Offset:([0-9]+)/;
+   var openPagePattern = /\{([0-9]+)$/;
+   var closePagePattern = /\}([0-9]+)$/;

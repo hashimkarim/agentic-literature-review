@@ -8,6 +8,7 @@ import { ManuscriptStore } from "@litagent/library";
 import type { ManuscriptDocument } from "@litagent/contracts";
 import { TexBuildService, texDiagnostics } from "./tex-builds";
 import { TectonicCompiler, type TexCompiler } from "./tex-runtime";
+import { sourceBoxes } from "./tex-source-map";
 
 const roots: string[] = [];
 afterEach(() => { roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true })); });
@@ -161,6 +162,8 @@ it.runIf(process.env.LITAGENT_TEST_TEX === "1")("uses the prepared offline engin
   expect(engine.status().available).toBe(true);
   const result = await engine.compile(f.document, new AbortController().signal);
   expect(result.pdf?.subarray(0, 5).toString(), result.log).toBe("%PDF-");
+  expect(result.synctex).toBeDefined();
+  expect(sourceBoxes(result.synctex!, f.document).some((box) => box.path === "main.tex")).toBe(true);
   let imported = f.store.uploadFile(f.document.id, "figures/sample.pdf", result.pdf!, f.document.treeRevision!);
   imported = f.store.uploadFile(imported.id, "custom.sty", Buffer.from("\\RequirePackage{graphicx}\n\\newcommand{\\fixturetext}{Imported figure}"), imported.treeRevision!);
   f.store.writeFile(imported.id, { path: "main.tex", content: "\\documentclass{article}\n\\usepackage{custom}\n\\begin{document}\\fixturetext\\includegraphics[width=2cm]{figures/sample.pdf}\\end{document}", expectedRevision: imported.files.find((file) => file.path === "main.tex")!.revision });

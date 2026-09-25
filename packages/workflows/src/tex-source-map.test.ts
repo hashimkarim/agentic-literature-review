@@ -1,4 +1,4 @@
-import { gzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 import type { ManuscriptDocument, TexSourceBox } from "@litagent/contracts";
 import { sourceBoxes, sourceSelection } from "./tex-source-map";
@@ -19,6 +19,14 @@ it("uses the packaged SyncTeX parser, engine offsets and full paths, excluding e
   expect(boxes[0]!.y).toBeCloseTo(162);
   expect(boxes[0]!.height).toBeCloseTo(10);
   expect(() => sourceBoxes(Buffer.from("invalid"), document)).toThrow();
+});
+
+it("tolerates Tectonic's unnamed bundled inputs without exposing them as manuscript sources", () => {
+  const source = gunzipSync(syntheticSyncTex()).toString("utf8")
+    .replace("Input:3:/etc/private.tex", "Input:3:")
+    .replace("(3,1:0,13156352:6578176,657818,0\n)", "(3,1:0,13156352:6578176,657818,0\ng3,1:657818,13156352\n)");
+  const boxes = sourceBoxes(gzipSync(source), document);
+  expect(boxes.map((box) => box.path)).toEqual(["chapters/one.tex", "appendix/one.tex"]);
 });
 
 it("maps PDF line wraps to the exact source selection within its mapped paragraph", () => {
