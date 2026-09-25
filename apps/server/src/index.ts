@@ -32,6 +32,8 @@ import { agenticDriverCatalogFromEnvironment, DriverSettingsError } from "@litag
 import { SearchIndex } from "@litagent/indexer";
 import { CitationSourceChangedError, DEFAULT_REPO_ROOT, LitAgentRepository, ManuscriptStore } from "@litagent/library";
 import { manuscriptRoutes } from "./manuscript-routes";
+import { DriverConnectionStore, driverConnectionRoutes } from "./driver-connection";
+import { localImportRoutes } from "./local-import";
 import { WritingContextService } from "@litagent/workflows";
 import { TexBuildService } from "@litagent/workflows";
 import { WorkflowEngine, WorkflowStartRequestSchema, QaThreadConflictError, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema, WritingCandidateService, writingTargetValidator } from "@litagent/workflows";
@@ -49,6 +51,9 @@ index.rebuild(repo);
 
 const providerSettings = new AgentProviderSettingsStore(repo.resolve(".litagent/provider-settings.json"));
 const providers = await agenticDriverCatalogFromEnvironment(providerSettings.read());
+const driverConnectionStore = new DriverConnectionStore(repo.resolve(".litagent/driver-connection.json"));
+const savedDriverConnection = driverConnectionStore.read();
+if (savedDriverConnection) await providers.configure(savedDriverConnection.url, savedDriverConnection.token);
 const workflows = new WorkflowEngine(repo, index, providers, undefined, providerSettings);
 const upload = multer({ dest: repo.resolve(".litagent/cache/uploads") });
 
@@ -81,7 +86,9 @@ const automationPath = repo.resolve(".litagent/workflow-automations.json");
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+app.use("/api/settings/driver", driverConnectionRoutes(providers, driverConnectionStore, providerSettings));
 const manuscripts = new ManuscriptStore(repo.root);
+app.use("/api/local-import", localImportRoutes(repo, manuscripts, indexPaper));
 const writingContext = new WritingContextService(manuscripts, repo);
 const writingCandidates = new WritingCandidateService(manuscripts, new AgentHarness({ catalog: providers }), writingTargetValidator(providers, () => providerSettings.read()), writingContext);
 const texBuilds = new TexBuildService(manuscripts);

@@ -6,6 +6,7 @@ export const WritingAttachmentInputSchema = z.object({
   path: ManuscriptNodePathSchema,
   kind: WritingSourceKindSchema,
   content: z.string().min(1).max(256_000),
+  originPath: z.string().min(1).max(4096).optional(),
   originUrl: z.string().max(2000).refine((value) => {
     try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password && !url.search; } catch { return false; }
   }, "Use an HTTPS source URL without credentials or query parameters.").nullable().default(null)

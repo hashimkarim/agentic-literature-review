@@ -1,4 +1,5 @@
 import { z } from "zod";
+export * from "./local-import";
 export * from "./manuscripts";
 export * from "./manuscript-comments";
 export * from "./writing-candidates";
