@@ -508,6 +508,11 @@ export const AgentProviderSchema = z.object({
     authMode: z.enum(["api-key", "cli-session", "none", "unknown"]),
     available: z.boolean(),
     restrictedModels: z.boolean(),
+    modelCatalog: z.object({
+      source: z.enum(["provider", "configured", "unavailable"]),
+      models: z.array(z.string()),
+      complete: z.boolean(),
+    }).optional(),
     healthCode: z.string(),
     message: z.string(),
     accountLabel: z.string(),

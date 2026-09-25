@@ -142,3 +142,31 @@ Typecheck, 207 tests (two opt-in compiler tests skipped), and build pass. The
 ported standalone browser script is retained for regression use; this session
 uses native T3 preview instead. Remaining live Q&A/usage and writing-review
 checks are tracked in issue #5 before final acceptance.
+
+## Catalog-Only Regular Connection (2026-09-25)
+
+The separately provisioned regular local host at `http://127.0.0.1:7433` is now
+connected through Settings using its private local credential file. Credential
+contents never enter browser settings, receipts or the source repository. The
+existing synthetic validation host and its credentials remain unchanged.
+
+The host uses SDK source `2ddb90206dc5052ed7d668bf947b3ca4292cb593`, not a new
+registry release. LitAgent retains `@agenticdriver/sdk@0.1.0`. At this check the
+SDK's successor example assertion fix/Prometheus rerun was pending; app checks
+are independent of that SDK CI outcome.
+
+`driver.modelCatalog` preserves the host-reported inventory, source and
+pagination completeness. `AgentProvider.models` remains the execution allowlist.
+Settings displays the inventory separately with permission labels, and an empty
+allowlist is explicitly catalog-only. It cannot enable a provider or start a
+run, even when a previously saved selection remains. Refresh retains explicit
+app enablement/model preferences without granting newly discovered entries.
+Complete inventory is not proof of account entitlement or live qualification.
+
+Native T3 browser checks at 1920x1080 and 390x844 verified Settings, saving the
+connection by file path, refresh and reload persistence: nine reported Codex
+models, zero permitted models, disabled model selection and enable controls.
+Narrow Settings content has no horizontal overflow. No generation was attempted
+and no research content was sent. Execution rejection is tested using fixtures,
+not requests against the regular host. Typecheck and 237 tests pass (two optional
+compiler tests skipped).

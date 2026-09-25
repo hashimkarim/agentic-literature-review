@@ -3883,6 +3883,8 @@ function LocalProviderCard({ provider, onUpdateProvider, onConnectProvider }: Pr
 
 function DriverProviderCard({ provider, onUpdateProvider, onConnectProvider, onRefreshDriver }: ProviderCardProps) {
   const driver = provider.driver!;
+  const catalogOnly = driver.restrictedModels && provider.models.length === 0;
+  const reportedModels = [...new Set([...(driver.modelCatalog?.models ?? []), ...provider.models])];
   const [model, setModel] = useState(provider.defaultModel ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3895,7 +3897,7 @@ function DriverProviderCard({ provider, onUpdateProvider, onConnectProvider, onR
   };
   const save = () => onUpdateProvider(provider.id, { defaultModel: model.trim(),
     ...(!driver.restrictedModels ? { customModels: [...new Set([...provider.customModels, model.trim()])] } : {}) });
-  const status = !driver.available ? "Unavailable" : provider.authStatus === "authenticated" ? "Ready" : "Authentication unverified";
+  const status = !driver.available ? "Unavailable" : catalogOnly ? "Catalog only" : provider.authStatus === "authenticated" ? "Ready" : "Authentication unverified";
   return <section className="la-provider" aria-label={provider.label}>
     <div className="phead">
       <div className="picon" aria-hidden="true">{driver.iconText}</div>
@@ -3909,14 +3911,22 @@ function DriverProviderCard({ provider, onUpdateProvider, onConnectProvider, onR
       <div className="la-fieldgroup full">
         <label htmlFor={`model-${provider.id}`}>Default model</label>
         <div className="la-field" style={{ padding: "7px 10px" }}>
-          {driver.restrictedModels ? <select id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy} onChange={(event) => setModel(event.currentTarget.value)} style={{ ...nativeSelectStyle, maxWidth: "100%", width: "100%", minHeight: 34 }}>
-            <option value="">Select a permitted model</option>
+          {driver.restrictedModels ? <select id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy || catalogOnly} onChange={(event) => setModel(event.currentTarget.value)} style={{ ...nativeSelectStyle, maxWidth: "100%", width: "100%", minHeight: 34 }}>
+            <option value="">{catalogOnly ? "No models permitted by host" : "Select a permitted model"}</option>
             {model && !provider.models.includes(model) ? <option value={model} disabled>{model} (no longer permitted)</option> : null}
             {provider.models.map((value) => <option key={value} value={value}>{value}</option>)}
           </select> : <input id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy} onChange={(event) => setModel(event.currentTarget.value)} placeholder="Enter an explicit model ID" />}
         </div>
         {!driver.restrictedModels ? <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>The host does not publish a model allowlist. Enter the exact model you intend to use.</span> : null}
       </div>
+      {driver.modelCatalog && <div className="la-fieldgroup full driver-model-catalog">
+        <div className="driver-model-catalog-heading"><strong>Reported models ({reportedModels.length})</strong><span>{driver.modelCatalog.source} catalog · {driver.modelCatalog.complete ? "Inventory complete" : "Partial inventory"}</span></div>
+        <ul aria-label={`Reported models for ${driver.instanceId}`}>
+          {reportedModels.map((id) => <li key={id}><code>{id}</code><span>{!driver.restrictedModels ? "Permission unreported" : provider.models.includes(id) ? "Host permitted" : "Not permitted"}</span></li>)}
+        </ul>
+        {!reportedModels.length && <span>No model inventory reported.</span>}
+        <span>Inventory is not verification of account access or generation.</span>
+      </div>}
       {error ? <p role="alert" className="la-fieldgroup full">{error}</p> : null}
     </div>
     <div className="pfoot">

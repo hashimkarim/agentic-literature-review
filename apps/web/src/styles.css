@@ -1093,7 +1093,7 @@ button { font-family: var(--font-sans); }
 .la-provider .pbody { border-top: 1px solid var(--border-light); padding: 14px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; }
 .la-provider .pbody.collapsed { display: none; }
 .la-fieldgroup label { display: block; font: var(--text-caption); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 6px; }
-.la-fieldgroup .full { grid-column: 1 / -1; }
+.la-fieldgroup.full { grid-column: 1 / -1; }
 .la-select { display: flex; align-items: center; gap: 8px; background: var(--surface-input); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 7px 10px; font: var(--text-body-sm); color: var(--text-primary); cursor: pointer; white-space: nowrap; }
 .la-select .spacer { flex: 1; }
 .la-select i { width: 14px; height: 14px; color: var(--text-muted); }
@@ -2264,3 +2264,18 @@ button { font-family: var(--font-sans); }
 @media (prefers-reduced-motion: reduce) { .fade-in { animation: none; } }
 @keyframes blink { 50% { opacity: 0.3; } }
 .la-runningdot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-bright); animation: blink 1s infinite; }
+
+.driver-model-catalog { font: var(--text-caption); color: var(--text-secondary); min-width: 0; }
+.driver-model-catalog-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.driver-model-catalog ul { list-style: none; margin: 8px 0; padding: 0; max-height: 280px; overflow: auto; }
+.driver-model-catalog li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; padding: 7px 0; border-bottom: 1px solid var(--border-line); }
+.driver-model-catalog code { overflow-wrap: anywhere; color: var(--text-primary); }
+@media (max-width: 640px) {
+  .la-settings { min-width: 0; }
+  .la-settingsinner { padding: 20px 12px 40px; }
+  .la-settingsnav { overflow-x: auto; }
+  .la-provider .phead, .la-provider .pname, .la-provider .pstatus, .la-provider .pfoot { flex-wrap: wrap; }
+  .la-provider .pinfo { min-width: 120px; overflow-wrap: anywhere; }
+  .la-provider .pbody { grid-template-columns: minmax(0, 1fr); }
+  .la-provider .la-fieldgroup { min-width: 0; }
+}

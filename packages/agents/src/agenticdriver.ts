@@ -186,6 +186,8 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
         ? "Sign in or update this provider's credentials on the driver host, then refresh."
         : !available
           ? "The provider is unavailable. Check its host installation, permissions and account, then refresh."
+          : info?.models?.length === 0
+            ? "Catalog only. This host has not permitted any models for execution. Reported models do not establish account entitlement or live verification."
           : authStatus === "authenticated"
             ? "The host reports this provider ready. Select an explicit model."
             : "The driver is reachable; provider authentication has not been verified. Select an explicit model; the host checks access when a run starts.";
@@ -215,6 +217,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
         authMode: info?.authMode ?? "unknown",
         available,
         restrictedModels: info?.models !== undefined,
+        ...(info?.modelCatalog ? { modelCatalog: info.modelCatalog } : {}),
         healthCode: !present
           ? this.connection.status === "error"
             ? this.connection.code
@@ -245,7 +248,8 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       );
     if (
       provider.driver!.restrictedModels &&
-      ((patch.defaultModel != null &&
+      ((patch.enabled && provider.models.length === 0) ||
+        (patch.defaultModel != null &&
         !provider.models.includes(patch.defaultModel)) ||
         patch.customModels?.some((model) => !provider.models.includes(model)))
     )

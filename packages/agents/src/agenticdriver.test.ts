@@ -217,6 +217,38 @@ describe("AgenticDriver integration", () => {
     ).toThrow(/command/);
   }, 15_000); // Discovery has a bounded 10s transport watchdog; allow loaded CI to finish it.
 
+  it("exposes full inventory without granting catalog-only execution or replacing saved choices", async () => {
+    const info = { ...mockProvider().info, models: [] as string[],
+      health: { status: "unknown" as const, code: "CLI_CATALOG_AVAILABLE", message: "Catalog available", checkedAt: new Date().toISOString() },
+      modelCatalog: { source: "provider" as const, models: ["demo", "other"], complete: true } };
+    const client = new AgenticClient({ url: "http://127.0.0.1:1", token });
+    const stream = vi.spyOn(client, "stream");
+    vi.spyOn(client, "protocol").mockResolvedValue({ protocol: "agenticdriver", version: "1.0", supportedVersions: ["1.0"], features: [] });
+    vi.spyOn(client, "providers").mockImplementation(async () => [info]);
+    const catalog = new AgenticDriverCatalog(client, [info], {
+      "driver.mock": { providerId: "driver.mock", command: "", enabled: true, connected: true, defaultModel: "demo", customModels: [], lastCheckedAt: null, updatedAt: new Date().toISOString() },
+    });
+    await catalog.refresh();
+    const instance = catalog.discover().find((p) => p.id === "driver.mock")!;
+    expect(instance.models).toEqual([]);
+    expect(instance.driver?.modelCatalog).toEqual(info.modelCatalog);
+    expect(instance).toMatchObject({ enabled: true, defaultModel: "demo", authStatus: "unknown" });
+    expect(instance.driver?.message).toContain("Catalog only");
+    expect(() => catalog.validateSettings(instance.id, { enabled: true })).toThrow(/permitted/);
+    expect(() => catalog.validateSettings(instance.id, { defaultModel: "other" })).toThrow(/permitted/);
+    const adapter = catalog.createAdapter(instance.id)!;
+    expect(() => adapter.startSession({ cwd: workspace(), prompt: "fixture", runId: "denied-catalog" })).toThrow(/permitted/);
+    expect(stream).not.toHaveBeenCalled();
+    info.models = ["demo"];
+    await catalog.refresh();
+    expect(catalog.discover().find((p) => p.id === instance.id)).toMatchObject({
+      models: ["demo"], defaultModel: "demo", enabled: true,
+      driver: { modelCatalog: { models: ["demo", "other"] } },
+    });
+    expect(() => catalog.validateSettings(instance.id, { defaultModel: "other" })).toThrow(/permitted/);
+    expect(stream).not.toHaveBeenCalled();
+  });
+
   it("keeps active runs while removed catalog entries block new work in cached adapters", async () => {
     let release!: () => void, started!: () => void;
     const pending = new Promise<void>((resolve) => {
