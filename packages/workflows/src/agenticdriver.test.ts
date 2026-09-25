@@ -138,6 +138,11 @@ it("uses the installed SDK for cited Q&A while LitAgent validates source revisio
       .join("\n");
     expect(log).toContain('"inputTokens":10');
     expect(log).toContain('"outputTokens":5');
+    const events = log.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const ids = new Set(events.flatMap((event) => event.payload.sdkRunId ? [event.payload.sdkRunId] : []));
+    expect(ids.size).toBe(2);
+    expect(events.every((event) => event.runId === run.id)).toBe(true);
+    expect(engine.readRun(run.id).events.some((event) => event.type === "run.progress" && event.payload.sdkRunId)).toBe(true);
   } finally {
     await server.close();
     index.close();

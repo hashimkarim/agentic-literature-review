@@ -537,6 +537,7 @@ export type AgentProviderSettingsPatch = z.infer<typeof AgentProviderSettingsPat
 
 export const RunEventTypeSchema = z.enum([
   "run.started",
+  "run.progress",
   "model.delta",
   "tool.call",
   "tool.result",

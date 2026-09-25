@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import path from "node:path";
 import { z } from "zod";
 import type { AgentHarness, AgentProviderCatalog } from "@litagent/agents";
 import { ManuscriptError, ManuscriptStore, assertWritingTextSafe } from "@litagent/library";

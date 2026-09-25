@@ -437,6 +437,7 @@ export class AgenticDriverAdapter implements ProviderAdapter {
       }),
     };
     this.sessions.set(sessionId, { session, controller });
+    let sdkRunId: string | undefined;
     const emit = (
       type: NormalizedRunEvent["type"],
       message: string,
@@ -447,7 +448,7 @@ export class AgenticDriverAdapter implements ProviderAdapter {
         providerId: this.provider.id,
         type,
         message,
-        payload,
+        payload: { ...payload, ...(sdkRunId ? { sdkRunId } : {}) },
       });
       captured.push(event);
       session.updatedAt = event.timestamp;
@@ -478,7 +479,12 @@ export class AgenticDriverAdapter implements ProviderAdapter {
             },
             { signal: controller.signal },
           )) {
+            sdkRunId = event.runId;
             session.updatedAt = event.timestamp;
+            if (event.type === "run.started") emit("run.progress", "Driver accepted run", { sessionId, model });
+            if (event.type === "step.started") emit("run.progress", "Model step started", { step: event.step });
+            if (event.type === "run.progress") emit("run.progress", "Driver progress", { phase: event.phase });
+            if (event.type === "usage.reported") emit("run.progress", "Step usage reported", { step: event.step, usage: event.usage, usageScope: "step" });
             if (event.type === "text.delta") {
               transcript += event.text;
               emit("model.delta", event.text);
@@ -519,6 +525,7 @@ export class AgenticDriverAdapter implements ProviderAdapter {
               emit("run.completed", "AgenticDriver run completed", {
                 sessionId,
                 usage: event.result.usage,
+                usageScope: "run",
               });
             }
           }

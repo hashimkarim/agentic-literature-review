@@ -2153,7 +2153,10 @@ export class WorkflowEngine {
         const outputPath = path.join(cacheDir, `${stage}.json`);
         const session = this.harness.startRun({
           runId, providerId: parsed.providerId, cwd: this.repo.root, prompt, model: parsed.model,
-          eventsPath: path.join(cacheDir, `${stage}.events.jsonl`), outputPath, artifactPaths: [outputPath]
+          eventsPath: path.join(cacheDir, `${stage}.events.jsonl`), outputPath, artifactPaths: [outputPath],
+          onEvent: (progress) => {
+            if (progress.type === "run.progress") appendEvent(absoluteEventsPath, { ...progress, payload: { ...progress.payload, stage } });
+          }
         });
         const result = await session.finished;
         checkCancellation();

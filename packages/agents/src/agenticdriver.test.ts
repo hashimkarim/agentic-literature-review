@@ -78,6 +78,11 @@ describe("AgenticDriver integration", () => {
       result.events.some((e) => e.type === "run.completed" && e.payload.usage),
     ).toBe(true);
     expect(adapter.listSessions()).toHaveLength(0);
+    const remoteId = result.events.find((e) => e.type === "run.progress")?.payload.sdkRunId;
+    expect(remoteId).toEqual(expect.any(String));
+    expect(remoteId).not.toBe("run-1");
+    expect(result.events.at(-1)?.payload).toMatchObject({ sdkRunId: remoteId, usageScope: "run" });
+    expect(result.events.every((e) => e.runId === "run-1")).toBe(true);
   });
   it("cancels through the normal interrupt lifecycle", async () => {
     const client: Pick<AgenticClient, "stream"> = {
@@ -125,6 +130,25 @@ describe("AgenticDriver integration", () => {
     }).finished;
     expect(result.status).toBe("failed");
     expect(result.artifacts).toEqual([]);
+  });
+  it("retains the remote identity on interruption without fabricating zero usage", async () => {
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const adapter = new AgenticDriverAdapter(provider, "mock", {
+      async *stream(_request, options) {
+        yield { type: "run.started", runId: "remote-cancelled", provider: "mock", model: "demo", sequence: 1, timestamp: new Date().toISOString() };
+        started();
+        await new Promise((_resolve, reject) => options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), { once: true }));
+      }
+    });
+    const session = adapter.startSession({ cwd: workspace(), prompt: "Q", runId: "app-cancelled" });
+    await entered;
+    adapter.interrupt(session.id);
+    const result = await session.finished;
+    expect(result.status).toBe("cancelled");
+    expect(result.events.at(-1)?.payload).toMatchObject({ sdkRunId: "remote-cancelled", code: "CANCELLED" });
+    expect(result.events.at(-1)?.payload.usage).toBeUndefined();
+    expect(result.events.every((event) => event.runId === "app-cancelled")).toBe(true);
   });
   it("requires explicit enablement", () => {
     const client = new AgenticClient({ url: "http://127.0.0.1:7433", token });
