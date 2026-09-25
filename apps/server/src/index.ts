@@ -28,7 +28,7 @@ import {
   UpdateNoteRequestSchema
 } from "@litagent/contracts";
 import { AgentHarness, AgentProviderSettingsStore } from "@litagent/agents";
-import { agenticDriverCatalogFromEnvironment, DriverSettingsError } from "@litagent/agents/agenticdriver";
+import { AgenticDriverRegistry, DriverSettingsError } from "@litagent/agents/agenticdriver";
 import { SearchIndex } from "@litagent/indexer";
 import { CitationSourceChangedError, DEFAULT_REPO_ROOT, LitAgentRepository, ManuscriptStore } from "@litagent/library";
 import { manuscriptRoutes } from "./manuscript-routes";
@@ -51,7 +51,7 @@ const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
 index.rebuild(repo);
 
 const providerSettings = new AgentProviderSettingsStore(repo.resolve(".litagent/provider-settings.json"));
-const providers = await agenticDriverCatalogFromEnvironment(providerSettings.read());
+const providers = new AgenticDriverRegistry(providerSettings.read());
 const driverConnectionStore = new DriverConnectionStore(repo.resolve(".litagent/driver-connection.json"));
 const driverPanel = new DriverPanelService(providers, driverConnectionStore, providerSettings);
 await driverPanel.reload();
@@ -816,6 +816,10 @@ app.get(
 
 app.get("/api/settings/driver", asyncHandler((_req, res) => {
   res.json(providers.connectionStatus());
+}));
+
+app.get("/api/settings/driver/connections", asyncHandler((_req, res) => {
+  res.set("Cache-Control", "no-store").json(driverPanel.connections());
 }));
 
 app.post("/api/settings/driver/refresh", asyncHandler(async (_req, res) => {

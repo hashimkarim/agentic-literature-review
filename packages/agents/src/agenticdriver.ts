@@ -36,6 +36,13 @@ export class DriverSettingsError extends Error {
   }
 }
 
+export interface DriverHostIdentity {
+  id: string;
+  label: string;
+  deviceName: string;
+  legacyIds?: boolean;
+}
+
 /** Scoped driver inventory stays live while cached adapters retain active sessions. */
 export class AgenticDriverCatalog extends AgentProviderCatalog {
   private driverSettings: Record<string, AgentProviderSettings>;
@@ -51,6 +58,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     instances: ProviderInfo[],
     settings: Record<string, AgentProviderSettings> = {},
     connection?: DriverConnection,
+    private identity?: DriverHostIdentity,
   ) {
     super(undefined, settings);
     this.driverSettings = settings;
@@ -67,9 +75,21 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       refreshing: false,
     };
   }
+  setIdentity(identity: DriverHostIdentity): void { this.identity = identity; }
+  private get prefix(): string {
+    return this.identity && !this.identity.legacyIds ? `driver.${this.identity.id}:` : "driver.";
+  }
+  private owns(providerId: string): boolean {
+    return providerId.startsWith(this.prefix) && (this.prefix !== "driver." || !providerId.includes(":"));
+  }
   private replaceInventory(instances: ProviderInfo[]): void {
     this.visible = new Set(instances.map((info) => info.id));
     for (const info of instances) this.known.set(info.id, info);
+  }
+  recordDiscovery(instances: ProviderInfo[]): void {
+    this.replaceInventory(instances);
+    this.connection = { ...this.connection, status: "ready", code: "CONNECTED",
+      message: "Driver catalog refreshed. Enable an instance and select its model to run a workflow.", checkedAt: new Date().toISOString() };
   }
   connectionStatus(): DriverConnection {
     return {
@@ -152,21 +172,23 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     this.driverSettings = settings;
   }
   override discover(): AgentProvider[] {
+    this.localProviders ??= super.discover();
+    return [...this.localProviders, ...this.discoverDrivers()];
+  }
+  discoverDrivers(): AgentProvider[] {
     const ids = new Set([
       ...this.known.keys(),
       ...Object.keys(this.driverSettings)
         .filter((id) => id.startsWith("driver."))
-        .map((id) => id.slice(7)),
+        .filter((id) => this.owns(id))
+        .map((id) => id.slice(this.prefix.length)),
     ]);
-    this.localProviders ??= super.discover();
-    return [
-      ...this.localProviders,
-      ...[...ids].map((id) => this.describeInstance(id)),
-    ];
+    return [...ids].map((id) => this.describeInstance(id));
   }
+  describeProvider(providerId: string): AgentProvider { return this.describeInstance(providerId.slice(this.prefix.length)); }
   private describeInstance(id: string): AgentProvider {
     const info = this.known.get(id);
-    const settings = this.driverSettings[`driver.${id}`];
+    const settings = this.driverSettings[`${this.prefix}${id}`];
     const present = this.connection.status === "ready" && this.visible.has(id);
     const health = info?.health;
     const available =
@@ -205,8 +227,8 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
             ? "The host reports this provider ready. Select an explicit model."
             : "The driver is reachable; provider authentication has not been verified. Select an explicit model; the host checks access when a run starts.";
     return AgentProviderSchema.parse({
-      id: `driver.${id}`,
-      label: `${info?.name ?? id} (AgenticDriver)`,
+      id: `${this.prefix}${id}`,
+      label: `${info?.name ?? id}${this.identity ? ` - ${this.identity.label}` : ""} (AgenticDriver)`,
       command: "",
       installed: true,
       enabled: settings?.enabled ?? false,
@@ -226,6 +248,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       lastCheckedAt: this.connection.checkedAt,
       driver: {
         instanceId: id,
+        ...(this.identity ? { connectionId: this.identity.id, connectionLabel: this.identity.label, deviceName: this.identity.deviceName } : {}),
         vendor: info?.vendor ?? "unknown",
         authMode: info?.authMode ?? "unknown",
         available,
@@ -248,7 +271,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     patch: AgentProviderSettingsPatch,
   ): void {
     if (!providerId.startsWith("driver.")) return;
-    const provider = this.describeInstance(providerId.slice(7));
+    const provider = this.describeInstance(providerId.slice(this.prefix.length));
     if (patch.command !== undefined && patch.command !== "")
       throw new DriverSettingsError(
         "INVALID_SETTINGS",
@@ -275,7 +298,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     if (!providerId.startsWith("driver.")) return super.definition(providerId);
     // Even a removed/unknown driver ID stays an explicit driver selection. Workflows
     // must not silently fall through to their local heuristic or another provider.
-    const provider = this.describeInstance(providerId.slice(7));
+    const provider = this.describeInstance(providerId.slice(this.prefix.length));
     return {
       id: providerId,
       label: provider.label,
@@ -291,7 +314,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
   override createAdapter(providerId: string): ProviderAdapter | null {
     if (!providerId.startsWith("driver."))
       return super.createAdapter(providerId);
-    const id = providerId.slice(7);
+    const id = providerId.slice(this.prefix.length);
     return new AgenticDriverAdapter(
       this.describeInstance(id),
       id,
@@ -301,6 +324,87 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       } },
       () => this.describeInstance(id),
     );
+  }
+}
+
+/** App-owned host routing; every leaf still uses the same published SDK adapter. */
+export class AgenticDriverRegistry extends AgentProviderCatalog {
+  private readonly hosts = new Map<string, AgenticDriverCatalog>();
+  private readonly active = new Set<string>();
+  private savedSettings: Record<string, AgentProviderSettings>;
+  private localProviders: AgentProvider[] | undefined;
+  private readonly missing = new AgenticDriverCatalog(null, []);
+  private legacyId: string | undefined;
+  private configurationError = false;
+
+  constructor(settings: Record<string, AgentProviderSettings> = {}) {
+    super(undefined, settings);
+    this.savedSettings = settings;
+    this.missing.setSettings(settings);
+  }
+  host(id: string): AgenticDriverCatalog | undefined { return this.hosts.get(id); }
+  setConfigurationError(failed: boolean): void { this.configurationError = failed; }
+  async configureHost(identity: DriverHostIdentity, url: string, token: ClientOptions["token"], discover?: () => Promise<ProviderInfo[]>): Promise<void> {
+    let host = this.hosts.get(identity.id);
+    if (!host) {
+      host = new AgenticDriverCatalog(null, [], this.savedSettings, undefined, identity);
+      this.hosts.set(identity.id, host);
+    }
+    host.setIdentity(identity);
+    if (identity.legacyIds) this.legacyId = identity.id;
+    this.active.add(identity.id);
+    await host.configure(url, token, discover);
+  }
+  async disconnectHost(id: string): Promise<void> {
+    this.active.delete(id);
+    await this.hosts.get(id)?.disconnect();
+  }
+  private owner(providerId: string): AgenticDriverCatalog {
+    const match = /^driver\.([a-f0-9-]{36}):/.exec(providerId);
+    return this.hosts.get(match?.[1] ?? this.legacyId ?? "") ?? this.missing;
+  }
+  connectionStatus(): DriverConnection {
+    const statuses = [...this.active].map((id) => this.hosts.get(id)!.connectionStatus());
+    if (statuses.length === 0 && this.configurationError) return { configured: true, endpoint: null,
+      status: "error", code: "CONFIGURATION_REQUIRED", message: "Driver configuration could not be loaded. Check the server configuration or connect a host in Settings.", checkedAt: null, refreshing: false };
+    if (statuses.length === 0) return this.missing.connectionStatus();
+    if (statuses.length === 1) return statuses[0]!;
+    const ready = statuses.filter((entry) => entry.status === "ready").length;
+    return { configured: true, endpoint: null, status: ready === statuses.length ? "ready" : "error",
+      code: ready === statuses.length ? "CONNECTED" : "PARTIAL_CONNECTION_FAILURE",
+      message: `${ready} of ${statuses.length} driver connections available.`,
+      checkedAt: statuses.map((entry) => entry.checkedAt).filter((date): date is string => date !== null).sort().at(-1) ?? null,
+      refreshing: statuses.some((entry) => entry.refreshing) };
+  }
+  async refresh(id?: string): Promise<void> {
+    if (id) { await this.hosts.get(id)?.refresh(); return; }
+    await Promise.all([...this.active].map((key) => this.hosts.get(key)!.refresh()));
+  }
+  refreshLocalProviders(): void { this.localProviders = undefined; }
+  override setSettings(settings: Record<string, AgentProviderSettings>): void {
+    const local = (value: Record<string, AgentProviderSettings>) => JSON.stringify(Object.entries(value).filter(([id]) => !id.startsWith("driver.")));
+    if (local(settings) !== local(this.savedSettings)) this.refreshLocalProviders();
+    super.setSettings(settings);
+    this.savedSettings = settings;
+    this.missing.setSettings(settings);
+    for (const host of this.hosts.values()) host.setSettings(settings);
+  }
+  override discover(): AgentProvider[] {
+    this.localProviders ??= super.discover();
+    const entries = [...this.hosts.values()].flatMap((host) => host.discoverDrivers());
+    const known = new Set(entries.map((entry) => entry.id));
+    // Removed connection selections stay unavailable; they are never rerouted.
+    const orphaned = Object.keys(this.savedSettings).filter((id) => id.startsWith("driver.") && !known.has(id)).map((id) => this.missing.describeProvider(id));
+    return [...this.localProviders, ...entries, ...orphaned];
+  }
+  validateSettings(providerId: string, patch: AgentProviderSettingsPatch): void {
+    if (providerId.startsWith("driver.")) this.owner(providerId).validateSettings(providerId, patch);
+  }
+  override definition(providerId: string): ProviderDefinition | null {
+    return providerId.startsWith("driver.") ? this.owner(providerId).definition(providerId) : super.definition(providerId);
+  }
+  override createAdapter(providerId: string): ProviderAdapter | null {
+    return providerId.startsWith("driver.") ? this.owner(providerId).createAdapter(providerId) : super.createAdapter(providerId);
   }
 }
 

@@ -12,7 +12,7 @@ import { configuredServer } from "@litagent/driver-panel-sdk/host";
 import { withConnections } from "@litagent/driver-panel-sdk/connections";
 import { serve } from "@litagent/driver-panel-sdk/server";
 import type { ProviderPanelState } from "@litagent/driver-panel-sdk/panel";
-import { AgenticDriverCatalog } from "@litagent/agents/agenticdriver";
+import { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
 import { AgentProviderSettingsStore } from "@litagent/agents";
 import { DriverConnectionStore } from "./driver-connection";
 import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
@@ -58,8 +58,9 @@ async function fixture() {
   }, host.connections));
   const store = new DriverConnectionStore(path.join(root, "app", ".litagent", "driver-connection.json"));
   const settings = new AgentProviderSettingsStore(path.join(root, "app", ".litagent", "provider-settings.json"));
-  const catalog = new AgenticDriverCatalog(null, []);
+  const catalog = new AgenticDriverRegistry();
   const service = new DriverPanelService(catalog, store, settings, {});
+  await service.reload();
   const app = express(); app.use("/panel", driverPanelRoutes(service));
   const api = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => api.once("listening", resolve));
@@ -105,7 +106,7 @@ it("pairs with backend-only credentials, preserves app choices on refresh and pe
     await withEnvironment.reload();
     expect((await withEnvironment.handle({ action: "snapshot" }) as ProviderPanelState).connected).toBe(false);
   } finally { await f.close(); }
-});
+}, 15_000);
 
 it("allows management separately from execution and rejects stale provider changes", async () => {
   const f = await fixture();
@@ -152,8 +153,54 @@ it("guards all panel operations and bounds input without sending any model reque
     expect(invalid.headers.get("cache-control")).toBe("no-store");
     const huge = await f.send({ action: "connect", invitation: "x".repeat(1_100_000) });
     expect(huge.status).toBe(413);
-    await f.store.withLock(async () => { expect((await f.send({ action: "disconnect" })).status).toBe(409); });
+    await f.store.withLock(async () => {
+      expect((await f.send({ action: "disconnect" })).status).toBe(409);
+      expect((await f.send({ action: "snapshot" })).status).toBe(200);
+    });
     const disconnected = await f.send({ action: "snapshot" });
     expect((await disconnected.json() as ProviderPanelState).connected).toBe(false);
   } finally { await f.close(); }
 });
+
+it("supports many-to-many pairings with independent credentials, host setup and app preferences", async () => {
+  const a = await fixture(), b = await fixture();
+  try {
+    await a.pair(false, ["all"]);
+    const aFirst = a.store.read()!;
+    const bInvite = await b.host.connections.create({ grant: { subject: "LitAgent on desktop", providers: ["all"], manageProviders: true } });
+    await a.service.handle({ action: "connect", invitation: connectionInvitation(b.server.url, bInvite.code) }, "new");
+    const aSecond = a.store.list()[1]!;
+    const aInvite = await a.host.connections.create({ grant: { subject: "LitAgent on laptop", providers: ["all"] } });
+    await b.service.handle({ action: "connect", invitation: connectionInvitation(a.server.url, aInvite.code) }, "new");
+    const bFirst = b.store.read()!;
+    expect(bFirst.token).not.toBe(aFirst.token);
+    expect(a.service.connections().client.id).not.toBe(b.service.connections().client.id);
+    a.store.rename(aSecond.id, { label: "Lab driver", deviceName: "lab-workstation" });
+    await a.service.reload();
+    const providers = a.catalog.discover().filter((p) => p.driver);
+    expect(providers).toHaveLength(2);
+    const second = providers.find((p) => p.driver?.connectionId === aSecond.id)!;
+    expect(second.driver?.deviceName).toBe("lab-workstation");
+    a.settings.patch(second.id, { enabled: true, defaultModel: "demo" }, [a.catalog.definition(second.id)!]);
+    a.catalog.setSettings(a.settings.read());
+    const snapshot = await a.service.handle({ action: "snapshot" }, aSecond.id) as ProviderPanelState;
+    await a.service.handle({ action: "configure", change: { revision: snapshot.management!.revision,
+      provider: { id: "all", kind: "mock", name: "Shared host setup", models: ["demo", "fast"] } } }, aSecond.id);
+    expect(b.host.management.snapshot().providers.find((p) => p.id === "all")?.name).toBe("Shared host setup");
+    // Host setup is shared; app enablement and model defaults are not.
+    expect(a.catalog.discover().find((p) => p.id === second.id)).toMatchObject({ enabled: true, defaultModel: "demo" });
+    await a.host.connections.revoke({ id: aFirst.connectionId });
+    await expect(a.service.handle({ action: "snapshot", refresh: true }, aFirst.id)).rejects.toThrow();
+    expect((await b.service.handle({ action: "snapshot", refresh: true }, bFirst.id) as ProviderPanelState).connected).toBe(true);
+    expect(a.catalog.discover().find((p) => p.id === second.id)?.driver?.available).toBe(true);
+    await a.service.handle({ action: "disconnect" }, aFirst.id);
+    expect(a.store.list().map((entry) => entry.id)).toEqual([aSecond.id]);
+    await expect(a.service.handle({ action: "snapshot" }, aFirst.id)).rejects.toThrow();
+    const restarted = new DriverPanelService(new AgenticDriverRegistry(a.settings.read()), new DriverConnectionStore(a.store.file), a.settings, {});
+    await restarted.reload();
+    expect(restarted.connections()).toMatchObject({ client: a.service.connections().client,
+      connections: [{ id: aSecond.id, label: "Lab driver", deviceName: "lab-workstation", status: "ready" }] });
+    const publicData = JSON.stringify(restarted.connections());
+    for (const secret of [aFirst.token, aSecond.token, bFirst.token]) expect(publicData).not.toContain(secret);
+  } finally { await a.close(); await b.close(); }
+}, 20_000);

@@ -487,6 +487,19 @@ export const DriverConnectionSchema = z.object({
 });
 export type DriverConnection = z.infer<typeof DriverConnectionSchema>;
 
+export const DriverHostConnectionSchema = DriverConnectionSchema.extend({
+  id: z.string().uuid(),
+  label: z.string(),
+  deviceName: z.string(),
+  expiresAt: isoDateSchema.nullable(),
+});
+export type DriverHostConnection = z.infer<typeof DriverHostConnectionSchema>;
+export const DriverConnectionsSchema = z.object({
+  client: z.object({ id: z.string().uuid(), deviceName: z.string() }),
+  connections: z.array(DriverHostConnectionSchema),
+});
+export type DriverConnections = z.infer<typeof DriverConnectionsSchema>;
+
 export const AgentProviderSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -504,6 +517,9 @@ export const AgentProviderSchema = z.object({
   connectCommand: z.string().nullable().default(null),
   driver: z.object({
     instanceId: z.string(),
+    connectionId: z.string().uuid().optional(),
+    connectionLabel: z.string().optional(),
+    deviceName: z.string().optional(),
     vendor: z.string(),
     authMode: z.enum(["api-key", "cli-session", "none", "unknown"]),
     available: z.boolean(),

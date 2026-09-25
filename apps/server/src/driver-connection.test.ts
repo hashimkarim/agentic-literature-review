@@ -6,18 +6,21 @@ import { expect, it } from "vitest";
 import { AgenticDriver } from "@agenticdriver/sdk";
 import { mockProvider } from "@agenticdriver/sdk/providers";
 import { serve } from "@agenticdriver/sdk/server";
-import { AgenticDriverCatalog } from "@litagent/agents/agenticdriver";
+import { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
 import { AgentProviderSettingsStore } from "@litagent/agents";
 import { DriverConnectionStore, driverConnectionRoutes } from "./driver-connection";
+import { DriverPanelService } from "./driver-panel";
 
 it("persists private local connection setup, rejects foreign origins and requires explicit enablement", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-connection-"));
   const token = "synthetic-private-driver-bearer-credential";
   const host = await serve(new AgenticDriver({ providers: [mockProvider(() => ({ text: "Unused" }))] }), { port: 0, tokens: [{ token, subject: "fixture", providers: ["mock"] }] });
-  const catalog = new AgenticDriverCatalog(null, []);
+  const catalog = new AgenticDriverRegistry();
   const store = new DriverConnectionStore(path.join(root, ".litagent/driver-connection.json"));
   const settings = new AgentProviderSettingsStore(path.join(root, ".litagent/provider-settings.json"));
-  const app = express(); app.use(express.json()); app.use("/driver", driverConnectionRoutes(catalog, store, settings));
+  const service = new DriverPanelService(catalog, store, settings, {});
+  await service.reload();
+  const app = express(); app.use(express.json()); app.use("/driver", driverConnectionRoutes(catalog, store, settings, () => service.reload()));
   const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
   const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/driver`;
   const send = (body: unknown, origin = "http://localhost:5173", local = "1") => fetch(url, { method: "PUT", headers: { "Content-Type": "application/json", Origin: origin, "X-LitAgent-Local": local }, body: JSON.stringify(body) });
@@ -48,4 +51,28 @@ it("persists private local connection setup, rejects foreign origins and require
     const bad = await send({ url: `https://secret-user:${token}@example.test`, token });
     expect(await bad.text()).not.toContain(token);
   } finally { await host.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+}, 15_000);
+
+it("migrates the old private connection without reassigning provider IDs and never reuses a removed namespace", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-connection-migration-"));
+  try {
+    const file = path.join(root, "driver-connection.json");
+    fs.writeFileSync(file, JSON.stringify({ url: "https://driver.example", token: "private-original-credential" }), { mode: 0o600 });
+    const store = new DriverConnectionStore(file);
+    store.initialize({});
+    const original = store.read()!;
+    expect(original).toMatchObject({ legacyIds: true, deviceName: "driver.example" });
+    const client = store.clientIdentity();
+    const other = store.add(store.prepare({ url: "https://other.example", token: "separate-private-credential", label: "Lab", deviceName: "lab-pc" }, null));
+    expect(other.legacyIds).toBe(false);
+    expect(() => store.prepare({ url: "https://driver.example" }, null)).toThrow();
+    expect(() => store.add(store.prepare({ url: "https://other.example", token: "separate-private-credential" }, null))).toThrow("CONNECTION_EXISTS");
+    expect(new DriverConnectionStore(file).clientIdentity()).toEqual(client);
+    expect(new DriverConnectionStore(file).read(original.id)?.id).toBe(original.id);
+    store.disconnect(original.id); store.disconnect(other.id);
+    store.initialize({ AGENTICDRIVER_URL: "https://driver.example", AGENTICDRIVER_TOKEN: "should-not-reconnect" });
+    expect(store.list()).toEqual([]);
+    expect(store.add({ url: "https://new.example", token: "new-private-credential" }).legacyIds).toBe(false);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
