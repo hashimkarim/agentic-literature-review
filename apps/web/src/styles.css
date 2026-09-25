@@ -1899,6 +1899,9 @@ select option:disabled { color: var(--text-secondary); }
   cursor: text;
 }
 .pdf-reader-shell .textLayer ::selection { color:transparent; background:rgba(82, 142, 230, 0.3); }
+.pdf-comment-action { max-width:280px; padding:6px; background:var(--surface-elevated); color:var(--text-primary); border:1px solid var(--border-line); border-radius:4px; box-shadow:var(--shadow-lg); }
+.pdf-comment-action button { padding:7px 10px; border:1px solid var(--border-line); border-radius:4px; background:var(--surface-input); color:var(--text-high); cursor:pointer; }
+.pdf-comment-action p { margin:6px; font-size:12px; line-height:1.5; }
 
 .pdf-reader-shell .TextHighlight__part {
   mix-blend-mode: normal;

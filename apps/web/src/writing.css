@@ -227,6 +227,8 @@
 .writing-editor .cm-content::selection, .writing-editor .cm-content ::selection,
 .writing-comparison .cm-content::selection, .writing-comparison .cm-content ::selection { color:var(--editor-selection-text); background:transparent; }
 .cm-selected-text.cm-review-comment { background:transparent; }
+.writing-pdf-comment-status { margin:0; padding:8px 12px; color:var(--text-secondary); font-size:12px; border-bottom:1px solid var(--border-line); }
+.writing-preview .pdf-highlight-ledger { display:none; }
 .writing-banner { display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--surface-elevated); border-bottom:1px solid var(--border-line); color:var(--state-warning); font-size:13px; flex-wrap:wrap; }
 .writing-banner span { flex:1; min-width:180px; overflow-wrap:anywhere; }
 .writing-diff-heading { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 32px; align-items:center; gap:10px; padding:5px 12px; background:var(--bg-secondary); color:var(--text-secondary); font-size:12px; border-bottom:1px solid var(--border-line); }

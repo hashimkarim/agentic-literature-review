@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileText, RefreshCw } from "lucide-react";
 import { PdfReader } from "@litagent/pdf";
-import type { TexBuild, TexBuildState, TexDiagnostic } from "@litagent/contracts";
+import type { TexBuild, TexBuildState, TexDiagnostic, TexSourceMap, ManuscriptCommentView, ManuscriptFile, CommentSelection } from "@litagent/contracts";
 import { api } from "./api";
+import { pdfCommentHighlights } from "./writing-pdf-comments";
 
 export function useWritingBuild(manuscriptId: string) {
   const [state, setState] = useState<TexBuildState | null>(null);
@@ -42,8 +43,20 @@ export function useWritingBuild(manuscriptId: string) {
   };
 }
 
-export function WritingPreview({ manuscriptId, state, stale, onRefresh }: { manuscriptId: string; state: TexBuildState | null; stale: boolean; onRefresh: () => void }) {
+export function WritingPreview({ manuscriptId, state, stale, onRefresh, comments, files, selectedComment, commentActivation, onComment, onSelectComment }: {
+  manuscriptId: string; state: TexBuildState | null; stale: boolean; onRefresh: () => void;
+  comments: ManuscriptCommentView[]; files: ManuscriptFile[]; selectedComment: string | null; commentActivation: number;
+  onComment: (selection: CommentSelection) => void; onSelectComment: (id: string) => void;
+}) {
   const pdf = state?.lastSuccessful;
+  const [map, setMap] = useState<TexSourceMap | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false; setMap(null); setMapError(null);
+    if (pdf) void api.manuscriptSourceMap(manuscriptId, pdf.id).then((map) => { if (!cancelled) setMap(map); }, (error) => { if (!cancelled) setMapError(error instanceof Error ? error.message : "Source mapping unavailable."); });
+    return () => { cancelled = true; };
+  }, [manuscriptId, pdf?.id]);
+  const highlights = useMemo(() => pdf && map && map.buildId === pdf.id && !stale ? pdfCommentHighlights(comments, files, pdf, map.boxes, selectedComment, commentActivation) : [], [comments, files, pdf, map, stale, selectedComment, commentActivation]);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   async function download() {
@@ -63,7 +76,14 @@ export function WritingPreview({ manuscriptId, state, stale, onRefresh }: { manu
       {pdf && <button type="button" className="writing-tool" disabled={downloading} onClick={() => void download()} title="Download compiled PDF" aria-label="Download compiled PDF"><Download size={16} /></button>}
     </header>
     {downloadError && <p className="writing-error" role="alert">{downloadError}</p>}
-    {pdf ? <PdfReader key={pdf.id} source={api.manuscriptPdfUrl(manuscriptId, pdf.id)} readOnly /> : <div className="writing-preview-empty">
+    {mapError && <p className="writing-pdf-comment-status" role="status">{mapError}</p>}
+    {pdf ? <PdfReader key={pdf.id} source={api.manuscriptPdfUrl(manuscriptId, pdf.id)} readOnly highlights={highlights} onHighlightClick={onSelectComment}
+      onCommentSelection={async (selection) => {
+        if (stale) throw new Error("Compile your saved changes before commenting on this PDF.");
+        if (!map) throw new Error(mapError ?? "Source map is loading. Try again.");
+        const target = await api.manuscriptPdfSelection(manuscriptId, pdf.id, selection);
+        onComment(target);
+      }} /> : <div className="writing-preview-empty">
       <FileText size={28} /><p>{!state ? "Loading preview..." : !state.runtime.available ? state.runtime.message : state.latest?.status === "running" ? "Compiling..." : "No compiled PDF yet"}</p>
       {state && !state.runtime.available && <button type="button" onClick={onRefresh}><RefreshCw size={14} />Check runtime</button>}
     </div>}

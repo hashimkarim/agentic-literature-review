@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, CornerDownRight, Link2, MessageSquare, MessageSquarePlus, Pencil, RefreshCw, RotateCcw, Search, Send, Trash2, X } from "lucide-react";
+import { Check, CornerDownRight, FileText, Link2, MessageSquare, MessageSquarePlus, Pencil, RefreshCw, RotateCcw, Search, Send, Trash2, X } from "lucide-react";
 import { type CreateManuscriptComment, type ManuscriptCommentView } from "@litagent/contracts";
 import type { CommentAction, useWritingComments } from "./writing-comments";
 import { useBrowserPreference } from "./browser-preferences";
@@ -10,9 +10,10 @@ function Icon({ label, children, ...props }: { label: string; children: React.Re
   return <button type="button" className="writing-tool" title={label} aria-label={label} {...props}>{children}</button>;
 }
 
-export function WritingComments({ id, visible, comments, activePath, selected, onSelect, onJump, onClose, onCapture, canComment, incoming, onConsumed }: {
+export function WritingComments({ id, visible, comments, activePath, selected, onSelect, onJump, onJumpPdf, onClose, onCapture, canComment, incoming, onConsumed }: {
   id: string; visible: boolean; comments: Comments; activePath: string; selected: string | null;
   onSelect: (id: string) => void; onJump: (thread: ManuscriptCommentView) => void; onClose: () => void;
+  onJumpPdf: (thread: ManuscriptCommentView) => void;
   onCapture: () => Promise<CreateManuscriptComment["selection"]>; canComment: boolean;
   incoming: CreateManuscriptComment | null; onConsumed: () => void;
 }) {
@@ -70,15 +71,15 @@ export function WritingComments({ id, visible, comments, activePath, selected, o
     </form>}
     <div className="writing-comment-list" aria-live="polite">
       {comments.loading ? <p className="writing-no-drafts">Loading comments...</p> : !filtered.length ? <div className="writing-comments-empty"><MessageSquare size={24} /><p>{query || scope === "file" ? "No matching comments" : status === "resolved" ? "No resolved comments" : "No open comments"}</p></div> : filtered.map((thread) =>
-        <CommentThread key={thread.id} thread={thread} selected={selected === thread.id} disabled={busy} canComment={canComment} onSelect={() => onSelect(thread.id)} onJump={() => onJump(thread)}
+        <CommentThread key={thread.id} thread={thread} selected={selected === thread.id} disabled={busy} canComment={canComment} onSelect={() => onSelect(thread.id)} onJump={() => onJump(thread)} onJumpPdf={() => onJumpPdf(thread)}
           update={(action) => comments.update(thread, action)} onCapture={onCapture} />)}
     </div>
   </aside>;
 }
 
-function CommentThread({ thread, selected, disabled, canComment, onSelect, onJump, update, onCapture }: {
+function CommentThread({ thread, selected, disabled, canComment, onSelect, onJump, onJumpPdf, update, onCapture }: {
   thread: ManuscriptCommentView; selected: boolean; disabled: boolean; canComment: boolean;
-  onSelect: () => void; onJump: () => void; update: (action: CommentAction) => Promise<ManuscriptCommentView>;
+  onSelect: () => void; onJump: () => void; onJumpPdf: () => void; update: (action: CommentAction) => Promise<ManuscriptCommentView>;
   onCapture: () => Promise<CreateManuscriptComment["selection"]>;
 }) {
   const [reply, setReply] = useState("");
@@ -94,6 +95,7 @@ function CommentThread({ thread, selected, disabled, canComment, onSelect, onJum
   const attached = location?.state === "attached" || location?.state === "moved";
   return <article id={`review-${thread.id}`} className={`writing-comment-thread${selected ? " selected" : ""}`} aria-label={`Comment on ${thread.anchor?.path}`}>
     <div className="writing-comment-thread-head"><button type="button" className="writing-comment-location" title={thread.anchor?.path} onClick={() => { onSelect(); if (attached) onJump(); }}><CornerDownRight size={14} /><span>{thread.anchor?.path}</span>{attached && <small>L{location.line}</small>}</button>
+      <Icon label="Show comment in PDF" disabled={!attached} onClick={onJumpPdf}><FileText size={15} /></Icon>
       <Icon label={thread.status === "resolved" ? "Reopen thread" : "Resolve thread"} disabled={disabled} onClick={() => void run(() => update({ action: thread.status === "resolved" ? "reopen" : "resolve" }))}>{thread.status === "resolved" ? <RotateCcw size={15} /> : <Check size={15} />}</Icon>
       <Icon label="Delete thread" disabled={disabled} onClick={() => { if (window.confirm("Delete this comment thread and all replies?")) void run(() => update({ action: "delete" })); }}><Trash2 size={14} /></Icon>
     </div>

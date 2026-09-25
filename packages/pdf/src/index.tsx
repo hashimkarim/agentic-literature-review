@@ -9,6 +9,7 @@ import {
   PdfHighlighter,
   TextHighlight,
   extractPageTextItems,
+  usePdfHighlighterContext,
   useHighlightContainerContext
 } from "react-pdf-highlighter-plus";
 import type {
@@ -32,6 +33,7 @@ import type {
 } from "react-pdf-highlighter-plus";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { OnProgressParameters, PDFDocumentProxy } from "pdfjs-dist";
+import type { EventBus } from "pdfjs-dist/web/pdf_viewer.mjs";
 import { citationPageSearchOrder } from "./citation";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "react-pdf-highlighter-plus/style/style.css";
@@ -63,6 +65,12 @@ export interface PdfHighlight {
   color?: AnnotationColorKey;
   rects?: PdfHighlightRect[];
   active?: boolean;
+  preferRects?: boolean;
+}
+
+export interface PdfTextSelection {
+  page: number; quote: string;
+  rects: Array<{ x: number; y: number; width: number; height: number }>;
 }
 
 export interface PdfReaderProps {
@@ -74,6 +82,8 @@ export interface PdfReaderProps {
   activeAnnotationId?: string | null;
   activeAnnotationKey?: number;
   fallback?: ReactNode;
+  onCommentSelection?: ((selection: PdfTextSelection) => Promise<void>) | undefined;
+  onHighlightClick?: ((id: string) => void) | undefined;
 }
 
 type LitHighlight = Highlight & {
@@ -86,6 +96,7 @@ type LitHighlight = Highlight & {
   litFillMode?: ShapeFillMode;
   litFreetextStyle?: FreetextStyle;
   litShapeStyle?: ShapeStyle;
+  litSourceId?: string | undefined;
 };
 export type PdfAnnotation = LitHighlight;
 
@@ -137,7 +148,9 @@ export function PdfReader({
   onAnnotationsChange,
   activeAnnotationId: controlledActiveAnnotationId = null,
   activeAnnotationKey: controlledActiveAnnotationKey = 0,
-  fallback
+  fallback,
+  onCommentSelection,
+  onHighlightClick
 }: PdfReaderProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState<PdfScaleValue>("page-width");
@@ -218,6 +231,8 @@ export function PdfReader({
                   activeAnnotationKey={activeAnnotationKey}
                   onDeleteAnnotation={deleteAnnotation}
                   onPageStateChange={handlePageStateChange}
+                  onCommentSelection={onCommentSelection}
+                  onHighlightClick={onHighlightClick}
                 />
               )}
             </PdfDocumentLoader>
@@ -631,6 +646,34 @@ function getVisiblePageNumberFromContainer(container: HTMLElement, pageCount: nu
   return bestPage;
 }
 
+function PdfCommentAction({ document, onComment }: { document: PDFDocumentProxy; onComment: NonNullable<PdfReaderProps["onCommentSelection"]> }) {
+  const utils = usePdfHighlighterContext();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selection = utils.getCurrentSelection();
+  useEffect(() => setError(null), [selection]);
+  async function comment() {
+    const selection = utils.getCurrentSelection();
+    if (busy || !selection || selection.type !== "text") return;
+    setBusy(true); setError(null);
+    try {
+      const quote = selection.content.text?.trim() ?? "";
+      const page = selection.position.boundingRect.pageNumber;
+      if (!quote || quote.length > 8000 || selection.position.rects.some((rect) => rect.pageNumber !== page)) throw new Error("Select up to 8,000 characters on one page.");
+      const viewport = (await document.getPage(page)).getViewport({ scale: 1 });
+      const rects = selection.position.rects.map((rect) => ({ x: rect.x1 / rect.width * viewport.width, y: rect.y1 / rect.height * viewport.height,
+        width: (rect.x2 - rect.x1) / rect.width * viewport.width, height: (rect.y2 - rect.y1) / rect.height * viewport.height }));
+      await onComment({ page, quote, rects });
+      utils.setTip(null); window.getSelection()?.removeAllRanges();
+    } catch (error) { setError(error instanceof Error ? error.message : "Could not attach this selection."); }
+    finally { setBusy(false); }
+  }
+  return <div className="pdf-comment-action" onMouseDown={(event) => event.preventDefault()}>
+    <button type="button" disabled={busy} onClick={() => void comment()}>{busy ? "Locating source..." : "Comment on selection"}</button>
+    {error && <p role="alert">{error}</p>}
+  </div>;
+}
+
 function HighlighterSurface({
   pdfDocument,
   scale,
@@ -643,7 +686,9 @@ function HighlighterSurface({
   activeAnnotationId,
   activeAnnotationKey,
   onDeleteAnnotation,
-  onPageStateChange
+  onPageStateChange,
+  onCommentSelection,
+  onHighlightClick
 }: {
   pdfDocument: PDFDocumentProxy;
   scale: PdfScaleValue;
@@ -657,9 +702,18 @@ function HighlighterSurface({
   activeAnnotationKey: number;
   onDeleteAnnotation: (id: string) => void;
   onPageStateChange: (currentPage: number, pageCount: number) => void;
+  onCommentSelection: PdfReaderProps["onCommentSelection"];
+  onHighlightClick: PdfReaderProps["onHighlightClick"];
 }) {
   const utilsRef = useRef<PdfHighlighterUtils | null>(null);
   const [utils, setUtils] = useState<PdfHighlighterUtils | null>(null);
+  const commentCallback = useRef(onCommentSelection);
+  commentCallback.current = onCommentSelection;
+  const canComment = Boolean(onCommentSelection);
+  // The library stores this element in its selection state. Keep it stable
+  // across status polls, while invoking the latest revision-aware callback.
+  const selectionTip = useMemo(() => canComment ? <PdfCommentAction document={pdfDocument}
+    onComment={(selection) => commentCallback.current!(selection)} /> : undefined, [pdfDocument, canComment]);
   const [resolvedHighlights, setResolvedHighlights] = useState<LitHighlight[]>([]);
   const documentKey = useMemo(() => pdfDocumentKey(pdfDocument), [pdfDocument]);
   const highlightsKey = useMemo(() => serializeHighlights(highlights), [highlights]);
@@ -700,6 +754,18 @@ function HighlighterSurface({
     const frame = window.requestAnimationFrame(() => utils.scrollToHighlight(activeHighlight));
     return () => window.cancelAnimationFrame(frame);
   }, [activeAnnotationKey, activeHighlight?.id, activeHighlight?.litResolvedFrom, utils]);
+
+  useEffect(() => {
+    if (!utils || !onCommentSelection) return;
+    const events = utils.getEventBus() as EventBus;
+    let previousScale = (utils.getViewer() as { currentScale: number }).currentScale;
+    const dismiss = ({ scale }: { scale: number }) => {
+      if (Math.abs(scale - previousScale) > 0.0001) utils.setTip(null);
+      previousScale = scale;
+    };
+    events.on("scalechanging", dismiss);
+    return () => events.off("scalechanging", dismiss);
+  }, [utils, canComment]);
 
   useEffect(() => {
     if (!utils) return;
@@ -824,6 +890,7 @@ function HighlighterSurface({
           pdfScaleValue={scale}
           textSelectionColor={annotationMode === "text" ? paletteRgba(annotationStyle.color, Math.min(0.32, annotationStyle.markOpacity + 0.08)) : "transparent"}
           onSelection={handleSelection}
+          selectionTip={selectionTip}
           enableAreaSelection={() => annotationMode === "area"}
           areaSelectionMode={annotationMode === "area"}
           mouseSelectionStyle={{
@@ -857,6 +924,7 @@ function HighlighterSurface({
           <AnnotationRenderer
             onUpdate={updateManualHighlight}
             onDelete={onDeleteAnnotation}
+            onHighlightClick={onHighlightClick}
           />
         </PdfHighlighter>
       </IsolatedReactRoot>
@@ -866,10 +934,12 @@ function HighlighterSurface({
 
 function AnnotationRenderer({
   onUpdate,
-  onDelete
+  onDelete,
+  onHighlightClick
 }: {
   onUpdate: (id: string, updater: (highlight: LitHighlight) => LitHighlight) => void;
   onDelete: (id: string) => void;
+  onHighlightClick: PdfReaderProps["onHighlightClick"];
 }) {
   const { highlight, isScrolledTo, viewportToScaled } = useHighlightContainerContext<LitHighlight>();
   const isManual = highlight.id.startsWith("manual-");
@@ -994,6 +1064,7 @@ function AnnotationRenderer({
   return (
     <TextHighlight
       highlight={highlight}
+      {...(highlight.litSourceId && onHighlightClick ? { onClick: () => onHighlightClick(highlight.litSourceId!) } : {})}
       isScrolledTo={isScrolledTo}
       highlightColor={highlight.litFill ?? highlightColor(highlight.litColor)}
       copyText={highlight.litQuote}
@@ -1388,7 +1459,7 @@ function ArrowShapeEditor({
 
 async function resolveHighlight(pdfDocument: PDFDocumentProxy, highlight: PdfHighlight, index: number): Promise<LitHighlight> {
   const requestedPageNumber = normalizePageNumber(highlight.page, pdfDocument.numPages);
-  const quoteResolution = highlight.quote.trim()
+  const quoteResolution = !highlight.preferRects && highlight.quote.trim()
     ? await resolveQuoteAcrossDocument(pdfDocument, requestedPageNumber, highlight.quote)
     : null;
   const page = quoteResolution?.page ?? await readExtractedPage(pdfDocument, requestedPageNumber);
@@ -1398,6 +1469,7 @@ async function resolveHighlight(pdfDocument: PDFDocumentProxy, highlight: PdfHig
 
   return {
     id: makeHighlightId(highlight, index),
+    litSourceId: highlight.id,
     type: "text",
     content: { text: highlight.quote },
     position,
@@ -1978,6 +2050,7 @@ function serializeHighlights(highlights: PdfHighlight[]): string {
       quote: highlight.quote,
       color: highlight.color,
       active: highlight.active,
+      preferRects: highlight.preferRects,
       rects: highlight.rects
     }))
   );
