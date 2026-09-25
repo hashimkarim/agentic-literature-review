@@ -460,6 +460,7 @@ function App() {
   const [markdownNotice, setMarkdownNotice] = useState<string | null>(null);
   const [passages, setPassages] = useState<Passage[]>([]);
   const [chatSessions] = useState(() => new ChatSessions(api));
+  const hasPendingChat = useSyncExternalStore(chatSessions.subscribe, chatSessions.hasPending);
   const [relevanceProposals, setRelevanceProposals] = useState<RelevanceProposal[]>([]);
   const [metadataProposals, setMetadataProposals] = useState<MetadataProposal[]>([]);
   const [researchFindingProposals, setResearchFindingProposals] = useState<ResearchFindingProposal[]>([]);
@@ -588,13 +589,22 @@ function App() {
     loadRelevanceProposals(activeProjectId, projectPaperId);
   }, [activeProjectId, loadRelevanceProposals, projectPaperId, screen]);
 
+  const hasActiveWorkflow = workflows.some((run) => run.status === "running" || run.status === "queued");
   useEffect(() => {
-    if (!workflows.some((run) => run.status === "running" || run.status === "queued")) return;
-    const timer = window.setInterval(() => {
-      void api.workflows().then(setWorkflows);
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [workflows]);
+    let disposed = false, fetching = false;
+    const refresh = async () => {
+      if (fetching) return;
+      fetching = true;
+      try { const runs = await api.workflows(); if (!disposed) setWorkflows(runs); }
+      catch { /* Keep the last queue snapshot; the next poll can recover. */ }
+      finally { fetching = false; }
+    };
+    // Direct chat starts before a workflow ID is returned. Poll pending chats too,
+    // and refresh once on completion so interruption remains available in Queue.
+    void refresh();
+    const timer = hasPendingChat || hasActiveWorkflow ? window.setInterval(() => void refresh(), 1000) : null;
+    return () => { disposed = true; if (timer !== null) window.clearInterval(timer); };
+  }, [hasPendingChat, hasActiveWorkflow]);
 
   useEffect(() => {
     const candidates = selectableAgentProviders(providers);

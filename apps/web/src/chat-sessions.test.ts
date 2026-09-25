@@ -91,13 +91,17 @@ describe("scope-owned chat sessions", () => {
     const a = deferred<ReturnType<typeof response>>();
     const b = deferred<ReturnType<typeof response>>();
     api.qa.mockImplementation(({ question }) => question === "A" ? a.promise : b.promise);
+    expect(sessions.hasPending()).toBe(false);
     const first = sessions.ask(paperA, "A", selection);
     const second = sessions.ask(paperB, "B", selection);
+    expect(sessions.hasPending()).toBe(true);
     a.resolve(response("A"));
     await first;
     expect(sessions.get(paperB).pending?.question).toBe("B");
+    expect(sessions.hasPending()).toBe(true);
     b.reject(new Error("B failed"));
     await second;
+    expect(sessions.hasPending()).toBe(false);
     expect(sessions.get(paperA).error).toBeNull();
     expect(sessions.get(paperB).draft).toBe("B");
   });

@@ -55,6 +55,8 @@ export class ChatSessions {
     return () => { this.listeners.delete(listener); };
   };
 
+  hasPending = (): boolean => [...this.entries.values()].some((entry) => Boolean(entry.state.pending));
+
   get(scope: ChatScope): ChatSession {
     return this.entry(scope).state;
   }
