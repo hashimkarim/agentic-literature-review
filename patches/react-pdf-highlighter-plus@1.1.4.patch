@@ -1,5 +1,5 @@
 diff --git a/dist/esm/index.js b/dist/esm/index.js
-index 4b3787d5847010784db77ec66b95d5ee1a812249..990b419f559b5167fa7e30683ba1302d9f907b64 100644
+index 4b3787d5847010784db77ec66b95d5ee1a812249..46390b149d97fd58ef9a8199fabc1342a280f4a6 100644
 --- a/dist/esm/index.js
 +++ b/dist/esm/index.js
 @@ -228,7 +228,7 @@ var groupHighlightsByPage = (highlights) => highlights.reduce((acc, highlight) =
@@ -11,3 +11,21 @@ index 4b3787d5847010784db77ec66b95d5ee1a812249..990b419f559b5167fa7e30683ba1302d
      acc[pageNumber] ||= [];
      const pageSpecificHighlight = {
        ...highlight,
+@@ -1235,6 +1235,8 @@ var PdfHighlighter = ({
+   );
+   const findControllerRef = useRef5(null);
+   const viewerRef = useRef5(null);
++  const pdfScaleValueRef = useRef5(pdfScaleValue);
++  pdfScaleValueRef.current = pdfScaleValue;
+   highlightsRef.current = highlights;
+   childrenRef.current = children;
+   useLayoutEffect2(() => {
+@@ -1420,7 +1422,7 @@ var PdfHighlighter = ({
+   };
+   const handleScaleValue = () => {
+     if (viewerRef.current) {
+-      viewerRef.current.currentScaleValue = pdfScaleValue.toString();
++      viewerRef.current.currentScaleValue = pdfScaleValueRef.current.toString();
+     }
+   };
+   const renderHighlightLayer = (highlightBindings, pageNumber, shouldRenderHighlight) => {

@@ -16,3 +16,22 @@ it("the installed highlighter renders each multi-line mark only once per page", 
   expect(pages[2]).toHaveLength(1);
   expect(pages[2][0].position.rects).toHaveLength(1);
 });
+
+it("the installed resize callback uses the latest zoom without resubscribing", () => {
+  const source = fs.readFileSync(createRequire(import.meta.url).resolve("react-pdf-highlighter-plus"), "utf8");
+  const callback = source.match(/const handleScaleValue = \(\) => \{[\s\S]*?\n  \};/)?.[0];
+  expect(callback).toBeTruthy();
+  const viewerRef = { current: { currentScaleValue: "page-width" } as { currentScaleValue: string } | null };
+  const pdfScaleValueRef = { current: "page-width" as number | string };
+  const resize = vm.runInNewContext(`${callback}\nhandleScaleValue`, { viewerRef, pdfScaleValue: "page-width", pdfScaleValueRef });
+  resize();
+  expect(viewerRef.current?.currentScaleValue).toBe("page-width");
+  pdfScaleValueRef.current = 1.5;
+  resize();
+  expect(viewerRef.current?.currentScaleValue).toBe("1.5");
+  pdfScaleValueRef.current = "page-width";
+  resize();
+  expect(viewerRef.current?.currentScaleValue).toBe("page-width");
+  viewerRef.current = null;
+  expect(resize).not.toThrow();
+});

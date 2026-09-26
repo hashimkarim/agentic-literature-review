@@ -40,9 +40,9 @@ This synthetic manuscript exercises the local writing workspace. The editor reta
 
 \subsection{A small example}
 We use the expression $y=x^2$ to verify mathematical typesetting. This is a rendering fixture, not a research result.
-\newpage
+${width === 1440 ? "" : String.raw`\newpage`}
 \section{Verification}
-The preview contains two pages. Source history and project links remain independent of the compiler cache.
+Source history and project links remain independent of the compiler cache.
 ` });
     const page = await browser.newPage({ viewport: { width, height: 1000 }, acceptDownloads: true });
     const errors: string[] = [];
@@ -84,8 +84,41 @@ The preview contains two pages. Source history and project links remain independ
     await page.getByRole("textbox", { name: "Zoom percentage" }).fill("150");
     await page.getByRole("textbox", { name: "Zoom percentage" }).press("Tab");
     await page.waitForFunction((original) => (document.querySelector<HTMLCanvasElement>(".writing-preview canvas")?.width ?? 0) > original, fittedWidth);
+    await page.setViewportSize({ width, height: 1024 });
+    await page.waitForTimeout(1800);
+    assert.equal(await page.locator(".writing-preview .pdfViewer").evaluate((node) => node.style.getPropertyValue("--scale-factor")), "2",
+      "Resizing must retain 150% zoom instead of reverting to the initial fit-width mode");
+    await page.setViewportSize({ width, height: 1000 });
     await page.getByTitle("Fit width", { exact: true }).click();
     await page.waitForFunction((original) => (document.querySelector<HTMLCanvasElement>(".writing-preview canvas")?.width ?? 0) === original, fittedWidth);
+    if (width === 1440) {
+      assert.equal(await page.locator(".writing-preview .page").count(), 1);
+      // Without a reserved gutter, this height makes the vertical scrollbar
+      // disappear, enlarging the page enough to bring it back on every resize.
+      const threshold = await page.locator(".writing-preview .PdfHighlighter").evaluate((node) =>
+        Math.ceil(window.innerHeight + node.scrollHeight - node.clientHeight + 5));
+      for (const height of [threshold, threshold - 24, threshold + 24, threshold]) {
+        await page.setViewportSize({ width, height });
+        await page.waitForTimeout(500);
+        const layouts = await page.locator(".writing-preview .PdfHighlighter").evaluate(async (node) => {
+          const states = new Set<string>();
+          const until = performance.now() + 1600;
+          do {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            const pdf = node.querySelector<HTMLElement>(".pdfViewer")!;
+            const page = node.querySelector<HTMLElement>(".page")!.getBoundingClientRect();
+            states.add(JSON.stringify([node.clientWidth, node.clientHeight, node.scrollWidth, node.scrollHeight,
+              node.scrollTop, node.scrollLeft, page.width, page.height, pdf.style.getPropertyValue("--scale-factor")]));
+          } while (performance.now() < until);
+          return [...states];
+        });
+        assert.equal(layouts.length, 1, `PDF fit-width oscillates at ${width}x${height}: ${layouts.join("; ")}`);
+        const overflow = await page.locator(".writing-preview .PdfHighlighter").evaluate((node) => node.scrollWidth - node.clientWidth);
+        assert.ok(overflow <= 1, "Fit-width introduced horizontal scrolling");
+      }
+      await page.screenshot({ path: path.join(output, `stable-fit-width-${width}.png`) });
+      await page.setViewportSize({ width, height: 1000 });
+    }
     const bounds = await page.locator(".writing-workspace").evaluate((node) => ({ scroll: node.scrollWidth, width: node.clientWidth }));
     assert.ok(bounds.scroll <= bounds.width + 1, `Writing layout overflow at ${width}px`);
     const first = await request<TexBuildState>(`${base}/builds`);

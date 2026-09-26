@@ -1873,6 +1873,8 @@ select option:disabled { color: var(--text-secondary); }
 
 .pdf-reader-shell .PdfHighlighter {
   background: var(--bg-tertiary) !important;
+  /* Fit-width must not change when a nearly fitting page gains a scrollbar. */
+  scrollbar-gutter: stable;
 }
 
 .pdf-reader-shell .PdfHighlighter .pdfViewer {
