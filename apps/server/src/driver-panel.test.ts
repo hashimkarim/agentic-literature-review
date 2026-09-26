@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { connectionInvitation } from "@litagent/driver-panel-sdk/client";
@@ -13,9 +13,13 @@ import { withConnections } from "@litagent/driver-panel-sdk/connections";
 import { serve } from "@litagent/driver-panel-sdk/server";
 import type { ProviderPanelState } from "@litagent/driver-panel-sdk/panel";
 import { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
-import { AgentProviderSettingsStore } from "@litagent/agents";
+import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
 import { DriverConnectionStore } from "./driver-connection";
 import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
+
+// These tests exercise SDK fixture hosts, not installed CLI accounts or binaries.
+beforeEach(() => { vi.spyOn(AgentProviderCatalog.prototype, "discover").mockReturnValue([]); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 it("uses the reviewed source candidate rather than the registry archive with the same version", () => {
   const archive = fs.readFileSync(new URL("../../../vendor/agenticdriver-panel-3217b8d.tgz", import.meta.url));
@@ -170,6 +174,8 @@ it("supports many-to-many pairings with independent credentials, host setup and 
     const bInvite = await b.host.connections.create({ grant: { subject: "LitAgent on desktop", providers: ["all"], manageProviders: true } });
     await a.service.handle({ action: "connect", invitation: connectionInvitation(b.server.url, bInvite.code) }, "new");
     const aSecond = a.store.list()[1]!;
+    expect((await a.send({ action: "disconnect" })).status).toBe(409);
+    expect(a.store.list()).toHaveLength(2);
     const aInvite = await a.host.connections.create({ grant: { subject: "LitAgent on laptop", providers: ["all"] } });
     await b.service.handle({ action: "connect", invitation: connectionInvitation(a.server.url, aInvite.code) }, "new");
     const bFirst = b.store.read()!;

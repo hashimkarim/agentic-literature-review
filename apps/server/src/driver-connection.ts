@@ -177,6 +177,10 @@ export function driverConnectionRoutes(catalog: AgenticDriverRegistry, store: Dr
       await store.withLock(async () => {
         const id = typeof req.params.id === "string" ? req.params.id : undefined;
         const adding = req.method === "POST";
+        if (!adding && !id && store.list().length > 1) {
+          res.status(409).json({ error: "Choose a specific driver connection before updating it." });
+          return;
+        }
         const previous = adding ? null : store.read(id);
         const value = store.prepare(req.body, adding ? null : id);
         if (previous && (previous.url !== value.url || previous.token !== value.token)) disableDriverConnection(catalog, settings, previous.id, true);

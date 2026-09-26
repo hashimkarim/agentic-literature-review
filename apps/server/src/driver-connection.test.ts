@@ -2,14 +2,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import express from "express";
-import { expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgenticDriver } from "@agenticdriver/sdk";
 import { mockProvider } from "@agenticdriver/sdk/providers";
 import { serve } from "@agenticdriver/sdk/server";
 import { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
-import { AgentProviderSettingsStore } from "@litagent/agents";
+import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
 import { DriverConnectionStore, driverConnectionRoutes } from "./driver-connection";
 import { DriverPanelService } from "./driver-panel";
+
+beforeEach(() => { vi.spyOn(AgentProviderCatalog.prototype, "discover").mockReturnValue([]); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 it("persists private local connection setup, rejects foreign origins and requires explicit enablement", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-connection-"));
@@ -50,6 +53,10 @@ it("persists private local connection setup, rejects foreign origins and require
     expect((await send({ url: host.url, tokenFile: path.join(root, "linked.token") })).status).toBe(400);
     const bad = await send({ url: `https://secret-user:${token}@example.test`, token });
     expect(await bad.text()).not.toContain(token);
+    store.add({ url: host.url, token: "second-synthetic-credential" });
+    const before = store.list();
+    expect((await send({ url: host.url, token })).status).toBe(409);
+    expect(store.list()).toEqual(before);
   } finally { await host.close(); await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
 }, 15_000);
 

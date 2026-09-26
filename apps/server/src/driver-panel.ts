@@ -87,6 +87,8 @@ export class DriverPanelService {
 
   async handle(input: unknown, connectionId?: string): Promise<unknown> {
     const request = PanelRequestSchema.parse(input);
+    if (connectionId === undefined && this.store.list().length > 1)
+      throw new DriverError("CONNECTION_REQUIRED", "Choose a specific driver connection.");
     let id = connectionId === "new" ? null : connectionId ?? this.store.read()?.id ?? null;
     if (id && !this.store.read(id)) throw new DriverError("CONNECTION_NOT_FOUND", "Connection not found.");
     const operation = async () => {
@@ -133,6 +135,7 @@ const publicErrors: Record<string, { status: number; message: string }> = {
   CONFIG_CONFLICT: { status: 409, message: "Host settings changed. Refresh and review the current settings before saving again." },
   CONNECTION_BUSY: { status: 409, message: "Another connection update is in progress. Wait for it to finish." },
   CONNECTION_NOT_FOUND: { status: 404, message: "This connection was removed. Choose another connection." },
+  CONNECTION_REQUIRED: { status: 409, message: "Choose a specific driver connection before continuing." },
   CONNECTION_CHANGED: { status: 409, message: "This connection changed while refreshing. Refresh its current settings." },
   CONNECTION_EXPIRED: { status: 401, message: "This connection expired. Pair LitAgent again." },
   INVITATION_REJECTED: { status: 400, message: "The invitation expired, was already used, or is invalid. Request a new invitation." },
