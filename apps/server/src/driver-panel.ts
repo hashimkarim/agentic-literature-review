@@ -2,17 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import express, { type ErrorRequestHandler } from "express";
-import { AgenticClient, DriverError } from "@litagent/driver-panel-sdk/client";
-import { connectClient } from "@litagent/driver-panel-sdk/connections";
-import { providerPanel, PanelRequestSchema, type ProviderPanelState } from "@litagent/driver-panel-sdk/panel";
-import { providerPresentation } from "@litagent/driver-panel-sdk/catalog";
+import { AgenticClient, DriverError } from "@agenticdriver/sdk/client";
+import { connectClient } from "@agenticdriver/sdk/connections";
+import { providerPanel, PanelRequestSchema, type ProviderPanelState } from "@agenticdriver/sdk/panel";
+import { providerPresentation } from "@agenticdriver/sdk/catalog";
 import type { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
 import type { AgentProviderSettingsStore } from "@litagent/agents";
 import type { DriverConnections } from "@litagent/contracts";
 import { DriverConnectionStore, disableDriverConnection, clearNewConnectionChoices, type DriverHostRecord } from "./driver-connection";
 import { requireLocalAccess } from "./local-access";
 
-/** Settings-only candidate SDK. Workflow execution stays on the registry SDK adapter. */
+/** Backend-only SDK panel bridge; workflow selections remain application-owned. */
 export class DriverPanelService {
   private readonly clients = new Map<string, { client: AgenticClient; record: DriverHostRecord }>();
 
@@ -133,6 +133,7 @@ const publicErrors: Record<string, { status: number; message: string }> = {
   UNAUTHORIZED: { status: 401, message: "The driver credential was rejected. Reconnect with a valid invitation or credential." },
   AUTH_UNAVAILABLE: { status: 401, message: "The driver credential is unavailable or expired. Reconnect with a valid invitation or credential." },
   CONFIG_CONFLICT: { status: 409, message: "Host settings changed. Refresh and review the current settings before saving again." },
+  PROVIDER_IN_USE: { status: 409, message: "Host access grants still reference this provider. Disable it, or ask the host operator to update those grants before removing it." },
   CONNECTION_BUSY: { status: 409, message: "Another connection update is in progress. Wait for it to finish." },
   CONNECTION_NOT_FOUND: { status: 404, message: "This connection was removed. Choose another connection." },
   CONNECTION_REQUIRED: { status: 409, message: "Choose a specific driver connection before continuing." },

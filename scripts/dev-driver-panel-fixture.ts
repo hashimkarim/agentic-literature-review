@@ -3,15 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import { managedHost } from "@litagent/driver-panel-sdk/management";
-import { configuredServer } from "@litagent/driver-panel-sdk/host";
-import { withConnections } from "@litagent/driver-panel-sdk/connections";
-import { connectionInvitation } from "@litagent/driver-panel-sdk/client";
-import { serve } from "@litagent/driver-panel-sdk/server";
+import { managedHost } from "@agenticdriver/sdk/management";
+import { configuredServer } from "@agenticdriver/sdk/host";
+import { withConnections } from "@agenticdriver/sdk/connections";
+import { connectionInvitation } from "@agenticdriver/sdk/client";
+import { serve } from "@agenticdriver/sdk/server";
 
 // Disposable metadata/pairing fixtures for native T3 browser checks. No real providers.
 const { values } = parseArgs({ options: {
-  directory: { type: "string" }, device: { type: "string" }, port: { type: "string" },
+  directory: { type: "string" }, device: { type: "string" }, port: { type: "string" }, "no-provider-grants": { type: "boolean" },
 } });
 if (values.device && !["desktop", "lab"].includes(values.device)) throw new Error("Choose desktop or lab.");
 if (values.port && (!values.device || !/^\d+$/.test(values.port) || Number(values.port) > 65535)) throw new Error("A port requires one fixture device.");
@@ -33,7 +33,7 @@ for (const name of values.device ? [values.device] : ["desktop", "lab"]) {
     ...await configuredServer(host.config(), config, async () => token), host: "127.0.0.1", port: Number(values.port ?? 0), management: host.management,
   }, host.connections));
   servers.push(server);
-  const grant = await host.connections.create({ grant: { subject: `LitAgent on ${os.hostname()}`, providers: ["shared"], manageProviders: name === "desktop" } });
+  const grant = await host.connections.create({ grant: { subject: `LitAgent on ${os.hostname()}`, providers: values["no-provider-grants"] ? [] : ["shared"], manageProviders: name === "desktop" } });
   const invitationFile = path.join(root, `${name}.invitation`);
   fs.writeFileSync(invitationFile, connectionInvitation(server.url, grant.code), { mode: 0o600 });
   console.log(JSON.stringify({ device: name, url: server.url, invitationFile }));

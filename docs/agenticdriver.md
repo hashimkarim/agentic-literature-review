@@ -59,8 +59,9 @@ artifact creation, cancellation, truncated results, and explicit enablement.
 
 ## Scoped Package Migration
 
-The active application now pins the published MIT-licensed
-`@agenticdriver/sdk` exactly to `0.1.0`; `bun.lock` records registry integrity.
+The original scoped-package migration pinned the published MIT-licensed
+`@agenticdriver/sdk` exactly to `0.1.0`. This historical receipt is superseded
+for the active dependency by [alpha.2 adoption](#public-alpha2-adoption).
 No sibling SDK build, checkout-relative dependency or TypeScript alias is needed.
 The external root/client/providers/server imports use the scoped package.
 
@@ -183,10 +184,9 @@ compiler tests skipped).
 ## Shared Panel And Multiple Devices (2026-09-26)
 
 Settings embeds the SDK-owned provider component and same-origin backend bridge.
-This is the explicitly handed-off source candidate `3217b8d`, not a claim that
-the published registry 0.1.0 includes these entrypoints. The metadata-only
-`@litagent/driver-panel-sdk` repack keeps the candidate separate from the
-unchanged execution dependency. See [archive identity and checksum](../vendor/README.md).
+The initial integration used the explicitly handed-off source candidate `3217b8d`
+under a metadata-only alias. [Alpha.2 adoption](#public-alpha2-adoption) replaces
+that temporary alias and the execution dependency with one public SDK archive.
 There is no sibling checkout dependency or second provider runtime.
 
 Each connection has a stable local ID, editable connection/device names and its
@@ -222,3 +222,36 @@ grants. The reviewed pairing contract grants an explicit provider list; LitAgent
 does not silently expand it. No Usagestat administrative credential is consumed.
 Legacy direct providers remain until the [consolidation gate](ROADMAP.md#provider-consolidation)
 passes. See the [application validation receipt](validation/driver-panel-2026-09-26.md).
+
+## Public Alpha.2 Adoption
+
+Server, browser panel and execution adapter now share `@agenticdriver/sdk`
+version `0.2.0-alpha.2`, pinned to the exact public GitHub release archive in
+all three owning manifests and `bun.lock`. npm registry publication remains
+pending; this is a public release-asset dependency, not a registry semver pin.
+There is no private archive path, sibling SDK link, renamed panel package or
+local managedHost type workaround. The obsolete vendor archives and repack
+script have been removed.
+
+- Source: `02d2e3a6d7a9a9a4a893debc8e8a6d971d1dcaf5`.
+- Release: <https://github.com/agenticdriver/agenticdriver/releases/tag/v0.2.0-alpha.2>.
+- Archive: <https://github.com/agenticdriver/agenticdriver/releases/download/v0.2.0-alpha.2/agenticdriver-sdk-0.2.0-alpha.2.tgz>.
+- SHA-256: `a49dcc4c7d146d1f91fae58638d8b901f4ef6f51c873dd227070de54e4c2ebee`.
+- Lock integrity: `sha512-JSeVyraqRvcHbBVDfQzx9QnNuZ7xqi7dGSPuzBvbKvzsO4EUSOyF2rX5GhvsIRs5YpEAC0KNjBwgeUwUHxVa2Q==`.
+
+The actual Settings screen mounts `@agenticdriver/sdk/ui`; its transport uses
+the existing `/api/settings/driver/panel` backend route and SDK panel adapter.
+Existing local-access/origin checks remain in place and credentials remain
+backend-private. Pairing uses `connectClient`; no hand-written profile parser
+is needed. Old hosts stay read-only when management is unavailable. Removal
+requires the host capability, management permission, confirmation and current
+revision; referenced static grants produce a recoverable `PROVIDER_IN_USE`.
+Empty management hosts offer onboarding; empty read-only connections explain
+provider access without exposing management controls.
+
+No host restart, grant expansion, account/model substitution, auth migration or
+real generation is part of this adoption. Browser/HTTP acceptance does not
+certify packaged Electron: the current wrapper still launches a Bun workspace
+backend and defaults to the development web URL; production resource/startup
+packaging remains separate. App-scoped usage presentation and the legacy-provider
+consolidation gate also remain separate product work.

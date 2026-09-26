@@ -322,7 +322,7 @@ export const api = {
   converterStatus: () => request<ConverterStatus>("/api/converter-status"),
   driverConnection: () => request<DriverConnection>("/api/settings/driver"),
   driverConnections: () => request<import("@litagent/contracts").DriverConnections>("/api/settings/driver/connections", { cache: "no-store" }),
-  driverPanel: (body: import("@litagent/driver-panel-sdk/ui").PanelRequest, connectionId?: string) => request<unknown>(`/api/settings/driver/panel${connectionId ? `/${encodeURIComponent(connectionId)}` : ""}`, {
+  driverPanel: (body: import("@agenticdriver/sdk/ui").PanelRequest, connectionId?: string) => request<unknown>(`/api/settings/driver/panel${connectionId ? `/${encodeURIComponent(connectionId)}` : ""}`, {
     method: "POST", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" },
     cache: "no-store", redirect: "error", credentials: "same-origin", body: JSON.stringify(body),
   }),

@@ -10,7 +10,7 @@
     "typecheck": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@litagent/driver-panel-sdk": "file:../../vendor/litagent-driver-panel-3217b8d.tgz",
+    "@agenticdriver/sdk": "https://github.com/agenticdriver/agenticdriver/releases/download/v0.2.0-alpha.2/agenticdriver-sdk-0.2.0-alpha.2.tgz",
     "@codemirror/commands": "6.11.1",
     "@codemirror/language": "6.12.4",
     "@codemirror/legacy-modes": "6.5.4",

@@ -4,14 +4,13 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { connectionInvitation } from "@litagent/driver-panel-sdk/client";
-import { managedHost } from "@litagent/driver-panel-sdk/management";
-import { configuredServer } from "@litagent/driver-panel-sdk/host";
-import { withConnections } from "@litagent/driver-panel-sdk/connections";
-import { serve } from "@litagent/driver-panel-sdk/server";
-import type { ProviderPanelState } from "@litagent/driver-panel-sdk/panel";
+import { fileURLToPath } from "node:url";
+import { connectionInvitation } from "@agenticdriver/sdk/client";
+import { managedHost } from "@agenticdriver/sdk/management";
+import { configuredServer } from "@agenticdriver/sdk/host";
+import { withConnections } from "@agenticdriver/sdk/connections";
+import { serve } from "@agenticdriver/sdk/server";
+import type { ProviderPanelState } from "@agenticdriver/sdk/panel";
 import { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
 import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
 import { DriverConnectionStore } from "./driver-connection";
@@ -21,44 +20,26 @@ import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
 beforeEach(() => { vi.spyOn(AgentProviderCatalog.prototype, "discover").mockReturnValue([]); });
 afterEach(() => { vi.restoreAllMocks(); });
 
-it("uses the reviewed source candidate rather than the registry archive with the same version", () => {
-  const archive = fs.readFileSync(new URL("../../../vendor/agenticdriver-panel-3217b8d.tgz", import.meta.url));
-  expect(createHash("sha256").update(archive).digest("hex")).toBe("65b68ebdca8d497e4e175473b55344d2640c136626b3614ffb4540284e9adb3a");
+it("resolves the shared panel and execution client from the exact SDK alpha", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.resolve("@agenticdriver/sdk")));
+  const manifest = JSON.parse(fs.readFileSync(path.join(directory, "..", "package.json"), "utf8"));
+  expect(manifest).toMatchObject({ name: "@agenticdriver/sdk", version: "0.2.0-alpha.2" });
+  for (const subpath of ["client", "panel", "ui", "connections"])
+    expect(path.dirname(fileURLToPath(import.meta.resolve(`@agenticdriver/sdk/${subpath}`)))).toBe(directory);
 });
 
-it("changes only package identity and CLI registration in the isolated settings package", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-panel-integrity-"));
-  try {
-    for (const [name, archive] of [["original", "agenticdriver-panel-3217b8d.tgz"], ["installed", "litagent-driver-panel-3217b8d.tgz"]]) {
-      fs.mkdirSync(path.join(root, name!));
-      execFileSync("tar", ["-xzf", new URL(`../../../vendor/${archive}`, import.meta.url).pathname, "-C", path.join(root, name!)]);
-    }
-    const files = (directory: string) => fs.readdirSync(directory, { recursive: true, withFileTypes: true })
-      .filter((entry) => entry.isFile()).map((entry) => path.relative(directory, path.join(entry.parentPath, entry.name))).sort();
-    const original = path.join(root, "original/package"), installed = path.join(root, "installed/package");
-    expect(files(installed)).toEqual(files(original));
-    for (const file of files(original)) {
-      if (file === "package.json") continue;
-      expect(fs.readFileSync(path.join(installed, file)).equals(fs.readFileSync(path.join(original, file))), file).toBe(true);
-    }
-    const manifest = JSON.parse(fs.readFileSync(path.join(original, "package.json"), "utf8"));
-    delete manifest.bin;
-    expect(JSON.parse(fs.readFileSync(path.join(installed, "package.json"), "utf8"))).toEqual({ ...manifest, name: "@litagent/driver-panel-sdk", version: "0.1.0-litagent-panel.3217b8d" });
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-async function fixture() {
+async function fixture(staticProviders: string[] = [], legacy = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-panel-"));
   const token = "fixture-private-operator-credential-not-a-real-account";
   const config = path.join(root, "host.json");
   fs.writeFileSync(config, JSON.stringify({
     version: 1, listen: { host: "127.0.0.1", port: 0 },
     providers: [{ id: "all", kind: "mock", name: "Fixture provider" }, { id: "denied", kind: "mock", models: [] }],
-    tokens: [{ id: "operator", subject: "operator", providers: [], manageProviders: true, tokenRef: { env: "FIXTURE_TOKEN" } }],
+    tokens: [{ id: "operator", subject: "operator", providers: staticProviders, manageProviders: true, tokenRef: { env: "FIXTURE_TOKEN" } }],
   }), { mode: 0o600 });
   const host = await managedHost(config);
   const server = await serve(host.driver, withConnections({
-    ...await configuredServer(host.config(), config, async () => token), management: host.management,
+    ...await configuredServer(host.config(), config, async () => token), ...(legacy ? {} : { management: host.management }),
   }, host.connections));
   const store = new DriverConnectionStore(path.join(root, "app", ".litagent", "driver-connection.json"));
   const settings = new AgentProviderSettingsStore(path.join(root, "app", ".litagent", "provider-settings.json"));
@@ -128,6 +109,49 @@ it("allows management separately from execution and rejects stale provider chang
     await f.pair(false, ["all"]);
     const forbidden = await f.send({ ...request, change: { ...request.change, revision: f.host.management.snapshot().revision } });
     expect(forbidden.status).toBe(403);
+  } finally { await f.close(); }
+});
+
+it("removes a provider only with management authority and the current revision", async () => {
+  const f = await fixture();
+  try {
+    const { state } = await f.pair(true, []);
+    expect(state.management?.removalSupported).toBe(true);
+    const request = { action: "configure", change: { revision: state.management!.revision, provider: { id: "all", kind: "mock" }, remove: true } };
+    const removed = await f.send(request);
+    expect(removed.status).toBe(200);
+    expect((await removed.json() as ProviderPanelState).providers.map((provider) => provider.id)).toEqual(["denied"]);
+    expect((await f.send(request)).status).toBe(409);
+    await f.pair(false, ["denied"]);
+    expect((await f.send({ action: "configure", change: { revision: f.host.management.snapshot().revision,
+      provider: { id: "denied", kind: "mock" }, remove: true } })).status).toBe(403);
+    expect(f.host.management.snapshot().providers.map((provider) => provider.id)).toEqual(["denied"]);
+  } finally { await f.close(); }
+});
+
+it("reports referenced provider removal as a recoverable conflict without exposing host details", async () => {
+  const f = await fixture(["all"]);
+  try {
+    const { state } = await f.pair(true, []);
+    const denied = await f.send({ action: "configure", change: { revision: state.management!.revision,
+      provider: { id: "all", kind: "mock" }, remove: true } });
+    expect(denied.status).toBe(409);
+    const body = await denied.text();
+    expect(JSON.parse(body).error.code).toBe("PROVIDER_IN_USE");
+    expect(body).not.toContain(f.token);
+    expect(body).not.toContain(f.root);
+    expect(f.host.management.snapshot().providers).toHaveLength(2);
+  } finally { await f.close(); }
+});
+
+it("keeps legacy hosts without management capabilities read-only", async () => {
+  const f = await fixture([], true);
+  try {
+    const { state } = await f.pair(false, ["all"]);
+    expect(state.connected).toBe(true);
+    expect(state.management).toBeUndefined();
+    expect(state.setup).toBeUndefined();
+    expect(state.canInvite).toBe(false);
   } finally { await f.close(); }
 });
 

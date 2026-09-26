@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Cpu, Monitor, Pencil, Plus, Plug, RefreshCw, Server, Unplug, X } from "lucide-react";
-import { registerProviderPanel, type ProviderPanelElement } from "@litagent/driver-panel-sdk/ui";
+import { registerProviderPanel, type ProviderPanelElement } from "@agenticdriver/sdk/ui";
 import type { AgentProvider, DriverConnection, DriverConnections, DriverHostConnection } from "@litagent/contracts";
 import { api } from "./api";
 import { DriverConnectionSettings } from "./DriverConnectionSettings";
@@ -98,7 +98,6 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
     element.setAttribute("theme", current.current.theme);
     const style = new CSSStyleSheet();
     style.replaceSync("*{letter-spacing:0!important}.shell,.provider,.group,.notice,.setup-card{border-radius:6px}.top h2{font-size:18px}.empty h3{font-size:22px}");
-    if (element.shadowRoot) element.shadowRoot.adoptedStyleSheets = [...element.shadowRoot.adoptedStyleSheets, style];
     element.transport = async (request) => {
       try {
         const result = await api.driverPanel(request, current.current.host?.id ?? "new");
@@ -123,6 +122,8 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
     element.addEventListener("agenticdriver:model-selected", select);
     panel.current = element;
     container.current?.append(element);
+    // The SDK installs its stylesheet in connectedCallback; append ours afterward.
+    if (element.shadowRoot) element.shadowRoot.adoptedStyleSheets = [...element.shadowRoot.adoptedStyleSheets, style];
     return () => { element.removeEventListener("agenticdriver:model-selected", select); element.remove(); panel.current = null; };
   }, []);
 

@@ -20,6 +20,6 @@
   },
   "dependencies": {
     "@litagent/contracts": "*",
-    "@agenticdriver/sdk": "0.1.0"
+    "@agenticdriver/sdk": "https://github.com/agenticdriver/agenticdriver/releases/download/v0.2.0-alpha.2/agenticdriver-sdk-0.2.0-alpha.2.tgz"
   }
 }
