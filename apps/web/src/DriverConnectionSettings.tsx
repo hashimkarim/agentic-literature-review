@@ -4,23 +4,27 @@ import type { DriverConnection } from "@litagent/contracts";
 import { api } from "./api";
 import { Select } from "./Select";
 
-export function DriverConnectionSettings({ connection, onRefresh }: { connection: DriverConnection | null; onRefresh: () => Promise<DriverConnection> }) {
+export function DriverConnectionSettings({ connection, onRefresh, connectionId, onSaved }: {
+  connection: DriverConnection | null; onRefresh: () => Promise<DriverConnection>;
+  connectionId?: string | null; onSaved?: (id: string) => Promise<void>;
+}) {
   const [editing, setEditing] = useState(false);
   const [url, setUrl] = useState("");
   const [credential, setCredential] = useState("");
-  const [mode, setMode] = useState<"token" | "tokenFile">("token");
+  const [mode, setMode] = useState<"token" | "tokenFile">("tokenFile");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => { if (!editing) setUrl(connection?.endpoint ?? ""); }, [connection?.endpoint, editing]);
-  const open = editing || connection?.configured === false;
+  const open = editing || !connection?.configured;
   async function refresh() { setBusy(true); setError(""); try { await onRefresh(); } catch { setError("Could not refresh the connection. Check that the LitAgent server is running."); } finally { setBusy(false); } }
   async function save() {
     setBusy(true); setError("");
     try {
-      const result = await api.saveDriverConnection({ url: url.trim(), ...(credential.trim() ? { [mode]: credential.trim() } : {}) });
+      const result = await api.saveDriverConnection({ url: url.trim(), ...(credential.trim() ? { [mode]: credential.trim() } : {}) }, connectionId);
       setCredential("");
       if (result.connection.status === "ready") setEditing(false);
-      await onRefresh();
+      if (onSaved) await onSaved(result.id);
+      else await onRefresh();
     } catch (error) { setError(error instanceof Error ? error.message : "Could not save connection."); }
     finally { setBusy(false); }
   }

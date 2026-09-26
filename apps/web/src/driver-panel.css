@@ -1,0 +1,53 @@
+.driver-settings-workspace { display:grid; gap:18px; min-width:0; }
+.driver-connections-heading { display:flex; align-items:center; gap:16px; justify-content:space-between; }
+.driver-connections-heading h2 { font-size:18px; margin:0 0 7px; }
+.driver-connections-heading span { display:flex; align-items:center; gap:7px; color:var(--text-secondary); font-size:12px; overflow-wrap:anywhere; }
+.driver-connections-heading .la-btn { flex-shrink:0; }
+.driver-connections-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr)); gap:10px; }
+.driver-host-choice { display:flex; align-items:center; gap:12px; padding:13px; border:1px solid var(--border-line); background:var(--bg-primary); color:var(--text-primary); border-radius:6px; text-align:left; min-width:0; }
+.driver-host-choice[aria-pressed=true] { border-color:var(--accent-primary); background:var(--surface-selection); }
+.driver-host-choice > span:first-of-type { flex:1; min-width:0; display:grid; gap:3px; }
+.driver-host-choice strong { font-size:14px; overflow-wrap:anywhere; }
+.driver-host-choice small { color:var(--text-secondary); font-size:12px; overflow-wrap:anywhere; }
+.driver-host-choice > svg { flex-shrink:0; }
+.driver-host-choice .driver-health { font-size:11px; padding:0; flex-shrink:0; }
+.driver-connection-title { display:flex; align-items:center; gap:10px; }
+.driver-connection-title h3 { font-size:15px; margin:0; overflow-wrap:anywhere; }
+.driver-label-form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.driver-label-form label { flex:1 1 200px; display:grid; gap:6px; font-size:12px; color:var(--text-secondary); }
+.driver-label-form input { width:100%; min-width:0; }
+.driver-offline { border-left:3px solid var(--state-warning); padding:14px 16px; background:var(--surface-elevated); }
+.driver-offline p { color:var(--text-secondary); font-size:13px; }
+.driver-offline > div { display:flex; flex-wrap:wrap; gap:10px; }
+.driver-shared-panel {
+  --ad-bg:var(--bg-primary); --ad-surface:var(--surface-elevated);
+  --ad-field:var(--surface-input); --ad-line:var(--border-line);
+  --ad-fg:var(--text-primary); --ad-muted:var(--text-secondary);
+  --ad-accent:var(--accent-bright); --ad-good:var(--state-success);
+  min-width:0;
+}
+.driver-app-access { border-top:1px solid var(--border-line); padding-top:18px; }
+.driver-app-access h2 { display:flex; align-items:center; gap:8px; font-size:15px; margin:0 0 12px; }
+.driver-app-access p { font-size:13px; color:var(--text-secondary); }
+.driver-app-row { display:grid; grid-template-columns:minmax(160px,1fr) minmax(140px,1fr) auto; gap:14px; align-items:center; min-height:48px; padding:10px 0; border-bottom:1px solid var(--border-line); }
+.driver-app-row label { display:flex; gap:10px; align-items:center; cursor:pointer; font-size:14px; }
+.driver-app-row input { accent-color:var(--accent-primary); width:16px; height:16px; flex-shrink:0; }
+.driver-app-row code { font-size:12px; overflow-wrap:anywhere; }
+.driver-app-state { font-size:12px; color:var(--text-secondary); }
+.driver-selection { display:flex; align-items:center; gap:12px; border-left:3px solid var(--accent-primary); padding:12px 14px; background:var(--surface-selection); }
+.driver-selection > div { flex:1; min-width:0; display:grid; gap:4px; overflow-wrap:anywhere; }
+.driver-selection strong { font-size:14px; }
+.driver-selection span { font-size:12px; color:var(--text-secondary); }
+.driver-selection button { flex-shrink:0; }
+.driver-manual-connection > summary { font-size:13px; cursor:pointer; padding:8px 0; color:var(--text-secondary); }
+@media(max-width:600px) {
+  .driver-connections-heading { flex-wrap:wrap; }
+  .driver-host-choice { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:start; gap:8px 12px; }
+  .driver-host-choice .driver-health { grid-column:2; justify-self:start; }
+  .driver-host-choice small.mono { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .driver-app-row { grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+  .driver-app-row code { grid-column:1; grid-row:2; }
+  .driver-app-state { grid-column:2; grid-row:1/3; }
+  .driver-selection { flex-wrap:wrap; }
+  .driver-selection button { margin-left:auto; }
+}

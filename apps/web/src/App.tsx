@@ -34,7 +34,8 @@ import { workflowLabels } from "@litagent/ui";
 
 import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
 import { ChatSessions } from "./chat-sessions";
-import { DriverConnectionSettings } from "./DriverConnectionSettings";
+import { DriverProviderPanel } from "./DriverProviderPanel";
+import { providerSelectionPreference } from "./provider-preferences";
 import { Select } from "./Select";
 import { FileImportDialog } from "./FileImportDialog";
 import { savedCitationHash, type SavedCitationSources } from "./citation-revision";
@@ -437,8 +438,10 @@ function App() {
   const [providers, setProviders] = useState<AgentProvider[]>([]);
   const [driverConnection, setDriverConnection] = useState<DriverConnection | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowRun[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState("codex");
-  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [providerSelection, setProviderSelection] = useBrowserPreference("litagent:provider-selection:v1", { providerId: "codex", model: null } as { providerId: string; model: string | null }, providerSelectionPreference);
+  const { providerId: selectedProviderId, model: selectedModel } = providerSelection;
+  const setSelectedProviderId = useCallback((providerId: string) => setProviderSelection((current) => ({ ...current, providerId, model: null })), [setProviderSelection]);
+  const setSelectedModel = useCallback((model: string | null) => setProviderSelection((current) => ({ ...current, model })), [setProviderSelection]);
   const [libraryPaperId, setLibraryPaperId] = useState<string | null>(null);
   const [projectPaperId, setProjectPaperId] = useState<string | null>(null);
   const [markdown, setMarkdown] = useState<string | null>(null);
@@ -832,6 +835,11 @@ function App() {
     setDriverConnection(result.connection);
     return result.connection;
   }, []);
+  const syncDriver = useCallback(async () => {
+    const [nextProviders, connection] = await Promise.all([api.providerSettings(), api.driverConnection()]);
+    setProviders(nextProviders);
+    setDriverConnection(connection);
+  }, []);
 
   const convertPaper = useCallback((paperId: string) => {
     startTransition(() => {
@@ -1057,6 +1065,7 @@ function App() {
             onConnectProvider={connectProvider}
             driverConnection={driverConnection}
             onRefreshDriver={refreshDriver}
+            onSyncDriver={syncDriver}
             status={status}
           />
         ) : null}
@@ -3932,6 +3941,7 @@ function SettingsScreen({
   onConnectProvider,
   driverConnection,
   onRefreshDriver,
+  onSyncDriver,
   status
 }: {
   theme: string;
@@ -3945,6 +3955,7 @@ function SettingsScreen({
   onConnectProvider: ProviderCardProps["onConnectProvider"];
   driverConnection: DriverConnection | null;
   onRefreshDriver: () => Promise<DriverConnection>;
+  onSyncDriver: () => Promise<void>;
   status: AppStatus | null;
 }) {
   const [section, setSection] = useBrowserPreference<SettingsSection>("litagent:view:v1:settings:section", "providers", choicePreference(["providers", "defaults", "appearance", "storage", "about"]));
@@ -3967,15 +3978,9 @@ function SettingsScreen({
           </div>
           {section === "providers" ? (
             <div className="fade-in">
-              <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
-                <div>
-                  <div style={{ font: "var(--text-h3)", color: "var(--text-high)" }}>Agent providers</div>
-                  <div style={{ font: "var(--text-caption)", color: "var(--text-muted)", marginTop: 2 }}>AgenticDriver instances and local CLI providers for document workflows and cited Q&A.</div>
-                </div>
-                <span style={{ flex: 1 }} />
-              </div>
-              <DriverConnectionSettings connection={driverConnection} onRefresh={onRefreshDriver} />
-              {providers.filter((provider) => provider.id.startsWith("driver.")).map((provider) => <ProviderCard key={provider.id} provider={provider} onUpdateProvider={onUpdateProvider} onConnectProvider={onConnectProvider} onRefreshDriver={onRefreshDriver} />)}
+              <DriverProviderPanel theme={theme} providers={providers} connection={driverConnection}
+                onSync={onSyncDriver} onUpdate={onUpdateProvider}
+                onSelect={(provider, model) => { onProviderChange(provider); onModelChange(model); }} />
               <details className="driver-legacy"><summary>Legacy local CLI adapters</summary>{providers.filter((provider) => !provider.id.startsWith("driver.")).map((provider) => <ProviderCard key={provider.id} provider={provider} onUpdateProvider={onUpdateProvider} onConnectProvider={onConnectProvider} onRefreshDriver={onRefreshDriver} />)}</details>
             </div>
           ) : null}

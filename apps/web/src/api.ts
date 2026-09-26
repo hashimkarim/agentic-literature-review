@@ -100,7 +100,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new ApiError(error.error ?? response.statusText, response.status, error.code);
+    const detail = error.error;
+    throw new ApiError(typeof detail === "string" ? detail : detail?.message ?? response.statusText, response.status, error.code ?? detail?.code);
   }
   return (await response.json()) as T;
 }
@@ -320,7 +321,13 @@ export const api = {
   providerStatus: () => request<AgentProvider[]>("/api/provider-status"),
   converterStatus: () => request<ConverterStatus>("/api/converter-status"),
   driverConnection: () => request<DriverConnection>("/api/settings/driver"),
-  saveDriverConnection: (body: { url: string; token?: string; tokenFile?: string }) => request<{ connection: DriverConnection; providers: AgentProvider[] }>("/api/settings/driver", { method: "PUT", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify(body) }),
+  driverConnections: () => request<import("@litagent/contracts").DriverConnections>("/api/settings/driver/connections", { cache: "no-store" }),
+  driverPanel: (body: import("@litagent/driver-panel-sdk/ui").PanelRequest, connectionId?: string) => request<unknown>(`/api/settings/driver/panel${connectionId ? `/${encodeURIComponent(connectionId)}` : ""}`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" },
+    cache: "no-store", redirect: "error", credentials: "same-origin", body: JSON.stringify(body),
+  }),
+  saveDriverConnection: (body: { url: string; token?: string; tokenFile?: string; label?: string; deviceName?: string }, id?: string | null) => request<{ id: string; connection: DriverConnection; providers: AgentProvider[] }>(`/api/settings/driver${id === null ? "/connections" : id ? `/connections/${encodeURIComponent(id)}` : ""}`, { method: id === null ? "POST" : "PUT", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify(body) }),
+  renameDriverConnection: (id: string, body: { label: string; deviceName: string }) => request<{ saved: boolean }>(`/api/settings/driver/connections/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify(body) }),
   refreshDriver: () => request<{ connection: DriverConnection; providers: AgentProvider[] }>("/api/settings/driver/refresh", { method: "POST" }),
   providerSettings: () => request<AgentProvider[]>("/api/settings/providers"),
   updateProviderSettings: (
