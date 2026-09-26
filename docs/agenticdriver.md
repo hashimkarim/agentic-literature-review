@@ -1,7 +1,8 @@
 # AgenticDriver SDK integration
 
-LitAgent can discover and execute provider instances exposed by an AgenticDriver
-host, alongside its existing local CLI catalog. The integration stays in
+LitAgent can connect one application server to multiple AgenticDriver devices,
+and a driver can serve multiple applications through independent grants.
+The integration stays in
 `packages/agents`; workflows continue to consume normalized run events.
 
 Install the exact registry SDK and app dependencies from the committed lockfile:
@@ -10,7 +11,12 @@ Install the exact registry SDK and app dependencies from the committed lockfile:
 bun install --frozen-lockfile
 ```
 
-Start an SDK host and configure the LitAgent backend:
+Open **Settings > Providers > Add connection** and paste a one-use invitation
+from a driver. The application backend exchanges it and stores the credential
+privately. Existing hosts can instead use the address and local token-file form.
+No provider sign-in or model request is started by connecting or refreshing.
+
+Environment configuration is still supported for first-time setup:
 
 ```bash
 export AGENTICDRIVER_URL=http://127.0.0.1:7433
@@ -18,11 +24,13 @@ export AGENTICDRIVER_TOKEN=YOUR_DRIVER_BEARER_TOKEN
 bun run dev:server
 ```
 
-Use HTTPS beyond loopback. The backend fetches the token-scoped catalog at startup.
-Instances appear as `driver.<instance>`, e.g. `driver.mock`, and are disabled until
-enabled in the existing provider settings. Choose an explicit model, such as
-`demo` for the mock host. Restart the backend to refresh the remote inventory.
-When neither variable is set, the existing provider setup is used.
+Use HTTPS beyond loopback, reachable from the LitAgent backend. Existing first
+connection IDs remain `driver.<instance>`; additional connections use
+`driver.<connection UUID>:<instance>`, preventing collisions between devices.
+New instances remain disabled until explicitly enabled in LitAgent. Select an
+explicit model. Refresh in Settings discovers metadata without a restart or
+changing saved choices. A saved connection registry takes precedence over the
+environment, including an intentionally disconnected registry.
 
 The adapter implements start/interrupt/stop, normalized events, failure classes,
 usage in completion payloads, and local cache artifacts. `AgentHarness` continues
@@ -40,10 +48,11 @@ the existing local adapters until their context/tool interfaces are made portabl
 Citation linking and acceptance of proposed research changes remain application
 responsibilities.
 
-The token belongs in backend environment/secret storage. Provider keys and CLI
-sessions stay on the driver host. Multi-user deployments must choose scoped
-execution credentials for their tenancy model; the development integration uses
-one operator-configured host token.
+Credentials belong in backend secret storage. Provider keys and CLI sessions
+stay on the driver device. Multi-user deployments must choose scoped execution
+credentials for their tenancy model. Current setup/management routes use the
+existing local-only access guard; they do not add application login or enable
+remote-browser administration of the LitAgent server.
 
 Run `bun run typecheck` and `bun run test`. New tests cover real host execution,
 artifact creation, cancellation, truncated results, and explicit enablement.
@@ -170,3 +179,46 @@ Narrow Settings content has no horizontal overflow. No generation was attempted
 and no research content was sent. Execution rejection is tested using fixtures,
 not requests against the regular host. Typecheck and 237 tests pass (two optional
 compiler tests skipped).
+
+## Shared Panel And Multiple Devices (2026-09-26)
+
+Settings embeds the SDK-owned provider component and same-origin backend bridge.
+This is the explicitly handed-off source candidate `3217b8d`, not a claim that
+the published registry 0.1.0 includes these entrypoints. The metadata-only
+`@litagent/driver-panel-sdk` repack keeps the candidate separate from the
+unchanged execution dependency. See [archive identity and checksum](../vendor/README.md).
+There is no sibling checkout dependency or second provider runtime.
+
+Each connection has a stable local ID, editable connection/device names and its
+own private credential. Names are app-owned display labels, not verified remote
+device identities. The application server has a persisted client ID and device
+name. Existing singleton files migrate without changing historical provider IDs.
+Removing a connection never reuses its namespace or selects another account.
+
+Host provider settings are changed through the SDK's revision-checked management
+API and remain canonical on the driver. Ordinary execution credentials cannot
+manage providers. Management-only grants cannot execute. LitAgent stores only
+its connection details and app-specific enablement/defaults; browser preferences
+retain the selected connection and exact provider/model. SDK model favorites and
+visibility stay device-local, scoped by connection and instance. Refresh never
+broadens grants, enables a provider, or chooses a model.
+
+Omitted host `models` means unrestricted explicit selection; `[]` means deny all;
+a nonempty list restricts execution. `modelCatalog` is independent advisory
+inventory. Local disconnect forgets that app connection and disables new work;
+host revocation is separate. Existing streams retain their cancellation client.
+Offline status has Retry and local Disconnect without switching providers.
+
+The regular host's SDK-owned activation at `23e7954` supersedes the historical
+catalog-only scope above. App metadata checks observed nine Codex and fourteen
+Claude catalog entries, both with omitted model restrictions. The disposable
+app kept both disabled with no selected model across refresh and restart. These
+checks sent no model prompts or research data. The SDK's separate live smoke and
+metering receipt is not a new LitAgent generation certification.
+
+Still SDK-owned: automatic Usagestat provisioning, safe app-scoped usage reads,
+verified device metadata, and a policy for future providers on existing paired
+grants. The reviewed pairing contract grants an explicit provider list; LitAgent
+does not silently expand it. No Usagestat administrative credential is consumed.
+Legacy direct providers remain until the [consolidation gate](ROADMAP.md#provider-consolidation)
+passes. See the [application validation receipt](validation/driver-panel-2026-09-26.md).

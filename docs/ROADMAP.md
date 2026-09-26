@@ -1,6 +1,6 @@
 # LitAgent Roadmap And Progress
 
-Updated: 2026-09-25
+Updated: 2026-09-26
 
 LitAgent is a local-first, project-centered literature review workspace. Papers
 are canonical global records; projects reference them with their own screening
@@ -73,6 +73,16 @@ their provider identity. Reuse the SDK-owned management/pairing/component
 contracts when released, rather than inventing a parallel management protocol.
 
 ## Delivery Snapshot
+
+Driver connections (2026-09-26): multiple devices per LitAgent server, independent
+app grants per driver, editable device labels, shared SDK provider settings,
+host-scoped provider IDs, explicit app enablement/model defaults, and persisted
+browser selection. Host setup stays on the driver; app preferences stay in
+LitAgent. Regular Codex/Claude metadata refresh preserves saved choices. No
+research prompts were sent. Automatic Usagestat provisioning, scoped usage UI,
+verified remote device names and future-provider grant policy remain SDK work.
+See [integration](agenticdriver.md#shared-panel-and-multiple-devices-2026-09-26)
+and [acceptance evidence](validation/driver-panel-2026-09-26.md).
 
 Workspace usability (2026-09-25): writing documents retain source/PDF mode,
 split ratio, file tabs/folder expansion, assistant view and panel visibility in
