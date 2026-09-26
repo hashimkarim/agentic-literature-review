@@ -1,5 +1,8 @@
 # Shared Provider Panel And Multiple Connections
 
+This is the historical source-candidate receipt. The active dependency is now
+the public alpha.2 release; see [the adoption receipt](driver-alpha2-2026-09-26.md).
+
 Application branch: `chat-reliability`. No main publication, auth migration,
 provider runtime replacement, real manuscript edits or model generation in this
 acceptance. The regular and synthetic shared SDK services were not restarted.
