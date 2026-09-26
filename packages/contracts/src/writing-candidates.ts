@@ -3,7 +3,8 @@ import { ManuscriptHistoryEntrySchema, ManuscriptPathSchema, ManuscriptRevisionS
 import { WritingAssistantOptionsSchema, WritingClaimSchema, WritingContextSchema, WritingSourceReviewSchema } from "./writing-context";
 
 export const WritingTargetSchema = z.object({
-  providerId: z.string().regex(/^driver\.[A-Za-z0-9_.-]+$/).max(180),
+  // Keep legacy IDs readable and accept the registry's per-connection namespace.
+  providerId: z.string().regex(/^driver\.(?:[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:)?[A-Za-z0-9_.-]+$/).max(180),
   model: z.string().trim().min(1).max(200),
   count: z.number().int().min(1).max(3)
 }).strict();

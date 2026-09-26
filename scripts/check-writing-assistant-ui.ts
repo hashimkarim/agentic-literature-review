@@ -11,6 +11,7 @@ import { mockProvider } from "@agenticdriver/sdk/providers";
 import { serve } from "@agenticdriver/sdk/server";
 import { AgentProviderSchema, type ManuscriptDocument, type WritingCandidateBatch, type WritingContext, type WritingAssistantOutput } from "../packages/contracts/src/index";
 import { LitAgentRepository } from "../packages/library/src/index";
+import { DriverConnectionStore } from "../apps/server/src/driver-connection";
 
 // Real application storage and installed SDK HTTP transport. No live accounts.
 const output = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-writing-assistant-ui-"));
@@ -41,7 +42,10 @@ const provider = mockProvider(async (request) => {
 provider.info = { ...provider.info, id: "assistant-fixture", name: "Synthetic writing", models: ["fixture-one", "fixture-two"] };
 const token = "synthetic-assistant-token-not-an-account";
 const sdk = await serve(new AgenticDriver({ providers: [provider] }), { port: 0, tokens: [{ token, subject: "writing-fixture", providers: [provider.info.id] }] });
-const descriptor = AgentProviderSchema.parse({ id: `driver.${provider.info.id}`, label: provider.info.name, command: "", installed: true, enabled: true, connected: true, authStatus: "authenticated", models: provider.info.models });
+const connections = new DriverConnectionStore(path.join(root, ".litagent/driver-connection.json"));
+connections.disconnect(); // Exercise the namespaced IDs used by additional/paired devices.
+const connection = connections.add({ url: sdk.url, token, label: "Synthetic writing device", deviceName: "fixture-device" });
+const descriptor = AgentProviderSchema.parse({ id: `driver.${connection.id}:${provider.info.id}`, label: provider.info.name, command: "", installed: true, enabled: true, connected: true, authStatus: "authenticated", models: provider.info.models });
 fs.writeFileSync(path.join(root, ".litagent/provider-settings.json"), JSON.stringify({ [descriptor.id]: { providerId: descriptor.id, enabled: true, connected: true, command: "", defaultModel: null, customModels: [], lastCheckedAt: null, updatedAt: new Date().toISOString() } }));
 const reservation = http.createServer();
 await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
