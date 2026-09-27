@@ -15,7 +15,7 @@ export function Select({ id, label, value, options, onChange, disabled = false, 
   compact?: boolean;
 }) {
   const selected = options.find((option) => option.value === value);
-  // Radix reserves the empty string for placeholders; CLI default is a real option.
+  // Radix reserves the empty string for placeholders; our empty choice is an option.
   const encode = (input: string) => `option:${input}`;
   return <Primitive.Root value={encode(value)} onValueChange={(next) => onChange(next.slice(7))} disabled={disabled || options.length === 0}>
     <Primitive.Trigger id={id} aria-label={label} className={`la-dropdown-trigger${compact ? " compact" : ""}`} title={selected?.label ?? placeholder}>

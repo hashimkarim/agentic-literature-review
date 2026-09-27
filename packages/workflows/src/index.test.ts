@@ -32,6 +32,21 @@ async function driverFixture(instance: string, reply: (prompt: string) => string
   return { id, catalog: new AgenticDriverCatalog(client, await client.providers(), { [id]: settings }) };
 }
 
+function comparisonReply(repo: LitAgentRepository, paperIds: string[]): string {
+  const kinds: ResearchRecordKind[] = ["finding", "method", "dataset", "result", "limitation", "reproducibility"];
+  return JSON.stringify({ title: "Comparison", summary: "Comparison of accepted records.", rows: kinds.map((kind) => ({ kind,
+    cells: paperIds.map((paperId) => {
+      const records = repo.listResearchRecords(paperId).filter((record) => record.kind === kind);
+      return { paperId, status: records.length ? "supported" : "not_found", summary: records.map((record) => record.content).join(" ") || "Not found", recordIds: records.map((record) => record.id) };
+    })
+  })) });
+}
+
+async function waitForRun(engine: WorkflowEngine, runId: string) {
+  for (let i = 0; i < 100 && engine.readRun(runId).run.status === "running"; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(engine.readRun(runId).run.status).toBe("completed");
+}
+
 function qaProviderReply(prompt: string, claims: ProviderQaDraft["claims"], supported = true): string {
   const reply = prompt.startsWith("LitAgent Q&A source review")
     ? { supported, reason: supported ? "The supplied sources support the answer." : "The source is about a different subject.", claims: claims.map((_, index) => ({ index, supported, reason: "Compared to the cited passage." })) }
@@ -278,42 +293,28 @@ describe("PDF inbox processing", () => {
 });
 
 describe("relevance proposals", () => {
-  it("stages evidence-backed relevance without changing screening state", () => {
+  it.each(["codex", "claude", "gemini", "local-heuristic", ""])("requires explicit Driver replacement for %s without creating a run", (providerId) => {
     const repo = makeRepo();
-    const project = repo.createProject({
-      name: "Relevance Project",
-      researchQuestion: "Does the method support reliable real-time analysis?"
-    });
-    const imported = repo.importPaper({
-      projectId: project.id,
-      metadata: { title: "Reliable Real-time Analysis" }
-    });
-    repo.writeMarkdown(imported.paper.id, "# Findings\n\nThe proposed method supports reliable real-time analysis on mobile devices.");
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
-    index.rebuild(repo);
     const engine = new WorkflowEngine(repo, index);
-
-    const run = engine.startWorkflow({
-      type: "relevance-tagging",
-      projectId: project.id,
-      paperIds: [imported.paper.id],
-      collectionIds: [],
-      query: project.researchQuestions[0]?.text ?? null,
-      options: {},
-      providerId: "local-heuristic",
-      model: null
-    });
-    const proposals = repo.listRelevanceProposals(project.id, { paperId: imported.paper.id });
-
-    expect(run.status).toBe("completed");
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]).toMatchObject({ status: "pending", paperId: imported.paper.id });
-    expect(proposals[0]?.evidence.length).toBeGreaterThan(0);
-    expect(repo.listPaperLinks(project.id)[0]?.relevanceState).toBe("unreviewed");
-    expect(engine.readRun(run.id).events.some((item) => item.type === "evidence.found")).toBe(true);
-    index.close();
+    try {
+      expect(() => engine.startWorkflow({ type: "relevance-tagging", projectId: null, paperIds: [], collectionIds: [], query: "Relevance?", options: {}, providerId, model: null })).toThrow(/AgenticDriver/);
+      expect(engine.listRuns()).toHaveLength(0);
+    } finally { index.close(); }
   });
 
+  it("exports bibliography locally even when an old provider selection is saved", () => {
+    const repo = makeRepo();
+    const project = repo.createProject({ name: "Export", defaultProvider: "codex" });
+    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
+    const engine = new WorkflowEngine(repo, index);
+    try {
+      const run = engine.startWorkflow({ type: "bib-export", projectId: project.id, paperIds: [], collectionIds: [], query: null, options: {}, providerId: "codex", model: "old-model" });
+      expect(run).toMatchObject({ status: "completed", providerId: "local", model: null });
+      expect(repo.readProject(project.id)?.defaultProvider).toBe("codex");
+      expect(repo.createProject({ name: "New project" }).defaultProvider).toBe("");
+    } finally { index.close(); }
+  });
   it("turns structured provider output into reviewable relevance proposals", async () => {
     const repo = makeRepo();
     const project = repo.createProject({
@@ -376,36 +377,6 @@ describe("relevance proposals", () => {
 });
 
 describe("metadata proposals", () => {
-  it("stages inferred metadata without changing the canonical paper", () => {
-    const repo = makeRepo();
-    const imported = repo.importPaper({ metadata: { title: "Imported filename" } });
-    repo.writeMarkdown(
-      imported.paper.id,
-      "# Verified Research Title\n\nPublished in 2025. DOI: 10.1234/example.paper\n\n## Abstract\n\nA metadata extraction example."
-    );
-    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
-    index.rebuild(repo);
-    const engine = new WorkflowEngine(repo, index);
-
-    const run = engine.startWorkflow({
-      type: "metadata-extraction",
-      projectId: null,
-      paperIds: [imported.paper.id],
-      collectionIds: [],
-      query: null,
-      options: {},
-      providerId: "local-heuristic",
-      model: null
-    });
-    const proposals = repo.listMetadataProposals(imported.paper.id);
-
-    expect(run.status).toBe("completed");
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]?.fields.map((field) => field.field)).toEqual(expect.arrayContaining(["title", "doi", "year"]));
-    expect(repo.readPaper(imported.paper.id)).toMatchObject({ title: "Imported filename", doi: null, year: null });
-    index.close();
-  });
-
   it("turns structured provider metadata into field-level proposals", async () => {
     const repo = makeRepo();
     const imported = repo.importPaper({ metadata: { title: "Provider Metadata Paper" } });
@@ -455,53 +426,6 @@ describe("metadata proposals", () => {
 });
 
 describe("structured research findings", () => {
-  it("stages typed local research items with exact passage evidence", () => {
-    const repo = makeRepo();
-    const project = repo.createProject({ name: "Research Records" });
-    const imported = repo.importPaper({
-      projectId: project.id,
-      metadata: { title: "Evaluation Paper" }
-    });
-    repo.writeMarkdown(
-      imported.paper.id,
-      [
-        "# Method",
-        "",
-        "The method uses a convolutional model with streaming inference.",
-        "",
-        "## Results",
-        "",
-        "Evaluation accuracy improves by five percentage points on the benchmark dataset.",
-        "",
-        "## Limitations",
-        "",
-        "The evaluation is limited to a single benchmark dataset."
-      ].join("\n")
-    );
-    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
-    index.rebuild(repo);
-    const engine = new WorkflowEngine(repo, index);
-
-    const run = engine.startWorkflow({
-      type: "key-findings",
-      projectId: project.id,
-      paperIds: [imported.paper.id],
-      collectionIds: [],
-      query: null,
-      options: {},
-      providerId: "local-heuristic",
-      model: null
-    });
-    const proposals = repo.listResearchFindingProposals(imported.paper.id);
-
-    expect(run.status).toBe("completed");
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]?.items.map((item) => item.kind)).toEqual(expect.arrayContaining(["method", "result", "limitation"]));
-    expect(proposals[0]?.items.every((item) => item.evidence.length > 0)).toBe(true);
-    expect(repo.listResearchRecords(imported.paper.id)).toHaveLength(0);
-    index.close();
-  });
-
   it("validates provider findings and preserves structured attributes", async () => {
     const repo = makeRepo();
     const imported = repo.importPaper({ metadata: { title: "Provider Findings" } });
@@ -557,7 +481,7 @@ describe("structured research findings", () => {
 });
 
 describe("paper comparison artifacts", () => {
-  it("builds and reviews a cited matrix from accepted records", () => {
+  it("builds and reviews a cited matrix from accepted records", async () => {
     const repo = makeRepo();
     const project = repo.createProject({ name: "Comparison Project" });
     const first = repo.importPaper({ projectId: project.id, metadata: { title: "First Model" } });
@@ -597,7 +521,8 @@ describe("paper comparison artifacts", () => {
       passageId: secondPassages[1]?.id ?? "missing"
     });
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
-    const engine = new WorkflowEngine(repo, index);
+    const { catalog, id } = await driverFixture("comparison-review", () => comparisonReply(repo, [first.paper.id, second.paper.id]));
+    const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
 
     const run = engine.startWorkflow({
       type: "compare-papers",
@@ -606,14 +531,15 @@ describe("paper comparison artifacts", () => {
       collectionIds: [],
       query: "Which model performs better?",
       options: {},
-      providerId: "local-heuristic",
+      providerId: id,
       model: null
     });
+    await waitForRun(engine, run.id);
     const artifact = engine.listComparisonArtifacts(project.id)[0];
     const resultRow = artifact?.rows.find((row) => row.kind === "result");
     const datasetRow = artifact?.rows.find((row) => row.kind === "dataset");
 
-    expect(run.status).toBe("completed");
+    expect(engine.readRun(run.id).run.status).toBe("completed");
     expect(artifact).toMatchObject({ status: "draft", paperIds: [first.paper.id, second.paper.id] });
     expect(resultRow?.cells.every((cell) => cell.status === "supported")).toBe(true);
     expect(resultRow?.cells[0]?.recordIds).toEqual([firstResult.id]);
@@ -736,17 +662,19 @@ describe("synthesis artifacts", () => {
       passageId: secondPassage?.id ?? "missing"
     });
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
-    const localEngine = new WorkflowEngine(repo, index);
-    localEngine.startWorkflow({
+    const comparisonDriver = await driverFixture("synthesis-comparison", () => comparisonReply(repo, [first.paper.id, second.paper.id]));
+    const localEngine = new WorkflowEngine(repo, index, comparisonDriver.catalog, new AgentHarness({ catalog: comparisonDriver.catalog }));
+    const comparisonRun = localEngine.startWorkflow({
       type: "compare-papers",
       projectId: project.id,
       paperIds: [first.paper.id, second.paper.id],
       collectionIds: [],
       query: "How do the methods differ?",
       options: {},
-      providerId: "local-heuristic",
+      providerId: comparisonDriver.id,
       model: null
     });
+    await waitForRun(localEngine, comparisonRun.id);
     const comparison = localEngine.listComparisonArtifacts(project.id)[0];
     expect(comparison).toBeTruthy();
     localEngine.reviewComparisonArtifact(project.id, comparison?.id ?? "missing", { decision: "accepted" });
@@ -873,36 +801,6 @@ describe("RAG question answering", () => {
     expect(answer.scope.type).toBe("paper");
     expect(answer.scope.paperIds).toEqual([unrelated.paper.id]);
     expect(answer.answer).toContain("Not found in the selected sources");
-    index.close();
-  });
-
-  it("ask-with-citations workflow honors selected paper ids", () => {
-    const repo = makeRepo();
-    const project = repo.createProject({ name: "Workflow QA" });
-    const first = repo.importPaper({ projectId: project.id, metadata: { title: "First Paper" } });
-    const second = repo.importPaper({ projectId: project.id, metadata: { title: "Second Paper" } });
-    repo.writeMarkdown(first.paper.id, "# Findings\n\nCited answers use passage evidence from the first paper.");
-    repo.writeMarkdown(second.paper.id, "# Findings\n\nThis second paper discusses unrelated exports.");
-    const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
-    index.rebuild(repo);
-    const engine = new WorkflowEngine(repo, index);
-
-    const run = engine.startWorkflow({
-      type: "ask-with-citations",
-      projectId: project.id,
-      paperIds: [first.paper.id],
-      collectionIds: [],
-      query: "How do cited answers work?",
-      options: {},
-      providerId: "local-heuristic",
-      model: null
-    });
-    const { events } = engine.readRun(run.id);
-    const evidenceEvent = events.find((event) => event.type === "evidence.found");
-
-    expect(engine.readRun(run.id).run.status).toBe("completed");
-    expect(evidenceEvent?.payload.paperId).toBe(first.paper.id);
-    expect(evidenceEvent?.payload.paperId).not.toBe(second.paper.id);
     index.close();
   });
 

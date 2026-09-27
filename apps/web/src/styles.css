@@ -10,8 +10,6 @@
 .driver-connection-body label:nth-child(3) { grid-column:1/-1; }
 .driver-connection-body input, .driver-connection-body select { width:100%; min-width:0; padding:8px; border:1px solid var(--border-line); border-radius:5px; background:var(--surface-input); color:var(--text-primary); }
 .driver-connection-body button { justify-self:start; display:flex; align-items:center; gap:6px; }
-.driver-legacy { margin-top:20px; }
-.driver-legacy > summary { padding:10px 0; cursor:pointer; color:var(--text-secondary); font-size:13px; }
 @media(max-width:600px) { .driver-connection-body form { grid-template-columns:minmax(0,1fr); } }
 
 /* ============================================================

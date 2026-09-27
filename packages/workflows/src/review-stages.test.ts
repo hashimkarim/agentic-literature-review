@@ -121,7 +121,9 @@ it("never starts a reserved workflow ID twice in the existing engine", () => {
   expect(() => engine.startWorkflow({ ...request, providerId: "driver.missing", model: "missing" })).toThrow(/no fallback/);
   expect(() => engine.startWorkflow({ ...request, options: { requiredTools: ["search"] } })).toThrow(/no request was dispatched/);
   expect(engine.listRuns()).toHaveLength(0);
-  engine.startWorkflow(request, "run_reserved_fixture");
-  expect(() => engine.startWorkflow(request, "run_reserved_fixture")).toThrow(/already dispatched/);
-  expect(() => engine.startWorkflow(request, "../outside")).toThrow(/Invalid/);
+  expect(() => engine.startWorkflow(request)).toThrow(/not an AgenticDriver/);
+  const localExport = { ...request, type: "bib-export" as const };
+  engine.startWorkflow(localExport, "run_reserved_fixture");
+  expect(() => engine.startWorkflow(localExport, "run_reserved_fixture")).toThrow(/already dispatched/);
+  expect(() => engine.startWorkflow(localExport, "../outside")).toThrow(/Invalid/);
 });

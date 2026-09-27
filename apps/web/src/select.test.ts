@@ -16,8 +16,8 @@ it("keeps the selected value and accessible name without native menu styling", (
 
 it("represents an explicit empty default without auto-selecting another model", () => {
   const html = renderToStaticMarkup(createElement(Select, { label: "Model", value: "", onChange: vi.fn(),
-    options: [{ value: "", label: "CLI default" }, { value: "model-a", label: "Model A" }] }));
-  expect(html).toContain("CLI default");
+    options: [{ value: "", label: "Select model" }, { value: "model-a", label: "Model A" }] }));
+  expect(html).toContain("Select model");
   expect(html).not.toContain(">Model A</");
 });
 

@@ -67,7 +67,7 @@ export const WorkflowStartRequestSchema = z.object({
   collectionIds: z.array(z.string()).default([]),
   query: z.string().nullable().default(null),
   options: z.record(z.string(), z.unknown()).default({}),
-  providerId: z.string().default("local-heuristic"),
+  providerId: z.string().default(""),
   model: z.string().nullable().default(null)
 });
 export type WorkflowStartRequest = z.infer<typeof WorkflowStartRequestSchema>;
@@ -294,24 +294,6 @@ function markdownTableValue(value: string): string {
   return value.replaceAll("|", "\\|").replace(/\s+/g, " ").trim();
 }
 
-function scoreRelevance(paper: Paper, query: string, markdown = ""): number {
-  const metadata = `${paper.title} ${paper.authors.join(" ")} ${paper.tags.join(" ")}`.toLowerCase();
-  const content = markdown.toLowerCase();
-  const terms = query
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((term) => term.length > 3);
-  if (terms.length === 0) return 0.5;
-  const metadataHits = terms.filter((term) => metadata.includes(term)).length;
-  const contentHits = terms.filter((term) => content.includes(term)).length;
-  return Math.min(1, (metadataHits * 2 + contentHits) / (terms.length * 3));
-}
-
-function proposedRelevanceState(score: number): "included" | "excluded" | "maybe" {
-  if (score >= 0.45) return "included";
-  if (score >= 0.15) return "maybe";
-  return "excluded";
-}
 
 function resolveQaScope(repo: LitAgentRepository, input: QaRequest): QaScope {
   const explicitIds = new Set<string>();
@@ -883,90 +865,6 @@ function metadataValuesEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function inferMetadataFields(paper: Paper, markdown: string): Array<{
-  field: MetadataFieldName;
-  proposedValue: string | number | string[] | null;
-  confidence: number;
-  rationale: string;
-}> {
-  const frontMatter = markdown.slice(0, 6000);
-  const fields: ReturnType<typeof inferMetadataFields> = [];
-  const heading = frontMatter.match(/^#\s+(.+)$/m)?.[1]?.replace(/<[^>]+>/g, "").trim();
-  if (heading && heading.length > 4 && !metadataValuesEqual(heading, paper.title)) {
-    fields.push({
-      field: "title",
-      proposedValue: heading,
-      confidence: 0.72,
-      rationale: "The first level-one Markdown heading differs from the canonical title."
-    });
-  }
-  const doi = frontMatter.match(/\b10\.\d{4,9}\/[-._;()/:a-z0-9]+/i)?.[0]?.replace(/[.,;)]+$/g, "") ?? null;
-  if (doi && doi.toLowerCase() !== paper.doi?.toLowerCase()) {
-    fields.push({ field: "doi", proposedValue: doi, confidence: 0.86, rationale: "A DOI-shaped identifier appears in the document front matter." });
-  }
-  const arxivId = frontMatter.match(/(?:arxiv\s*:\s*)?(\d{4}\.\d{4,5})(?:v\d+)?/i)?.[1] ?? null;
-  if (arxivId && arxivId !== paper.arxivId) {
-    fields.push({ field: "arxivId", proposedValue: arxivId, confidence: 0.82, rationale: "An arXiv identifier appears in the document front matter." });
-  }
-  const year = Number(frontMatter.match(/\b(19|20)\d{2}\b/)?.[0] ?? 0) || null;
-  if (year && year !== paper.year) {
-    fields.push({ field: "year", proposedValue: year, confidence: 0.58, rationale: "A likely publication year appears in the document front matter." });
-  }
-  return fields;
-}
-
-function localResearchKind(passage: Passage): ResearchRecordKind {
-  const section = passage.section.toLowerCase();
-  if (/limitation|threat|weakness|future work/.test(section)) return "limitation";
-  if (/result|evaluation|finding|conclusion/.test(section)) return "result";
-  if (/method|methodology|approach|architecture|algorithm/.test(section)) return "method";
-  if (/dataset|data|corpus|benchmark/.test(section)) return "dataset";
-  if (/reproduc|implementation|code/.test(section)) return "reproducibility";
-  const text = `${passage.section} ${passage.quote}`.toLowerCase();
-  if (/limitation|threat|weakness|future work|challenge/.test(text)) return "limitation";
-  if (/reproduc|code|implementation|hyperparameter|open source/.test(text)) return "reproducibility";
-  if (/dataset|corpus|benchmark|participants|sample/.test(text)) return "dataset";
-  if (/result|evaluation|accuracy|performance|improv|outperform|significant/.test(text)) return "result";
-  if (/method|methodology|model|architecture|algorithm|approach|procedure/.test(text)) return "method";
-  return "finding";
-}
-
-function localResearchTitle(kind: ResearchRecordKind, passage: Passage): string {
-  const section = passage.section.trim();
-  if (section) return `${kind[0]?.toUpperCase() ?? ""}${kind.slice(1)} from ${section}`;
-  const sentence = passage.quote.split(/(?<=[.!?])\s+/)[0]?.trim() ?? passage.quote.trim();
-  return sentence.length > 88 ? `${sentence.slice(0, 85).trim()}...` : sentence;
-}
-
-function inferLocalResearchItems(repo: LitAgentRepository, paper: Paper): ResearchItem[] {
-  const counts = new Map<ResearchRecordKind, number>();
-  const items: ResearchItem[] = [];
-  for (const passage of repo.readPassages(paper.id)) {
-    const kind = localResearchKind(passage);
-    const count = counts.get(kind) ?? 0;
-    if (count >= 2 || passage.quote.trim().length < 30) continue;
-    counts.set(kind, count + 1);
-    items.push({
-      id: createId("item"),
-      kind,
-      title: localResearchTitle(kind, passage),
-      content: passage.quote.trim().slice(0, 1200),
-      attributes: passage.section ? { section: passage.section } : {},
-      confidence: 0.56,
-      evidence: [{
-        paperId: paper.id,
-        passageId: passage.id,
-        page: passage.page,
-        paperTitle: paper.title,
-        section: passage.section,
-        quote: passage.quote,
-        confidence: 0.7
-      }]
-    });
-    if (items.length >= 10) break;
-  }
-  return items;
-}
 
 function ensureMarkdownFallback(repo: LitAgentRepository, paper: Paper): string {
   const existing = repo.readMarkdown(paper.id);
@@ -2333,7 +2231,7 @@ export class WorkflowEngine {
     const localOperation = parsed.type === "pdf-markdown-processing" || parsed.type === "bib-export";
     if (localOperation) { parsed.providerId = "local"; parsed.model = null; }
     if (parsed.options.tools || parsed.options.requiredTools) throw new Error("Tool-enabled workflows require a qualified application tool bridge; no request was dispatched.");
-    if (!localOperation && parsed.providerId !== "local-heuristic") {
+    if (!localOperation) {
       requireDriverProvider(parsed.providerId);
       if (!this.isProviderBackedRun(parsed.providerId)) throw new Error("Selected provider is unavailable; no fallback was selected.");
     }
@@ -2383,7 +2281,7 @@ export class WorkflowEngine {
     }
 
     try {
-      const payload = this.executeWorkflow(parsed, runId, absoluteEventsPath);
+      const payload = this.executeWorkflow(parsed);
       appendEvent(
         absoluteEventsPath,
         event({
@@ -2589,7 +2487,7 @@ export class WorkflowEngine {
 
   private isProviderBackedRun(providerId: string): boolean {
     if (this.providerSettings) this.providers.setSettings(this.providerSettings.read());
-    return providerId !== "local-heuristic" && Boolean(this.providers.definition(providerId));
+    return providerId.startsWith("driver.") && Boolean(this.providers.definition(providerId));
   }
 
   private startProviderBackedWorkflow(
@@ -2711,13 +2609,10 @@ export class WorkflowEngine {
         }
       } else if (request.type === "compare-papers") {
         try {
-          const structuredOutput = result.events
-            .map((runEvent) => runEvent.payload.native)
-            .find((native) => ProviderComparisonResultSchema.safeParse(native).success);
           comparison = this.createProviderComparisonArtifact(
             request,
             run.id,
-            structuredOutput ?? finalText,
+            finalText,
             absoluteEventsPath
           );
         } catch (error) {
@@ -2735,13 +2630,10 @@ export class WorkflowEngine {
         }
       } else if (request.type === "synthesis-note") {
         try {
-          const structuredOutput = result.events
-            .map((runEvent) => runEvent.payload.native)
-            .find((native) => ProviderSynthesisResultSchema.safeParse(native).success);
           synthesis = this.createProviderSynthesisArtifact(
             request,
             run.id,
-            structuredOutput ?? finalText,
+            finalText,
             absoluteEventsPath
           );
         } catch (error) {
@@ -2762,7 +2654,7 @@ export class WorkflowEngine {
             `# ${request.type}`,
             "",
             `Provider: ${request.providerId}`,
-            `Model: ${request.model ?? "CLI default"}`,
+            `Model: ${request.model ?? "Saved Driver default"}`,
             `Run: ${run.id}`,
             "",
             finalText.trim() || "Provider completed without assistant text output."
@@ -3054,7 +2946,7 @@ export class WorkflowEngine {
         `Workflow run id: ${runId}`,
         `Project: ${project?.name ?? "global library"}`,
         `Provider: ${request.providerId}`,
-        `Model: ${request.model ?? "CLI default"}`,
+        `Model: ${request.model ?? "Saved Driver default"}`,
         "",
         "Selected Markdown context:",
         paperContext || "No papers are selected.",
@@ -3188,7 +3080,7 @@ export class WorkflowEngine {
       `Workflow run id: ${runId}`,
       `Workflow type: ${request.type}`,
       `Provider: ${request.providerId}`,
-      `Model: ${request.model ?? "CLI default"}`,
+      `Model: ${request.model ?? "Saved Driver default"}`,
       `Project: ${project?.name ?? "global library"}`,
       `Question/query: ${request.query ?? researchQuestions[0] ?? "none supplied"}`,
       `Options: ${JSON.stringify(request.options)}`,
@@ -3233,343 +3125,11 @@ export class WorkflowEngine {
     ].join("\n");
   }
 
-  private executeWorkflow(
-    request: WorkflowStartRequest,
-    runId: string,
-    absoluteEventsPath: string
-  ): Record<string, unknown> {
-    const papers = collectPapers(this.repo, request);
-    switch (request.type) {
-      case "pdf-markdown-processing": {
-        const options = PdfProcessingOptionsSchema.parse(request.options);
-        const commonHooks = {
-          convertPaper: convertPaperWithMarker,
-          indexPaper: (paperId: string) => {
-            const paper = this.repo.readPaper(paperId);
-            if (paper) this.index.indexPaper(paper, this.repo.readPassages(paperId));
-          },
-          onProgress: (message: string, payload?: Record<string, unknown>) =>
-            appendEvent(
-              absoluteEventsPath,
-              event({
-                runId,
-                providerId: request.providerId,
-                type: "tool.result",
-                message,
-                ...(payload ? { payload } : {})
-              })
-            )
-        };
-        const result = request.paperIds.length > 0
-          ? processPaperSetWithMarker(
-              this.repo,
-              request.paperIds,
-              {
-                ...options,
-                runId
-              },
-              commonHooks
-            )
-          : processPdfInbox(
-              this.repo,
-              {
-                ...options,
-                projectId: request.projectId,
-                runId
-              },
-              commonHooks
-            );
-        return { ...result };
-      }
-      case "markdown-refinement": {
-        const lines = [
-          "# Markdown Refinement",
-          "",
-          "Select a connected CLI provider/model to run agentic Markdown cleanup. This artifact records the papers that are ready for refinement.",
-          "",
-          ...papers.map((paper) => {
-            const markdown = this.repo.readMarkdown(paper.id);
-            return `- ${paper.title}: ${markdown ? "Markdown available" : "Markdown missing"}`;
-          })
-        ];
-        const outputPath = this.writeProjectOutput(request.projectId, `markdown-refinement-${slugify(runId)}.md`, lines.join("\n"));
-        return { outputPath, paperCount: papers.length };
-      }
-      case "relevance-tagging": {
-        if (!request.projectId) throw new Error("Relevance tagging requires a project scope.");
-        const projectId = request.projectId;
-        const project = this.repo.readProject(projectId);
-        if (!project) throw new Error(`Project not found: ${projectId}`);
-        const researchQuestion = request.query
-          ? project.researchQuestions.find((candidate) => candidate.text === request.query) ?? null
-          : project.researchQuestions[0] ?? null;
-        const question = request.query ?? researchQuestion?.text ?? "";
-        if (!question.trim()) throw new Error("Relevance tagging requires a research question or query.");
-        const proposals = papers.map((paper) => {
-          const score = scoreRelevance(paper, question, this.repo.readMarkdown(paper.id) ?? "");
-          const proposedState = proposedRelevanceState(score);
-          let evidence = buildEvidence(
-            this.index.search(this.repo, {
-              query: question,
-              projectId,
-              paperId: paper.id,
-              limit: 3
-            }),
-            3
-          );
-          if (evidence.length === 0) {
-            evidence = this.repo.readPassages(paper.id).slice(0, 2).map((passage) => ({
-              paperId: paper.id,
-              passageId: passage.id,
-              page: passage.page,
-              paperTitle: paper.title,
-              section: passage.section,
-              quote: passage.quote,
-              confidence: 0.35
-            }));
-          }
-          const rationale = proposedState === "included"
-            ? "The paper directly overlaps the research question in its metadata and converted text."
-            : proposedState === "maybe"
-              ? "The paper has partial topical overlap; review the linked passages before inclusion."
-              : "The available metadata and converted text have little overlap with the research question.";
-          const proposal = this.repo.createRelevanceProposal({
-            runId,
-            projectId,
-            paperId: paper.id,
-            researchQuestionId: researchQuestion?.id ?? null,
-            question,
-            proposedState,
-            relevanceScore: score,
-            confidence: evidence.length ? Math.max(0.4, Math.min(0.85, 0.5 + Math.abs(score - 0.3))) : 0.25,
-            rationale,
-            projectTags: [`rq:${slugify(researchQuestion?.id ?? question)}`],
-            evidence,
-            providerId: request.providerId,
-            model: request.model
-          });
-          for (const item of proposal.evidence) {
-            appendEvent(
-              absoluteEventsPath,
-              event({
-                runId,
-                providerId: request.providerId,
-                type: "evidence.found",
-                message: item.quote,
-                payload: item
-              })
-            );
-          }
-          return proposal;
-        });
-        const outputPath = this.writeProjectOutput(
-          request.projectId,
-          `relevance-${slugify(runId)}.md`,
-          [
-            "# Relevance Proposals",
-            "",
-            `Research question: ${question}`,
-            "",
-            "These proposals do not change project screening state until they are accepted.",
-            "",
-            ...proposals.map((proposal) => {
-              const paper = this.repo.readPaper(proposal.paperId);
-              return `- **${proposal.proposedState}**: ${paper?.title ?? proposal.paperId} (${proposal.relevanceScore.toFixed(2)}) - ${proposal.rationale}`;
-            })
-          ].join("\n")
-        );
-        return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
-      }
-      case "metadata-extraction": {
-        const proposals = papers.flatMap((paper) => {
-          const inferred = inferMetadataFields(paper, this.repo.readMarkdown(paper.id) ?? "");
-          const fields: MetadataFieldProposal[] = inferred.map((field) => {
-            const queryValue = Array.isArray(field.proposedValue) ? field.proposedValue.join(" ") : String(field.proposedValue ?? "");
-            const evidence = buildEvidence(
-              this.index.search(this.repo, {
-                query: queryValue,
-                projectId: request.projectId,
-                paperId: paper.id,
-                limit: 2
-              }),
-              2
-            );
-            return {
-              field: field.field,
-              currentValue: paperMetadataValue(paper, field.field),
-              proposedValue: field.proposedValue,
-              confidence: evidence.length ? field.confidence : Math.min(field.confidence, 0.35),
-              rationale: evidence.length ? field.rationale : `${field.rationale} No exact supporting passage was linked.`,
-              evidence
-            };
-          });
-          if (fields.length === 0) return [];
-          const proposal = this.repo.createMetadataProposal({
-            runId,
-            projectId: request.projectId,
-            paperId: paper.id,
-            fields,
-            providerId: request.providerId,
-            model: request.model
-          });
-          for (const field of proposal.fields) {
-            for (const item of field.evidence) {
-              appendEvent(
-                absoluteEventsPath,
-                event({
-                  runId,
-                  providerId: request.providerId,
-                  type: "evidence.found",
-                  message: `${field.field}: ${item.quote}`,
-                  payload: { ...item, metadataField: field.field }
-                })
-              );
-            }
-          }
-          return [proposal];
-        });
-        const outputPath = this.writeProjectOutput(
-          request.projectId,
-          `metadata-${slugify(runId)}.md`,
-          [
-            "# Metadata Proposals",
-            "",
-            "These field changes do not update canonical paper metadata until they are accepted.",
-            "",
-            ...(proposals.length
-              ? proposals.flatMap((proposal) => {
-                  const paper = this.repo.readPaper(proposal.paperId);
-                  return [
-                    `## ${paper?.title ?? proposal.paperId}`,
-                    ...proposal.fields.map((field) => `- **${field.field}**: ${JSON.stringify(field.currentValue)} -> ${JSON.stringify(field.proposedValue)} (${field.confidence.toFixed(2)})`),
-                    ""
-                  ];
-                })
-              : ["No metadata changes were detected in the selected sources."])
-          ].join("\n")
-        );
-        return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
-      }
-      case "ask-with-citations": {
-        const qa = this.answerQuestion({
-          question: request.query ?? "What does the selected literature say?",
-          projectId: request.projectId,
-          paperIds: request.paperIds,
-          collectionId: request.collectionIds[0] ?? null,
-          providerId: request.providerId,
-          model: request.model
-        });
-        for (const evidence of qa.evidence) {
-          appendEvent(
-            absoluteEventsPath,
-            event({
-              runId,
-              providerId: request.providerId,
-              type: "evidence.found",
-              message: evidence.quote,
-              payload: evidence
-            })
-          );
-        }
-        const outputPath = this.writeProjectOutput(
-          request.projectId,
-          `qa-${slugify(runId)}.md`,
-          `# Cited Answer\n\n${qa.answer}\n`
-        );
-        return { outputPath, answer: qa.answer, evidence: qa.evidence };
-      }
-      case "bib-export": {
-        if (!request.projectId) throw new Error("BibTeX export requires a project scope.");
-        const bibtex = this.repo.exportBibTeX(request.projectId);
-        return { outputPath: `exports/${request.projectId}.bib`, bytes: Buffer.byteLength(bibtex) };
-      }
-      case "key-findings": {
-        const proposals = papers.flatMap((paper) => {
-          const items = inferLocalResearchItems(this.repo, paper);
-          if (items.length === 0) return [];
-          const proposal = this.repo.createResearchFindingProposal({
-            runId,
-            projectId: request.projectId,
-            paperId: paper.id,
-            items,
-            providerId: request.providerId,
-            model: request.model
-          });
-          for (const item of proposal.items) {
-            for (const evidence of item.evidence) {
-              appendEvent(
-                absoluteEventsPath,
-                event({
-                  runId,
-                  providerId: request.providerId,
-                  type: "evidence.found",
-                  message: `${item.kind}: ${evidence.quote}`,
-                  payload: { ...evidence, researchItemId: item.id, researchKind: item.kind }
-                })
-              );
-            }
-          }
-          return [proposal];
-        });
-        const outputPath = this.writeProjectOutput(
-          request.projectId,
-          `key-findings-${slugify(runId)}.md`,
-          [
-            "# Research Record Proposals",
-            "",
-            "These findings do not become canonical research records until they are accepted.",
-            "",
-            ...(proposals.length
-              ? proposals.flatMap((proposal) => {
-                  const paper = this.repo.readPaper(proposal.paperId);
-                  return [
-                    `## ${paper?.title ?? proposal.paperId}`,
-                    ...proposal.items.map((item) => `- **${item.kind} - ${item.title}:** ${item.content}`),
-                    ""
-                  ];
-                })
-              : ["No evidence-backed research items were found in the selected sources."])
-          ].join("\n")
-        );
-        return { outputPath, proposalIds: proposals.map((proposal) => proposal.id), proposals };
-      }
-      case "compare-papers": {
-        const comparison = this.createLocalComparisonArtifact(request, runId, absoluteEventsPath);
-        return {
-          comparisonId: comparison.id,
-          outputPath: comparison.outputPath,
-          compared: comparison.paperIds,
-          status: comparison.status
-        };
-      }
-      case "synthesis-note": {
-        const synthesis = this.createLocalSynthesisArtifact(request, runId, absoluteEventsPath);
-        return {
-          synthesisId: synthesis.id,
-          comparisonId: synthesis.comparisonId,
-          outputPath: synthesis.outputPath,
-          status: synthesis.status
-        };
-      }
-      case "contradiction-finder":
-      case "screening":
-      case "dataset-method-extractor":
-      case "reproducibility-checklist":
-      case "citation-needed":
-      case "find-papers": {
-        const lines = [
-          `# ${request.type}`,
-          "",
-          `Scope contains ${papers.length} paper(s).`,
-          "",
-          ...papers.map((paper) => `- ${paper.title}: ${this.repo.readPassages(paper.id)[0]?.quote ?? "No passages indexed yet."}`)
-        ];
-        const outputPath = this.writeProjectOutput(request.projectId, `${slugify(request.type)}-${slugify(runId)}.md`, lines.join("\n"));
-        return { outputPath, paperCount: papers.length };
-      }
-      default:
-        return { status: "unsupported" };
-    }
+  private executeWorkflow(request: WorkflowStartRequest): Record<string, unknown> {
+    if (request.type !== "bib-export") throw new Error("This workflow requires an AgenticDriver provider.");
+    if (!request.projectId) throw new Error("BibTeX export requires a project scope.");
+    const bibtex = this.repo.exportBibTeX(request.projectId);
+    return { outputPath: `exports/${request.projectId}.bib`, bytes: Buffer.byteLength(bibtex) };
   }
 
   private async executeWorkflowAsync(
@@ -3577,7 +3137,7 @@ export class WorkflowEngine {
     runId: string,
     absoluteEventsPath: string
   ): Promise<Record<string, unknown>> {
-    if (request.type !== "pdf-markdown-processing") return this.executeWorkflow(request, runId, absoluteEventsPath);
+    if (request.type !== "pdf-markdown-processing") return this.executeWorkflow(request);
 
     const options = PdfProcessingOptionsSchema.parse(request.options);
     const commonHooks = {
@@ -3638,48 +3198,6 @@ export class WorkflowEngine {
     return new Map(papers.map((paper) => [paper.id, this.repo.listResearchRecords(paper.id, projectId)]));
   }
 
-  private createLocalComparisonArtifact(
-    request: WorkflowStartRequest,
-    runId: string,
-    absoluteEventsPath: string
-  ): ComparisonArtifact {
-    const papers = collectPapers(this.repo, request);
-    this.assertComparisonScope(papers);
-    const recordsByPaper = this.comparisonRecords(papers, request.projectId);
-    this.assertComparisonRecords(recordsByPaper);
-    const rows = comparisonKinds.map((kind) => ({
-      kind,
-      label: comparisonKindLabels[kind],
-      cells: papers.map((paper): ComparisonCell => {
-        const records = (recordsByPaper.get(paper.id) ?? []).filter((record) => record.kind === kind);
-        return records.length > 0
-          ? {
-              paperId: paper.id,
-              status: "supported",
-              summary: records.map((record) => `${record.title}: ${record.content}`).join(" "),
-              recordIds: records.map((record) => record.id),
-              evidence: uniqueEvidence(records)
-            }
-          : {
-              paperId: paper.id,
-              status: "not_found",
-              summary: "Not available in accepted records.",
-              recordIds: [],
-              evidence: []
-            };
-      })
-    }));
-    const supportedCells = rows.flatMap((row) => row.cells).filter((cell) => cell.status === "supported").length;
-    return this.createComparisonArtifact({
-      request,
-      runId,
-      papers,
-      title: this.defaultComparisonTitle(papers),
-      summary: `Compared ${papers.length} papers across ${comparisonKinds.length} evidence-backed dimensions; ${supportedCells} cells contain accepted records.`,
-      rows,
-      absoluteEventsPath
-    });
-  }
 
   private createProviderComparisonArtifact(
     request: WorkflowStartRequest,
@@ -3887,42 +3405,6 @@ export class WorkflowEngine {
     );
   }
 
-  private createLocalSynthesisArtifact(
-    request: WorkflowStartRequest,
-    runId: string,
-    absoluteEventsPath: string
-  ): SynthesisArtifact {
-    const comparison = this.acceptedComparisonForSynthesis(request);
-    const recordsById = this.synthesisRecords(comparison);
-    const sections = comparison.rows.flatMap((row) => {
-      const cells = row.cells.filter((cell) => cell.status === "supported" && cell.recordIds.length > 0);
-      const records = cells.flatMap((cell) => cell.recordIds.map((recordId) => recordsById.get(recordId)).filter((record): record is ResearchRecord => Boolean(record)));
-      if (records.length === 0) return [];
-      const statements = cells.map((cell) => {
-        const paper = this.repo.readPaper(cell.paperId);
-        return `${paper?.title ?? cell.paperId}: ${cell.summary}`;
-      });
-      return [{
-        heading: row.label,
-        claims: [{
-          id: createId("claim"),
-          text: statements.join(" In comparison, "),
-          recordIds: records.map((record) => record.id),
-          evidence: uniqueEvidence(records)
-        }]
-      }];
-    });
-    if (sections.length === 0) throw new Error("Accepted comparison has no supported cells to synthesize.");
-    return this.createSynthesisArtifact({
-      request,
-      runId,
-      comparison,
-      title: `Synthesis: ${comparison.title}`,
-      summary: comparison.summary,
-      sections,
-      absoluteEventsPath
-    });
-  }
 
   private createProviderSynthesisArtifact(
     request: WorkflowStartRequest,

@@ -245,7 +245,7 @@ function runPdfInboxAutomation(reason: "event" | "timer" | "manual"): { runId: s
     WorkflowStartRequestSchema.parse({
       type: "pdf-markdown-processing",
       projectId: checked.projectId,
-      providerId: "local-heuristic",
+      providerId: "local",
       model: null,
       options: {
         sourceDir: checked.sourceDir,
