@@ -72,5 +72,9 @@ visual approval**; no standalone browser was substituted.
 Backend commit `69857b7ddfeec4f0466a9b8b228c71c06ff6fe52` passed
 [Prometheus run 36318603887](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36318603887),
 job `108617947516`, repo runner `2` (`prometheus-literature-01`). The editor
-integration and recovery-conflict follow-up are validated locally above; their
-final task-branch CI receipt is recorded after publication. No hosted CI used.
+integration is committed as `037f760c03bfa9f985dfd63c5e3376101ec95278` on
+`chat-reliability`, including recovery follow-up `437f07a`. Its
+[Prometheus run 36320116245](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36320116245)
+passed frozen-lockfile installation, typecheck, tests and build in job
+`108622201936`, on the same repo runner `2` (`prometheus-literature-01`).
+No hosted CI used; no main publication.
