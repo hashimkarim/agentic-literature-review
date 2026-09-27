@@ -71,7 +71,7 @@ remain historical records, not the current live-acceptance claim.
 
 The original scoped-package migration pinned the published MIT-licensed
 `@agenticdriver/sdk` exactly to `0.1.0`. This historical receipt is superseded
-for the active dependency by [alpha.3 adoption](#registry-alpha3-adoption).
+for the active dependency by [alpha.4 adoption](#public-alpha4-adoption).
 No sibling SDK build, checkout-relative dependency or TypeScript alias is needed.
 The external root/client/providers/server imports use the scoped package.
 
@@ -268,7 +268,7 @@ consolidation gate also remain separate product work.
 
 ## Registry Alpha.3 Adoption
 
-Server, browser panel and execution adapter now pin `@agenticdriver/sdk` to
+Server, browser panel and execution adapter previously pinned `@agenticdriver/sdk` to
 exact registry version `0.2.0-alpha.3`. `bun.lock` records the reviewed integrity
 and the SDK's public, immutable provider-icons archive. No private path or sibling
 checkout is involved.
@@ -286,3 +286,20 @@ Host execution restrictions and management permissions still apply independently
 of the reported catalog. No running host, credential, grant or account binding
 was changed. See the [alpha.3 validation receipt](validation/driver-alpha3-2026-09-27.md)
 for exact artifact identity, tests and native browser evidence.
+
+## Public Alpha.4 Adoption
+
+All three owning manifests now pin `@agenticdriver/sdk` to the immutable public
+GitHub `v0.2.0-alpha.4` release archive. The package is version `0.2.0-alpha.4`;
+the archive's SHA-512 is locked in `bun.lock`. This is not a claim of npm registry
+publication. Provider-icons remains at its independent `v0.1.0-alpha.1` pin.
+
+The shared panel hides stale provider/account controls after failed discovery.
+LitAgent also hides its app-owned enablement and pending model controls during
+recovery, clearing uncommitted model actions but preserving saved choices.
+Explicit retry reads current metadata without retrying mutations or generation.
+
+The [alpha.4 receipt](validation/driver-alpha4-2026-09-27.md) records actual
+Settings/backend recovery checks against regular-host metadata with generation
+blocked, fresh frozen installation and application verification. No running shared
+host, credential, account grant or authentication stack was changed.

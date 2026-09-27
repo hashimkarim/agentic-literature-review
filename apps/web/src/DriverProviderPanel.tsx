@@ -87,9 +87,10 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [panelUnavailable, setPanelUnavailable] = useState(false);
   const previousLabel = useRef(`${props.host?.label}:${props.host?.deviceName}`);
   const instances = props.providers.filter((provider) => provider.driver?.connectionId === props.host?.id && props.host);
-  const offline = props.host?.status === "error";
+  const offline = props.host?.status === "error" || panelUnavailable;
 
   useEffect(() => {
     registerProviderPanel();
@@ -101,12 +102,22 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
     element.transport = async (request) => {
       try {
         const result = await api.driverPanel(request, current.current.host?.id ?? "new");
+        if (result && typeof result === "object" && "connected" in result) {
+          setPanelUnavailable(result.connected !== true && Boolean(current.current.host));
+          if (result.connected !== true) setSelection(null);
+        }
         if (request.action === "connect") {
           const state = result as { connection?: { id: string } };
           if (state.connection) current.current.onConnected(state.connection.id);
         }
         if (request.action === "disconnect") current.current.onConnected("new");
         return result;
+      }
+      catch (error) {
+        setPanelUnavailable(Boolean(current.current.host));
+        setSelection(null);
+        setNotice("");
+        throw error;
       }
       finally { await current.current.onSync(); }
     };
@@ -133,6 +144,7 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
     if (previousLabel.current !== value) { previousLabel.current = value; void panel.current?.refresh(); }
   }, [props.host?.label, props.host?.deviceName]);
   useEffect(() => { setSelection(null); setNotice(""); }, [props.host?.id]);
+  useEffect(() => { if (offline) { setSelection(null); setNotice(""); } }, [offline]);
 
   async function perform(operation: () => Promise<void>) {
     setBusy(true); setError(""); setNotice("");
@@ -141,6 +153,7 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
   }
 
   async function useSelection() {
+    if (offline) throw new Error("Reconnect the driver before changing the selected model.");
     if (!selection) return;
     const provider = instances.find((entry) => entry.id === selection.provider);
     if (!provider?.driver?.available || (provider.driver.restrictedModels && !provider.models.includes(selection.model)))
@@ -155,18 +168,18 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
 
   return <div className="driver-settings-workspace">
     {offline && <section className="driver-offline" role="alert">
-      <strong>Driver unavailable</strong><p>{props.host?.message}</p>
+      <strong>Driver unavailable</strong><p>{props.host?.status === "error" ? props.host.message : "Refresh the connection to read current provider access."}</p>
       <div><button className="la-btn la-btn-ghost" disabled={busy} onClick={() => void perform(async () => { await panel.current?.refresh(); })}><RefreshCw size={15} />Retry connection</button>
         <button className="la-btn la-btn-ghost" disabled={busy} onClick={() => void perform(async () => {
           await api.driverPanel({ action: "disconnect" }, props.host!.id); props.onConnected("new"); await props.onSync();
         })}><Unplug size={15} />Disconnect locally</button></div>
     </section>}
     <div key="shared-panel" ref={container} hidden={offline} aria-label="AgenticDriver provider settings" />
-    {selection && <div className="driver-selection" role="region" aria-label="Selected model">
+    {selection && !offline && <div className="driver-selection" role="region" aria-label="Selected model">
       <Cpu size={16} /><div><strong>{selection.model}</strong><span>{instances.find((entry) => entry.id === selection.provider)?.label ?? selection.provider}</span></div>
       <button className="la-btn la-btn-primary" disabled={busy} onClick={() => void perform(useSelection)}><Check size={15} />Use in LitAgent</button>
     </div>}
-    <section className="driver-app-access" aria-label="Enabled in LitAgent">
+    {!offline && props.host && <section className="driver-app-access" aria-label="Enabled in LitAgent">
       <h2><Plug size={17} />Enabled in LitAgent</h2>
       {instances.length === 0 && <p>No executable provider instances granted to this connection.</p>}
       {instances.map((provider) => {
@@ -183,7 +196,7 @@ function ConnectedDriverPanel(props: Props & { host: DriverHostConnection | null
       })}
       {error && <p role="alert" className="writing-error">{error}</p>}
       {notice && <p role="status">{notice}</p>}
-    </section>
+    </section>}
     <details className="driver-manual-connection">
       <summary>Existing host address and credential</summary>
       <DriverConnectionSettings connection={props.host} connectionId={props.host?.id ?? null} onSaved={async (id) => {
