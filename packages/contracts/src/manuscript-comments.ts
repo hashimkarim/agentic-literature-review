@@ -9,9 +9,18 @@ export const CommentSelectionSchema = z.object({
 export const CommentAnchorSchema = CommentSelectionSchema.safeExtend({ prefix: z.string().max(48), suffix: z.string().max(48) });
 const Body = z.string().trim().min(1).max(8000);
 export const CreateManuscriptCommentSchema = z.object({
-  requestId: z.string().uuid(), selection: CommentSelectionSchema, body: Body
+  requestId: z.string().uuid(), selection: CommentSelectionSchema, body: Body,
+  replacement: z.string().max(8000).optional()
 }).strict();
 const operation = { requestId: z.string().uuid(), expectedVersion: z.number().int().positive() };
+export const AcceptManuscriptSuggestionSchema = z.object({ ...operation, expectedRevision: ManuscriptRevisionSchema }).strict();
+const decision = z.object({ id: z.string().uuid(), hash: ManuscriptRevisionSchema });
+const suggestion = { replacement: z.string().max(8000) };
+export const ManuscriptSuggestionSchema = z.discriminatedUnion("status", [
+  z.object({ ...suggestion, status: z.literal("pending") }),
+  z.object({ ...suggestion, status: z.literal("rejected"), decidedAt: z.string().datetime(), decision }),
+  z.object({ ...suggestion, status: z.literal("accepted"), decidedAt: z.string().datetime(), decision, resultRevision: ManuscriptRevisionSchema })
+]);
 export const UpdateManuscriptCommentSchema = z.discriminatedUnion("action", [
   z.object({ ...operation, action: z.literal("reply"), body: Body }).strict(),
   z.object({ ...operation, action: z.literal("edit"), messageId: z.string().uuid(), body: Body }).strict(),
@@ -19,12 +28,14 @@ export const UpdateManuscriptCommentSchema = z.discriminatedUnion("action", [
   z.object({ ...operation, action: z.literal("resolve") }).strict(),
   z.object({ ...operation, action: z.literal("reopen") }).strict(),
   z.object({ ...operation, action: z.literal("delete") }).strict(),
+  z.object({ ...operation, action: z.literal("reject-suggestion") }).strict(),
   z.object({ ...operation, action: z.literal("reattach"), selection: CommentSelectionSchema }).strict()
 ]);
 export const ManuscriptCommentSchema = z.object({
   id: z.string().regex(/^comment_[a-f0-9]{24}$/), manuscriptId: ManuscriptSchema.shape.id,
   version: z.number().int().positive(), status: z.enum(["open", "resolved", "deleted"]),
   anchor: CommentAnchorSchema.nullable(), createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
+  suggestion: ManuscriptSuggestionSchema.optional(),
   messages: z.array(z.object({
     id: z.string().uuid(), author: z.literal("local"), body: Body.nullable(),
     createdAt: z.string().datetime(), editedAt: z.string().datetime().nullable()
@@ -44,3 +55,4 @@ export type ManuscriptComment = z.infer<typeof ManuscriptCommentSchema>;
 export type ManuscriptCommentView = z.infer<typeof ManuscriptCommentViewSchema>;
 export type CreateManuscriptComment = z.infer<typeof CreateManuscriptCommentSchema>;
 export type UpdateManuscriptComment = z.infer<typeof UpdateManuscriptCommentSchema>;
+export type AcceptManuscriptSuggestion = z.infer<typeof AcceptManuscriptSuggestionSchema>;

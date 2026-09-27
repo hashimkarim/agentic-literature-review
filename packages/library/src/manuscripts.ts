@@ -11,6 +11,7 @@ import {
   WritingCandidateBatchSchema, type WritingCandidateBatch, type WritingCandidateSummary,
   WritingAttachmentSchema, WritingAttachmentInputSchema, type WritingAttachment,
   CreateManuscriptCommentSchema, UpdateManuscriptCommentSchema, ManuscriptCommentSchema,
+  AcceptManuscriptSuggestionSchema, ManuscriptFileSchema, ManuscriptRevisionSchema,
   type ManuscriptComment, type ManuscriptCommentView, type CommentSelection, type CommentAnchor,
   type Manuscript, type ManuscriptDocument, type ManuscriptFile,
   type WriteManuscriptFileRequest, type ManuscriptHistoryEntry
@@ -65,6 +66,7 @@ function atomicWrite(filePath: string, content: string | Buffer): void {
 
 export class ManuscriptStore {
   readonly root: string;
+  private readonly recoveringSuggestions = new Set<string>();
   constructor(root: string) { this.root = fs.realpathSync(root); }
 
   // All components, including existing ancestors, are checked before reading or writing.
@@ -135,6 +137,7 @@ export class ManuscriptStore {
     if (!fs.existsSync(file)) this.migrateLegacy(manuscriptId);
     if (!fs.existsSync(file)) throw new ManuscriptError(404, "manuscript_not_found", "Manuscript not found.");
     this.finishMove(manuscriptId);
+    this.finishSuggestion(manuscriptId);
     const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
     const legacy = LegacyManuscriptSchema.safeParse(raw);
     const result = ManuscriptSchema.parse(legacy.success && !("projectIds" in (raw as object))
@@ -175,7 +178,7 @@ export class ManuscriptStore {
 
   private commentView(record: ManuscriptComment, document: ManuscriptDocument): ManuscriptCommentView {
     const { creationHash: _hash, lastOperation: _operation, ...publicRecord } = record;
-    return { ...publicRecord, location: record.anchor ? locateComment(record.anchor, document.files.find((file) => file.path === record.anchor!.path)) : null };
+    return { ...publicRecord, location: record.anchor && record.suggestion?.status !== "accepted" ? locateComment(record.anchor, document.files.find((file) => file.path === record.anchor!.path)) : null };
   }
 
   comments(manuscriptId: string): ManuscriptCommentView[] {
@@ -192,13 +195,17 @@ export class ManuscriptStore {
     return { ...selection, prefix: file.content.slice(Math.max(0, selection.from - 48), selection.from), suffix: file.content.slice(selection.to, selection.to + 48) };
   }
 
-  private saveComment(record: ManuscriptComment, records: ManuscriptComment[]): void {
+  private commentBytes(record: ManuscriptComment, records: ManuscriptComment[]): string {
     const checked = ManuscriptCommentSchema.parse(record);
     const bytes = JSON.stringify(checked, null, 2);
     if (Buffer.byteLength(bytes) > 256_000 || records.filter((item) => item.id !== record.id).reduce((size, item) => size + Buffer.byteLength(JSON.stringify(item, null, 2)), Buffer.byteLength(bytes)) > 8_000_000) {
       throw new ManuscriptError(413, "comment_limit", "Comments exceed the document or thread size limit.");
     }
-    atomicWrite(this.safePath(`${this.directory(record.manuscriptId)}/.comments/${record.id}.json`, true), `${bytes}\n`);
+    return `${bytes}\n`;
+  }
+
+  private saveComment(record: ManuscriptComment, records: ManuscriptComment[]): void {
+    atomicWrite(this.safePath(`${this.directory(record.manuscriptId)}/.comments/${record.id}.json`, true), this.commentBytes(record, records));
   }
 
   createComment(manuscriptId: string, input: unknown): ManuscriptCommentView {
@@ -211,9 +218,11 @@ export class ManuscriptStore {
       return this.commentView(existing, document);
     }
     if (records.length >= 500) throw new ManuscriptError(413, "comment_limit", "This document has reached 500 comment threads.");
+    if (request.replacement === request.selection.quote) throw new ManuscriptError(400, "suggestion_unchanged", "The replacement must differ from the selected text.");
     const now = new Date().toISOString();
     const record: ManuscriptComment = { id, manuscriptId, version: 1, status: "open", anchor: this.commentAnchor(request.selection, document), createdAt: now, updatedAt: now,
       messages: [{ id: request.requestId, author: "local", body: request.body, createdAt: now, editedAt: null }], creationHash, lastOperation: null };
+    if (request.replacement !== undefined) record.suggestion = { status: "pending", replacement: request.replacement };
     this.saveComment(record, records);
     return this.commentView(record, document);
   }
@@ -239,12 +248,71 @@ export class ManuscriptStore {
       message.body = request.action === "edit" ? request.body : null; message.editedAt = now;
     } else if (request.action === "delete") {
       // Retain only a retry tombstone, not deleted comment text or source excerpts.
-      record.status = "deleted"; record.messages = []; record.anchor = null;
-    } else if (request.action === "reattach") record.anchor = this.commentAnchor(request.selection, document);
-    else record.status = request.action === "resolve" ? "resolved" : "open";
+      record.status = "deleted"; record.messages = []; record.anchor = null; delete record.suggestion;
+    } else if (request.action === "reject-suggestion") {
+      if (record.suggestion?.status !== "pending") throw new ManuscriptError(409, "suggestion_decided", "This thread has no pending suggestion.");
+      record.suggestion = { ...record.suggestion, status: "rejected", decidedAt: now, decision: { id: request.requestId, hash } };
+      record.status = "resolved";
+    } else if (request.action === "reattach") {
+      if (record.suggestion && record.suggestion.status !== "pending") throw new ManuscriptError(409, "suggestion_decided", "Decided suggestions cannot be reattached.");
+      if (request.selection.quote === record.suggestion?.replacement) throw new ManuscriptError(400, "suggestion_unchanged", "The replacement must differ from the selected text.");
+      record.anchor = this.commentAnchor(request.selection, document);
+    } else {
+      if (request.action === "resolve" && record.suggestion?.status === "pending") throw new ManuscriptError(409, "suggestion_pending", "Accept or reject this suggestion before resolving it.");
+      record.status = request.action === "resolve" ? "resolved" : "open";
+    }
     record.version++; record.updatedAt = now; record.lastOperation = { id: request.requestId, hash };
     this.saveComment(record, records);
     return this.commentView(record, document);
+  }
+
+  acceptSuggestion(manuscriptId: string, commentId: string, input: unknown): { comment: ManuscriptCommentView; file: ManuscriptFile } {
+    ManuscriptCommentSchema.shape.id.parse(commentId);
+    const request = AcceptManuscriptSuggestionSchema.parse(input);
+    const document = this.read(manuscriptId), records = this.commentRecords(manuscriptId);
+    const record = records.find((item) => item.id === commentId);
+    if (!record?.anchor || record.status === "deleted") throw new ManuscriptError(404, "comment_not_found", "Comment thread not found.");
+    const file = document.files.find((item) => item.path === record.anchor!.path);
+    if (!file) throw new ManuscriptError(409, "comment_source_changed", "The suggested file was removed.");
+    const hash = revision(JSON.stringify({ action: "accept-suggestion", ...request }));
+    if (record.suggestion?.status === "accepted" && record.suggestion.decision.id === request.requestId && record.suggestion.decision.hash === hash) return { comment: this.commentView(record, document), file };
+    if (record.version !== request.expectedVersion) throw new ManuscriptError(409, "comment_changed", "This thread changed elsewhere. Refresh comments before trying again.");
+    if (record.suggestion?.status !== "pending") throw new ManuscriptError(409, "suggestion_decided", "This thread has no pending suggestion.");
+    if (file.revision !== request.expectedRevision || file.revision !== record.anchor.revision) throw new ManuscriptError(409, "comment_source_changed", "The source changed since this suggestion. Review and reattach it to the current selection first.");
+    this.commentAnchor(record.anchor, document);
+    const content = file.content.slice(0, record.anchor.from) + record.suggestion.replacement + file.content.slice(record.anchor.to);
+    this.checkSourceSize(document, file.path, content);
+    const previousCommentRevision = revision(JSON.stringify(record)), now = new Date().toISOString();
+    record.suggestion = { ...record.suggestion, status: "accepted", decidedAt: now, decision: { id: request.requestId, hash }, resultRevision: revision(content) };
+    record.version++; record.status = "resolved"; record.updatedAt = now; record.lastOperation = { id: request.requestId, hash };
+    this.commentBytes(record, records);
+    // Persist the explicit decision before changing either file. Restart recovery
+    // finishes the same edit, never searches for another matching occurrence.
+    atomicWrite(this.safePath(`${this.directory(manuscriptId)}/.suggestion-apply.json`), JSON.stringify({ before: file, comment: record, previousCommentRevision }));
+    this.finishSuggestion(manuscriptId);
+    const saved = this.read(manuscriptId);
+    return { comment: this.commentView(record, saved), file: saved.files.find((item) => item.path === file.path)! };
+  }
+
+  private finishSuggestion(manuscriptId: string): void {
+    if (this.recoveringSuggestions.has(manuscriptId)) return;
+    const journal = this.safePath(`${this.directory(manuscriptId)}/.suggestion-apply.json`);
+    if (!fs.existsSync(journal)) return;
+    if (fs.statSync(journal).size > 8_000_000) throw new ManuscriptError(413, "suggestion_limit", "Interrupted suggestion is too large.");
+    const { before, comment, previousCommentRevision } = z.object({ before: ManuscriptFileSchema, comment: ManuscriptCommentSchema, previousCommentRevision: ManuscriptRevisionSchema }).parse(JSON.parse(fs.readFileSync(journal, "utf8")));
+    const anchor = comment.anchor, suggestion = comment.suggestion;
+    if (comment.manuscriptId !== manuscriptId || !anchor || suggestion?.status !== "accepted" || before.path !== anchor.path || revision(before.content) !== before.revision || before.revision !== anchor.revision || before.content.slice(anchor.from, anchor.to) !== anchor.quote) throw new ManuscriptError(409, "suggestion_recovery_conflict", "Interrupted suggestion failed its source checks; no file was overwritten.");
+    const content = before.content.slice(0, anchor.from) + suggestion.replacement + before.content.slice(anchor.to);
+    if (revision(content) !== suggestion.resultRevision) throw new ManuscriptError(409, "suggestion_recovery_conflict", "Interrupted suggestion failed its result check; no file was overwritten.");
+    const records = this.commentRecords(manuscriptId), current = records.find((item) => item.id === comment.id);
+    if (current && JSON.stringify(current) === JSON.stringify(comment)) { fs.unlinkSync(journal); return; }
+    if (!current || revision(JSON.stringify(current)) !== previousCommentRevision) throw new ManuscriptError(409, "suggestion_recovery_conflict", "Interrupted suggestion conflicts with its comment thread; no file was overwritten.");
+    this.recoveringSuggestions.add(manuscriptId);
+    try {
+      this.writeFile(manuscriptId, { path: before.path, content, expectedRevision: before.revision }, "suggestion");
+      this.saveComment(comment, records);
+      fs.unlinkSync(journal);
+    } finally { this.recoveringSuggestions.delete(manuscriptId); }
   }
 
   writingAttachments(manuscriptId: string): WritingAttachment[] {
@@ -361,7 +429,13 @@ export class ManuscriptStore {
     return { ...metadata, files: sortedFiles, assets, folders, treeRevision };
   }
 
-  writeFile(manuscriptId: string, input: WriteManuscriptFileRequest, reason: "saved" | "restored" | "candidate" = "saved"): ManuscriptFile {
+  private checkSourceSize(document: ManuscriptDocument, filePath: string, content: string): void {
+    const bytes = Buffer.byteLength(content);
+    const total = document.files.filter((file) => file.path !== filePath).reduce((sum, file) => sum + Buffer.byteLength(file.content), bytes);
+    if (bytes > MAX_FILE_BYTES || total > MAX_DOCUMENT_BYTES || total + (document.assets ?? []).reduce((sum, file) => sum + file.bytes, 0) > manuscriptLimits.total) throw new ManuscriptError(413, "manuscript_limit", "Manuscript sources exceed the file or size limit.");
+  }
+
+  writeFile(manuscriptId: string, input: WriteManuscriptFileRequest, reason: "saved" | "restored" | "candidate" | "suggestion" = "saved"): ManuscriptFile {
     const parsed = WriteManuscriptFileRequestSchema.parse(input);
     const document = this.read(manuscriptId);
     const current = document.files.find((file) => file.path === parsed.path);
@@ -372,9 +446,8 @@ export class ManuscriptStore {
       if (current?.content === parsed.content) { this.snapshot(manuscriptId, current, reason); return current; }
       throw new ManuscriptError(409, "manuscript_file_changed", "This file changed elsewhere. Review the saved version before saving again.");
     }
-    const bytes = Buffer.byteLength(parsed.content);
-    const total = document.files.filter((file) => file.path !== parsed.path).reduce((sum, file) => sum + Buffer.byteLength(file.content), bytes);
-    if (bytes > MAX_FILE_BYTES || total > MAX_DOCUMENT_BYTES || total + (document.assets ?? []).reduce((sum, file) => sum + file.bytes, 0) > manuscriptLimits.total || (!current && document.files.length + (document.assets?.length ?? 0) >= manuscriptLimits.files)) {
+    this.checkSourceSize(document, parsed.path, parsed.content);
+    if (!current && document.files.length + (document.assets?.length ?? 0) >= manuscriptLimits.files) {
       throw new ManuscriptError(413, "manuscript_limit", "Manuscript sources exceed the file or size limit.");
     }
     if (!current) validateTreePaths([...document.files, ...(document.assets ?? [])].map((file) => file.path).concat(parsed.path), document.folders ?? []);

@@ -73,7 +73,7 @@ export const ManuscriptHistoryEntrySchema = z.object({
   path: ManuscriptPathSchema,
   revision: ManuscriptRevisionSchema,
   savedAt: z.string().datetime(),
-  reason: z.enum(["created", "saved", "external", "restored", "checkpoint", "deleted", "candidate"]),
+  reason: z.enum(["created", "saved", "external", "restored", "checkpoint", "deleted", "candidate", "suggestion"]),
   label: z.string().trim().min(1).max(120).nullable()
 });
 export const ManuscriptCheckpointRequestSchema = z.object({

@@ -40,6 +40,36 @@ it("stores revision-checked comments over HTTP without changing source or export
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { force: true, recursive: true }); }
 });
 
+it("accepts revision-checked suggestions over HTTP with explicit rejection and history", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-suggestions-http-"));
+  const store = new ManuscriptStore(root), document = store.create({ name: "Suggestion fixture" });
+  const file = document.files.find((file) => file.path === "main.tex")!;
+  const app = express(); app.use(express.json()); app.use("/api/manuscripts", manuscriptRoutes(store));
+  const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
+  const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts/${document.id}`;
+  const mutate = (suffix: string, method: string, body: unknown) => fetch(url + suffix, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    const selection = { path: file.path, revision: file.revision, from: 0, to: 14, quote: file.content.slice(0, 14) };
+    const create = () => mutate("/comments", "POST", { requestId: randomUUID(), body: "Proposed correction", replacement: "% Suggested class\n\\documentclass", selection });
+    const thread = await (await create()).json() as import("@litagent/contracts").ManuscriptCommentView;
+    const rejected = await (await create()).json() as typeof thread;
+    expect((await mutate(`/comments/${rejected.id}`, "PATCH", { requestId: randomUUID(), expectedVersion: 1, action: "reject-suggestion" })).status).toBe(200);
+    expect(store.read(document.id)).toEqual(document);
+    const input = { requestId: randomUUID(), expectedVersion: 1, expectedRevision: file.revision };
+    expect((await mutate(`/comments/${rejected.id}/accept`, "POST", { ...input, expectedVersion: 2 })).status).toBe(409);
+    expect((await mutate(`/comments/${thread.id}/accept`, "POST", { ...input, expectedRevision: "0".repeat(64) })).status).toBe(409);
+    expect((await mutate(`/comments/${thread.id}/accept`, "POST", { ...input, content: "Unreviewed" })).status).toBe(400);
+    const response = await mutate(`/comments/${thread.id}/accept`, "POST", input);
+    expect(response.status).toBe(200);
+    const accepted = await response.json();
+    expect(accepted).toMatchObject({ comment: { suggestion: { status: "accepted" }, status: "resolved" }, file: { path: file.path } });
+    expect(await (await mutate(`/comments/${thread.id}/accept`, "POST", input)).json()).toEqual(accepted);
+    expect(store.history(document.id, file.path)[0]?.reason).toBe("suggestion");
+    const archive = unzipSync(new Uint8Array(await (await fetch(url + "/archive")).arrayBuffer()));
+    expect(Object.keys(archive).some((name) => name.startsWith("."))).toBe(false);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { force: true, recursive: true }); }
+});
+
 it("keeps writing attachment selection and exact context app-owned over HTTP", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-context-http-"));
   const repo = new LitAgentRepository(root); repo.init();
