@@ -62,6 +62,11 @@ artifact creation, cancellation, truncated results, and explicit enablement;
 they do not certify real provider behavior. Use authorized regular connections
 and small disposable documents for live product acceptance.
 
+The [Driver-only transition receipt](validation/driver-consolidation-2026-09-27.md)
+records regular-account Q&A, writing, proposal/refinement and cancellation checks,
+including real failures found during acceptance. Older fixture-only receipts below
+remain historical records, not the current live-acceptance claim.
+
 ## Scoped Package Migration
 
 The original scoped-package migration pinned the published MIT-licensed

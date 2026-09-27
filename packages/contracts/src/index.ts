@@ -173,6 +173,7 @@ export const WorkflowRunSchema = z.object({
     query: z.string().nullable().default(null),
     options: z.record(z.string(), z.unknown()).default({})
   }),
+  // Decode historical records without changing their original provider identity.
   providerId: z.string().default("local-heuristic"),
   model: z.string().nullable().default(null),
   status: WorkflowStatusSchema,
@@ -604,7 +605,7 @@ export const QaRequestSchema = z.object({
   paperId: z.string().nullable().default(null),
   paperIds: z.array(z.string()).default([]),
   collectionId: z.string().nullable().default(null),
-  providerId: z.string().default("local-heuristic"),
+  providerId: z.string().default(""),
   model: z.string().nullable().default(null)
 });
 export type QaRequest = z.infer<typeof QaRequestSchema>;
@@ -640,6 +641,7 @@ export type QaContextSource = z.infer<typeof QaContextSourceSchema>;
 export const QaDiagnosticsSchema = z.object({
   retrievedCount: z.number().int().nonnegative().default(0),
   evidenceCount: z.number().int().nonnegative().default(0),
+  // Historical diagnostics only; new requests require an explicit Driver selection.
   providerId: z.string().default("local-heuristic"),
   model: z.string().nullable().default(null),
   contextMode: z.enum(["passage-search", "markdown-context"]).default("passage-search"),

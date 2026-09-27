@@ -82,7 +82,7 @@ describe("Q&A failure boundaries", () => {
     const settings = new AgentProviderSettingsStore(repo.resolve(".litagent/provider-settings.json"));
     settings.patch("driver.qa-test", { enabled: false }, [catalog.definition("driver.qa-test")!]);
     const engine = new WorkflowEngine(repo, index, catalog, harness, settings);
-    await expect(engine.answerQuestionWithProvider(request)).rejects.toThrow("Select a connected agent provider");
+    await expect(engine.answerQuestionWithProvider(request)).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE", message: expect.stringContaining("Enable the selected AgenticDriver provider") });
     expect(start).not.toHaveBeenCalled();
   });
 

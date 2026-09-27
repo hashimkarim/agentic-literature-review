@@ -7,6 +7,7 @@ import { performance } from "node:perf_hooks";
 import { z } from "zod";
 
 import { AgentHarness, AgentProviderCatalog, requireDriverProvider, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
+import { DriverSettingsError } from "@litagent/agents/agenticdriver";
 import {
   ClearQaThreadRequestSchema,
   type ClearQaThreadRequestInput,
@@ -1980,7 +1981,7 @@ export class WorkflowEngine {
     const context = buildQaMarkdownContext(this.repo, scope);
     const thread = this.readQaThread(parsed);
     if (!this.isProviderBackedRun(parsed.providerId) || (this.providerSettings && !this.providerSettings.read()[parsed.providerId]?.enabled)) {
-      throw new Error("Select a connected agent provider in Settings. Heuristic Q&A is disabled.");
+      throw new DriverSettingsError("PROVIDER_UNAVAILABLE", "Enable the selected AgenticDriver provider in Settings. No replacement provider or model was chosen.");
     }
     const baseDiagnostics = {
       retrievedCount: context.passageCount,
