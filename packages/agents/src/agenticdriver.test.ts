@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgenticClient } from "@agenticdriver/sdk/client";
 import { AgenticDriver, DriverError } from "@agenticdriver/sdk";
 import { mockProvider } from "@agenticdriver/sdk/providers";
@@ -12,11 +12,13 @@ import {
   AgenticDriverCatalog,
   agenticDriverCatalogFromEnvironment,
 } from "./agenticdriver";
-import { AgentHarness, AgentProviderSettingsStore } from "./index";
+import { AgentHarness, AgentProviderCatalog, AgentProviderSettingsStore } from "./index";
 
 const token = "litagent-driver-test-token-with-32-characters";
 const directories: string[] = [];
 let close: (() => Promise<void>) | undefined;
+// Remote-adapter fixtures must not probe the machine's installed CLI accounts.
+beforeEach(() => { vi.spyOn(AgentProviderCatalog.prototype, "discover").mockReturnValue([]); });
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();

@@ -23,7 +23,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 it("resolves the shared panel and execution client from the exact SDK alpha", () => {
   const directory = path.dirname(fileURLToPath(import.meta.resolve("@agenticdriver/sdk")));
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, "..", "package.json"), "utf8"));
-  expect(manifest).toMatchObject({ name: "@agenticdriver/sdk", version: "0.2.0-alpha.2" });
+  expect(manifest).toMatchObject({ name: "@agenticdriver/sdk", version: "0.2.0-alpha.3" });
   for (const subpath of ["client", "panel", "ui", "connections"])
     expect(path.dirname(fileURLToPath(import.meta.resolve(`@agenticdriver/sdk/${subpath}`)))).toBe(directory);
 });
@@ -152,6 +152,35 @@ it("keeps legacy hosts without management capabilities read-only", async () => {
     expect(state.management).toBeUndefined();
     expect(state.setup).toBeUndefined();
     expect(state.canInvite).toBe(false);
+    expect(state.providers.every((provider) => provider.connection === undefined)).toBe(true);
+  } finally { await f.close(); }
+});
+
+it("forwards optional account metadata through the private bridge without persisting identity or changing grants", async () => {
+  const f = await fixture();
+  let completions = 0;
+  const details = { source: "native-runtime" as const, runtime: { name: "Synthetic CLI", version: "0.0.0-fixture" },
+    account: { status: "signed-in" as const, method: "Fixture sign-in", subscription: "Synthetic plan", email: "reviewer@example.invalid", name: "Synthetic Reviewer" } };
+  try {
+    f.host.driver.configureProviders([{
+      info: { id: "all", name: "Synthetic Codex", vendor: "codex", authMode: "cli-session", models: [], capabilities: { tools: false, textStreaming: false } },
+      inspect: async () => ({ code: "CLI_CATALOG_AVAILABLE", models: ["demo"], complete: true, connection: details }),
+      complete: async () => { completions++; throw new Error("No generation in metadata tests"); },
+    }]);
+    const { state } = await f.pair(false, ["all"]);
+    expect(state.providers[0]?.connection).toMatchObject(details);
+    expect(state.providers[0]?.models).toEqual([]);
+    expect(state.providers[0]?.modelCatalog?.models).toEqual(["demo"]);
+    expect(state.management).toBeUndefined();
+    expect(() => f.catalog.validateSettings("driver.all", { enabled: true })).toThrow();
+    const refreshed = await f.send({ action: "snapshot", refresh: true });
+    expect(refreshed.headers.get("cache-control")).toBe("no-store");
+    expect((await refreshed.json() as ProviderPanelState).providers[0]?.connection).toMatchObject(details);
+    for (const serialized of [fs.readFileSync(f.store.file, "utf8"), JSON.stringify(f.settings.read()), JSON.stringify(f.service.connections()), JSON.stringify(f.catalog.discover())]) {
+      expect(serialized).not.toContain(details.account.email);
+      expect(serialized).not.toContain(details.account.name);
+    }
+    expect(completions).toBe(0);
   } finally { await f.close(); }
 });
 

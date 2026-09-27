@@ -61,7 +61,7 @@ artifact creation, cancellation, truncated results, and explicit enablement.
 
 The original scoped-package migration pinned the published MIT-licensed
 `@agenticdriver/sdk` exactly to `0.1.0`. This historical receipt is superseded
-for the active dependency by [alpha.2 adoption](#public-alpha2-adoption).
+for the active dependency by [alpha.3 adoption](#registry-alpha3-adoption).
 No sibling SDK build, checkout-relative dependency or TypeScript alias is needed.
 The external root/client/providers/server imports use the scoped package.
 
@@ -225,10 +225,10 @@ passes. See the [application validation receipt](validation/driver-panel-2026-09
 
 ## Public Alpha.2 Adoption
 
-Server, browser panel and execution adapter now share `@agenticdriver/sdk`
-version `0.2.0-alpha.2`, pinned to the exact public GitHub release archive in
-all three owning manifests and `bun.lock`. npm registry publication remains
-pending; this is a public release-asset dependency, not a registry semver pin.
+The initial shared-panel adoption used `@agenticdriver/sdk` version
+`0.2.0-alpha.2`, pinned to the exact public GitHub release archive in all three
+owning manifests and `bun.lock`. npm registry publication was pending at that
+time. This historical pin is superseded by the alpha.3 registry adoption below.
 There is no private archive path, sibling SDK link, renamed panel package or
 local managedHost type workaround. The obsolete vendor archives and repack
 script have been removed.
@@ -255,3 +255,24 @@ certify packaged Electron: the current wrapper still launches a Bun workspace
 backend and defaults to the development web URL; production resource/startup
 packaging remains separate. App-scoped usage presentation and the legacy-provider
 consolidation gate also remain separate product work.
+
+## Registry Alpha.3 Adoption
+
+Server, browser panel and execution adapter now pin `@agenticdriver/sdk` to
+exact registry version `0.2.0-alpha.3`. `bun.lock` records the reviewed integrity
+and the SDK's public, immutable provider-icons archive. No private path or sibling
+checkout is involved.
+
+The mounted Settings panel uses the SDK's monochrome/colour and product-mark
+preferences. Optional reported account details stay within the private panel
+bridge: email/name are masked until Reveal, remasked on refresh, provider changes
+and disconnect, and are not stored in browser preferences or canonical app
+settings. Older hosts may omit these fields; the UI leaves them unreported.
+Reported sign-in does not establish model entitlement or live qualification.
+
+Refresh/reload preserves app enablement and explicit model selection. Icon choices
+are presentation-only and remain scoped to the connection/provider instance.
+Host execution restrictions and management permissions still apply independently
+of the reported catalog. No running host, credential, grant or account binding
+was changed. See the [alpha.3 validation receipt](validation/driver-alpha3-2026-09-27.md)
+for exact artifact identity, tests and native browser evidence.
