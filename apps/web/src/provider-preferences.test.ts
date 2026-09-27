@@ -5,6 +5,8 @@ it("retains the exact host-scoped provider/model pair without choosing a replace
   const selection = { providerId: "driver.01234567-0123-0123-0123-012345678901:shared", model: "fast" };
   expect(providerSelectionPreference(JSON.parse(JSON.stringify(selection)))).toEqual(selection);
   expect(providerSelectionPreference({ providerId: "driver.removed", model: null })).toEqual({ providerId: "driver.removed", model: null });
+  expect(providerSelectionPreference({ providerId: "codex", model: "previous-model" })).toEqual({ providerId: "codex", model: "previous-model" });
+  expect(providerSelectionPreference({ providerId: "", model: null })).toEqual({ providerId: "", model: null });
   for (const invalid of [null, {}, { providerId: "", model: "demo" }, { providerId: "driver.x", model: 2 }])
     expect(() => providerSelectionPreference(invalid)).toThrow();
 });

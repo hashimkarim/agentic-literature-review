@@ -42,9 +42,12 @@ The SDK adds no default run deadline or inactivity timeout. A host can opt into
 stop continue to cancel the active remote request.
 
 Remote execution receives the prompt/context supplied by the application. It
-cannot browse this machine's library files. Direct Q&A already includes indexed
-passages; workflows that depend on arbitrary CLI filesystem access should use
-the existing local adapters until their context/tool interfaces are made portable.
+cannot browse this machine's library files. Q&A and writing supply selected
+context and indexed passages. Direct CLI execution and command-path settings
+have been removed. Saved legacy selections remain readable but must be explicitly
+replaced with a Driver provider/model; no account or model is chosen implicitly.
+Tool-dependent requests require a qualified, separately granted Driver bridge
+and are rejected before dispatch when that capability is unavailable.
 Citation linking and acceptance of proposed research changes remain application
 responsibilities.
 
@@ -54,8 +57,10 @@ credentials for their tenancy model. Current setup/management routes use the
 existing local-only access guard; they do not add application login or enable
 remote-browser administration of the LitAgent server.
 
-Run `bun run typecheck` and `bun run test`. New tests cover real host execution,
-artifact creation, cancellation, truncated results, and explicit enablement.
+Run `bun run typecheck` and `bun run test`. Offline regressions cover transport,
+artifact creation, cancellation, truncated results, and explicit enablement;
+they do not certify real provider behavior. Use authorized regular connections
+and small disposable documents for live product acceptance.
 
 ## Scoped Package Migration
 

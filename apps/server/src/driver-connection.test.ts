@@ -2,17 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import express from "express";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { AgenticDriver } from "@agenticdriver/sdk";
 import { mockProvider } from "@agenticdriver/sdk/providers";
 import { serve } from "@agenticdriver/sdk/server";
 import { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
-import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
+import { AgentProviderSettingsStore } from "@litagent/agents";
 import { DriverConnectionStore, driverConnectionRoutes } from "./driver-connection";
 import { DriverPanelService } from "./driver-panel";
 
-beforeEach(() => { vi.spyOn(AgentProviderCatalog.prototype, "discover").mockReturnValue([]); });
-afterEach(() => { vi.restoreAllMocks(); });
 
 it("persists private local connection setup, rejects foreign origins and requires explicit enablement", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-connection-"));

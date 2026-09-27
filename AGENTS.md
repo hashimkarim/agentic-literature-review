@@ -23,7 +23,7 @@
 
 LitAgent is a local-first, project-centered literature review workspace. It uses
 a global paper library, project-specific paper links, file-backed research
-artifacts, rebuildable indexes, and CLI-backed agent workflows.
+artifacts, rebuildable indexes, and AgenticDriver-backed agent workflows.
 
 ## Package Roles
 
@@ -33,7 +33,7 @@ artifacts, rebuildable indexes, and CLI-backed agent workflows.
 - `packages/contracts`: schema-only shared Zod contracts and TypeScript types. No runtime business logic.
 - `packages/library`: file-backed research repository, paper/project model, Git policy, BibTeX export.
 - `packages/indexer`: local SQLite/FTS passage index and search.
-- `packages/agents`: provider catalog, CLI discovery, adapter lifecycle, normalized provider events.
+- `packages/agents`: AgenticDriver catalog/connection bridge, app run lifecycle, normalized provider events.
 - `packages/workflows`: document conversion, passage extraction, Q&A, relevance, metadata, and output recipes.
 - `packages/pdf`: PDF viewer integration primitives.
 - `packages/ui`: design tokens shared by app surfaces.
@@ -50,17 +50,15 @@ artifacts, rebuildable indexes, and CLI-backed agent workflows.
   Do not introduce another SDK, provider harness, or vendor-specific runtime here.
 - LitAgent owns papers, retrieval, source validation, chat state/UI, research
   workflow checkpoints, approval decisions/UI, and accepted artifacts.
-- Preserve existing adapters and the optional SDK integration while SDK work is
-  underway. Test application behavior with fixtures through the existing
-  interface; defer new live-provider experiments and runtime changes until the
-  user resumes that work. Do not modify the sibling SDK as part of LitAgent tasks.
-- Legacy direct CLI providers are temporary. Once AgenticDriver clears the
-  [provider consolidation gate](docs/ROADMAP.md#provider-consolidation), remove
-  their app UI, execution adapters and direct-provider configuration paths.
-  AgenticDriver becomes the only AI execution path, not another permanent option
-  beside them. Preserve historical provider IDs and explicitly migrate or request
-  replacement of saved selections; never silently change accounts/models or
-  fall back to a legacy runtime.
+- AgenticDriver is the only AI execution path. Do not restore direct CLI adapters,
+  command-path settings, vendor login probes, or a fallback provider runtime.
+  Preserve historical provider IDs and require explicit replacement of retired
+  selections; never silently change accounts/models.
+- Use the user's regular Driver connection for authorized product acceptance,
+  with modest requests and disposable documents, not real manuscripts. Offline
+  regression tests are not evidence of live provider behavior. Synthetic-only
+  credentials remain restricted to synthetic validation. Do not modify the
+  sibling SDK as part of LitAgent tasks.
 
 ## Existing Provider Adapter Rules
 

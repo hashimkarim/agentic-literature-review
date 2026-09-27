@@ -163,9 +163,9 @@ it("retains legacy candidate provenance and acceptance when documents move and p
 });
 
 it("rejects disabled, unknown and non-SDK targets without probing or falling back", () => {
-  const catalog = new AgentProviderCatalog([]);
-  vi.spyOn(catalog, "definition").mockReturnValue({ id: "driver.fixture", label: "Fixture", models: ["allowed"], command: "", versionArgs: [], capabilities: [], runArgs: () => [], connectCommand: "", defaultModel: null });
-  const config = { providerId: "driver.fixture", enabled: true, connected: false, command: "", defaultModel: null, customModels: ["custom"], lastCheckedAt: null, updatedAt: new Date().toISOString() };
+  const catalog = new AgentProviderCatalog();
+  vi.spyOn(catalog, "definition").mockReturnValue({ id: "driver.fixture", label: "Fixture", models: ["allowed"], capabilities: [], defaultModel: null });
+  const config = { providerId: "driver.fixture", enabled: true, connected: false, defaultModel: null, customModels: ["custom"], lastCheckedAt: null, updatedAt: new Date().toISOString() };
   const validate = writingTargetValidator(catalog, () => ({ "driver.fixture": config }));
   validate({ providerId: "driver.fixture", model: "allowed", count: 1 });
   validate({ providerId: "driver.fixture", model: "custom", count: 1 });

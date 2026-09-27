@@ -20,7 +20,7 @@ export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string().min(1),
   description: z.string().default(""),
-  defaultProvider: z.string().default("codex"),
+  defaultProvider: z.string().default(""),
   researchQuestions: z.array(ResearchQuestionSchema).default([]),
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema
@@ -503,7 +503,6 @@ export type DriverConnections = z.infer<typeof DriverConnectionsSchema>;
 export const AgentProviderSchema = z.object({
   id: z.string(),
   label: z.string(),
-  command: z.string(),
   installed: z.boolean(),
   enabled: z.boolean().default(false),
   connected: z.boolean().default(false),
@@ -514,7 +513,6 @@ export const AgentProviderSchema = z.object({
   models: z.array(z.string()).default([]),
   customModels: z.array(z.string()).default([]),
   lastCheckedAt: isoDateSchema.nullable().default(null),
-  connectCommand: z.string().nullable().default(null),
   driver: z.object({
     instanceId: z.string(),
     connectionId: z.string().uuid().optional(),
@@ -541,7 +539,6 @@ export const AgentProviderSettingsSchema = z.object({
   providerId: z.string(),
   enabled: z.boolean().default(false),
   connected: z.boolean().default(false),
-  command: z.string().default(""),
   defaultModel: z.string().nullable().default(null),
   customModels: z.array(z.string()).default([]),
   lastCheckedAt: isoDateSchema.nullable().default(null),
@@ -552,10 +549,9 @@ export type AgentProviderSettings = z.infer<typeof AgentProviderSettingsSchema>;
 export const AgentProviderSettingsPatchSchema = z.object({
   enabled: z.boolean().optional(),
   connected: z.boolean().optional(),
-  command: z.string().optional(),
   defaultModel: z.string().nullable().optional(),
   customModels: z.array(z.string()).optional()
-});
+}).strict();
 export type AgentProviderSettingsPatch = z.infer<typeof AgentProviderSettingsPatchSchema>;
 
 export const RunEventTypeSchema = z.enum([

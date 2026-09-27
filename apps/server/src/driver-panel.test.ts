@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { connectionInvitation } from "@agenticdriver/sdk/client";
 import { managedHost } from "@agenticdriver/sdk/management";
@@ -12,13 +12,10 @@ import { withConnections } from "@agenticdriver/sdk/connections";
 import { serve } from "@agenticdriver/sdk/server";
 import type { ProviderPanelState } from "@agenticdriver/sdk/panel";
 import { AgenticDriverRegistry } from "@litagent/agents/agenticdriver";
-import { AgentProviderCatalog, AgentProviderSettingsStore } from "@litagent/agents";
+import { AgentProviderSettingsStore } from "@litagent/agents";
 import { DriverConnectionStore } from "./driver-connection";
 import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
 
-// These tests exercise SDK fixture hosts, not installed CLI accounts or binaries.
-beforeEach(() => { vi.spyOn(AgentProviderCatalog.prototype, "discover").mockReturnValue([]); });
-afterEach(() => { vi.restoreAllMocks(); });
 
 it("resolves the shared panel and execution client from the exact SDK alpha", () => {
   const directory = path.dirname(fileURLToPath(import.meta.resolve("@agenticdriver/sdk")));

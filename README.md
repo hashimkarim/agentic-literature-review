@@ -6,8 +6,9 @@ LitAgent keeps papers in a global library while projects and subcollections
 reference those papers with project-specific tags, relevance decisions, notes,
 and workflow outputs. The MVP is a desktop/web app backed by a local server,
 Git-friendly files, Git LFS patterns for PDFs/assets, rebuildable local indexes,
-and CLI adapters for agentic providers such as Codex, Claude, Gemini CLI, and
-OpenCode.
+and AgenticDriver connections for AI execution. Provider setup, sign-in, and
+model discovery live on the connected Driver device; LitAgent keeps selections,
+source validation, proposals, and accepted research artifacts.
 
 ## Development
 

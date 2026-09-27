@@ -365,7 +365,7 @@ export class LitAgentRepository {
       id,
       name: input.name,
       description: input.description ?? "",
-      defaultProvider: input.defaultProvider ?? "codex",
+      defaultProvider: input.defaultProvider ?? "",
       researchQuestions,
       createdAt: timestamp,
       updatedAt: timestamp

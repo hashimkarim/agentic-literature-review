@@ -27,12 +27,9 @@ function fixture(reply: Reply = () => ({}), markdown: string | null = "# Results
   const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
   if (rebuildIndex) index.rebuild(repo);
   disposers.push(() => { index.close(); fs.rmSync(root, { recursive: true, force: true }); });
-  const catalog = new AgentProviderCatalog([{
-    id: "qa-test", label: "QA test provider", command: process.execPath,
-    versionArgs: ["--version"], capabilities: ["research"],
-    connectCommand: "", models: [], defaultModel: null,
-    promptDelivery: "stdin", runArgs: () => []
-  }]);
+  const catalog = new AgentProviderCatalog();
+  vi.spyOn(catalog, "definition").mockImplementation((id) => id === "driver.qa-test"
+    ? { id, label: "QA test provider", capabilities: ["research"], models: ["test-model"], defaultModel: "test-model" } : null);
   const harness = new AgentHarness({ catalog });
   let attempt = 0;
   const start = vi.spyOn(harness, "startRun").mockImplementation((input) => {
@@ -43,13 +40,13 @@ function fixture(reply: Reply = () => ({}), markdown: string | null = "# Results
     };
     return {
       id: result.sessionId, runId: input.runId, providerId: input.providerId,
-      cwd: input.cwd, prompt: input.prompt, status: result.status, process: null,
+      cwd: input.cwd, prompt: input.prompt, status: result.status,
       events: new EventEmitter(), startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       finished: Promise.resolve(result)
     };
   });
   const engine = new WorkflowEngine(repo, index, catalog, harness);
-  const request = { paperId: paper.id, question: "What accuracy does the optical detector achieve?", providerId: "qa-test", model: "test-model" };
+  const request = { paperId: paper.id, question: "What accuracy does the optical detector achieve?", providerId: "driver.qa-test", model: "test-model" };
   return { repo, paper, engine, start, request, catalog, harness, index };
 }
 
@@ -83,7 +80,7 @@ describe("Q&A failure boundaries", () => {
   it("requires a known provider to be enabled in settings", async () => {
     const { repo, index, catalog, harness, request, start } = fixture();
     const settings = new AgentProviderSettingsStore(repo.resolve(".litagent/provider-settings.json"));
-    settings.patch("qa-test", { enabled: false }, [catalog.definition("qa-test")!]);
+    settings.patch("driver.qa-test", { enabled: false }, [catalog.definition("driver.qa-test")!]);
     const engine = new WorkflowEngine(repo, index, catalog, harness, settings);
     await expect(engine.answerQuestionWithProvider(request)).rejects.toThrow("Select a connected agent provider");
     expect(start).not.toHaveBeenCalled();

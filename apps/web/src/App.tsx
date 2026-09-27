@@ -245,12 +245,7 @@ function ConfBar({ value }: { value: number }) {
 }
 
 function selectableAgentProviders(providers: AgentProvider[]) {
-  return providers.filter((provider) => provider.id !== "local-heuristic");
-}
-
-function fallbackProvider(providers: AgentProvider[]) {
-  const candidates = selectableAgentProviders(providers);
-  return candidates.find((provider) => provider.installed && provider.enabled) ?? candidates.find((provider) => provider.installed) ?? candidates[0] ?? null;
+  return providers.filter((provider) => provider.id.startsWith("driver."));
 }
 
 function ModelPicker({
@@ -268,21 +263,20 @@ function ModelPicker({
 }) {
   const candidates = selectableAgentProviders(providers);
   const selectedDriver = providerId.startsWith("driver.");
-  const resolvedProviderId = selectedDriver || candidates.some((candidate) => candidate.id === providerId) ? providerId : candidates[0]?.id ?? "codex";
-  const provider = candidates.find((candidate) => candidate.id === resolvedProviderId) ?? null;
+  const provider = candidates.find((candidate) => candidate.id === providerId) ?? null;
   return (
     <div className="la-modelpick" title="Provider and model">
       <Icon name="cpu" size={13} />
-      <Select compact label="Provider" value={resolvedProviderId} onChange={onProviderChange} disabled={candidates.length === 0} placeholder="No providers found" options={[
-        ...(selectedDriver && !provider ? [{ value: providerId, label: providerId, disabled: true, detail: "Unavailable" }] : []),
+      <Select compact label="Provider" value={providerId} onChange={onProviderChange} placeholder="Select Driver provider" options={[
+        ...(!providerId ? [{ value: "", label: "Select Driver provider", disabled: true }] : !provider ? [{ value: providerId, label: providerId, disabled: true, detail: selectedDriver ? "Unavailable" : "Retired; select a Driver provider" }] : []),
         ...candidates.map((candidate) => ({ value: candidate.id, label: candidate.label,
           disabled: !candidate.installed || !candidate.enabled || candidate.driver?.available === false,
           detail: !candidate.installed ? "Missing" : !candidate.enabled ? "Disabled" : candidate.driver?.available === false ? "Unavailable" : undefined })),
       ]} />
       <span className="la-modelpick-separator" aria-hidden="true" />
       <Select compact label="Model" value={model ?? ""} onChange={(value) => onModelChange(value || null)} disabled={!provider} options={[
-        { value: "", label: selectedDriver ? "Select model" : "CLI default" },
-        ...(selectedDriver && model && !provider?.models.includes(model) ? [{ value: model, label: model, disabled: true, detail: "Unavailable" }] : []),
+        { value: "", label: "Select model" },
+        ...(model && !provider?.models.includes(model) ? [{ value: model, label: model, disabled: true, detail: "Unavailable" }] : []),
         ...(provider?.models.map((value) => ({ value, label: value })) ?? []),
       ]} />
     </div>
@@ -438,7 +432,8 @@ function App() {
   const [providers, setProviders] = useState<AgentProvider[]>([]);
   const [driverConnection, setDriverConnection] = useState<DriverConnection | null>(null);
   const [workflows, setWorkflows] = useState<WorkflowRun[]>([]);
-  const [providerSelection, setProviderSelection] = useBrowserPreference("litagent:provider-selection:v1", { providerId: "codex", model: null } as { providerId: string; model: string | null }, providerSelectionPreference);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const [providerSelection, setProviderSelection] = useBrowserPreference("litagent:provider-selection:v1", { providerId: "", model: null } as { providerId: string; model: string | null }, providerSelectionPreference);
   const { providerId: selectedProviderId, model: selectedModel } = providerSelection;
   const setSelectedProviderId = useCallback((providerId: string) => setProviderSelection((current) => ({ ...current, providerId, model: null })), [setProviderSelection]);
   const setSelectedModel = useCallback((model: string | null) => setProviderSelection((current) => ({ ...current, model })), [setProviderSelection]);
@@ -573,33 +568,6 @@ function App() {
     const timer = hasPendingChat || hasActiveWorkflow ? window.setInterval(() => void refresh(), 1000) : null;
     return () => { disposed = true; if (timer !== null) window.clearInterval(timer); };
   }, [hasPendingChat, hasActiveWorkflow]);
-
-  useEffect(() => {
-    const candidates = selectableAgentProviders(providers);
-    const provider = candidates.find((candidate) => candidate.id === selectedProviderId);
-    if (selectedProviderId.startsWith("driver.")) {
-      if (provider && selectedModel === null && provider.defaultModel) setSelectedModel(provider.defaultModel);
-      return; // A disabled/removed driver selection never switches accounts or providers.
-    }
-    if (!provider && candidates.length > 0) {
-      const fallback = fallbackProvider(providers);
-      setSelectedProviderId(fallback?.id ?? "codex");
-      setSelectedModel(fallback?.defaultModel ?? null);
-      return;
-    }
-    if (provider && (!provider.installed || !provider.enabled)) {
-      const fallback = fallbackProvider(providers);
-      if (fallback && fallback.id !== provider.id) {
-        setSelectedProviderId(fallback.id);
-        setSelectedModel(fallback.defaultModel ?? null);
-        return;
-      }
-    }
-    if (provider && selectedModel === null && provider.defaultModel) {
-      setSelectedModel(provider.defaultModel);
-      return;
-    }
-  }, [providers, selectedModel, selectedProviderId]);
 
   const libraryPapers = useMemo(() => libraryEntries.map((entry) => makeUiPaper(entry, projects)), [libraryEntries, projects]);
   const projectPapers = useMemo(() => projectEntries.map((entry) => makeUiPaper(entry, projects)), [projectEntries, projects]);
@@ -791,6 +759,7 @@ function App() {
 
   const runWorkflow = useCallback(
     (type: WorkflowType, scopeProjectId: string | null, paperIds: string[] = [], query: string | null = null, options: Record<string, unknown> = {}) => {
+      setWorkflowError(null);
       startTransition(() => {
         void api
           .startWorkflow({
@@ -811,7 +780,7 @@ function App() {
             setWorkflows(nextWorkflows);
             setLibraryEntries(nextLibrary);
             setProjectEntries(nextProject);
-          });
+          }).catch((error: unknown) => setWorkflowError(error instanceof Error ? error.message : "Could not start the workflow."));
       });
     },
     [projectEntries, selectedModel, selectedProviderId]
@@ -825,15 +794,6 @@ function App() {
 
   const updateProvider = useCallback(async (providerId: string, patch: ProviderSettingsPatch) => {
     setProviders(await api.updateProviderSettings(providerId, patch));
-  }, []);
-  const connectProvider = useCallback(async (providerId: string) => {
-    setProviders(await api.connectProvider(providerId));
-  }, []);
-  const refreshDriver = useCallback(async () => {
-    const result = await api.refreshDriver();
-    setProviders(result.providers);
-    setDriverConnection(result.connection);
-    return result.connection;
   }, []);
   const syncDriver = useCallback(async () => {
     const [nextProviders, connection] = await Promise.all([api.providerSettings(), api.driverConnection()]);
@@ -931,6 +891,14 @@ function App() {
         </div>
       </div>
 
+      {workflowError ? (
+        <div className="la-citation-error" role="alert">
+          <Icon name="alert-circle" size={16} color="var(--state-warning)" />
+          <span className="la-citation-error-message">{workflowError}</span>
+          <Btn sm icon="settings" onClick={() => setScreen("settings")}>Provider settings</Btn>
+          <button type="button" className="la-iconbtn" title="Dismiss workflow error" onClick={() => setWorkflowError(null)}><Icon name="x" size={15} /></button>
+        </div>
+      ) : null}
       {citationError ? (
         <div className="la-citation-error" role="alert">
           <Icon name="alert-circle" size={16} color="var(--state-warning)" />
@@ -1062,9 +1030,7 @@ function App() {
             onProviderChange={changeProviderSelection}
             onModelChange={setSelectedModel}
             onUpdateProvider={updateProvider}
-            onConnectProvider={connectProvider}
             driverConnection={driverConnection}
-            onRefreshDriver={refreshDriver}
             onSyncDriver={syncDriver}
             status={status}
           />
@@ -3800,134 +3766,7 @@ function SearchScreen({ papers, onOpenPaper }: { papers: UiPaper[]; onOpenPaper:
   );
 }
 
-type ProviderSettingsPatch = { enabled?: boolean; connected?: boolean; command?: string; defaultModel?: string | null; customModels?: string[] };
-type ProviderCardProps = {
-  provider: AgentProvider;
-  onUpdateProvider: (providerId: string, patch: ProviderSettingsPatch) => Promise<void>;
-  onConnectProvider: (providerId: string) => Promise<void>;
-  onRefreshDriver: () => Promise<DriverConnection>;
-};
-function ProviderCard(props: ProviderCardProps) {
-  return props.provider.driver ? <DriverProviderCard {...props} /> : <LocalProviderCard {...props} />;
-}
-function LocalProviderCard({ provider, onUpdateProvider, onConnectProvider }: ProviderCardProps) {
-  const [error, setError] = useState<string | null>(null);
-  const perform = (action: () => Promise<void>) => { setError(null); void action().catch(() => setError("Could not update provider settings. Check the connection and try again.")); };
-  const [open, setOpen] = useState(provider.id === "gemini" || provider.id === "claude");
-  const [enabled, setEnabled] = useState(provider.enabled);
-  const [command, setCommand] = useState(provider.command);
-  const [defaultModel, setDefaultModel] = useState(provider.defaultModel ?? "");
-  const statusKind = !provider.installed ? "err" : provider.connected || provider.authStatus === "authenticated" ? "ok" : "warn";
-  const statusText = !provider.installed ? "Not installed" : provider.connected || provider.authStatus === "authenticated" ? "Connected" : "Auth required";
-  useEffect(() => {
-    setEnabled(provider.enabled);
-    setCommand(provider.command);
-    setDefaultModel(provider.defaultModel ?? "");
-  }, [provider]);
-  return (
-    <div className="la-provider">
-      <div className="phead">
-        <div className="picon"><Icon name="terminal" size={19} /></div>
-        <div className="pinfo">
-          <div className="pname">
-            {provider.label}
-            <Badge variant={statusKind === "ok" ? "success" : statusKind === "warn" ? "warning" : "error"} dot={statusKind === "ok" ? "var(--state-success)" : statusKind === "warn" ? "var(--state-warning)" : "var(--state-error)"}>{statusText}</Badge>
-            {!provider.installed ? <Badge variant="outline">missing</Badge> : null}
-          </div>
-          <div className="pstatus">
-            <span><Icon name="git-branch" size={11} style={{ verticalAlign: "-2px", marginRight: 3 }} />v{provider.version ?? "unknown"}</span>
-            <span className="mono">{provider.command}</span>
-          </div>
-        </div>
-        <Toggle on={enabled} onClick={() => setEnabled((current) => !current)} />
-        <button type="button" className="la-iconbtn" onClick={() => setOpen((current) => !current)} title="Configure"><Icon name={open ? "chevron-up" : "chevron-down"} size={16} /></button>
-      </div>
-      <div className={`pbody${open ? "" : " collapsed"}`}>
-        <div className="la-fieldgroup">
-          <label>Command path</label>
-          <div className="la-field" style={{ padding: "7px 10px" }}><Icon name="terminal" size={14} /><input className="mono" value={command} onChange={(event) => setCommand(event.currentTarget.value)} style={{ fontSize: 12 }} /></div>
-        </div>
-        <div className="la-fieldgroup">
-          <label>Default model</label>
-          <div className="la-field" style={{ padding: "7px 10px" }}><Icon name="cpu" size={14} color="var(--accent-soft)" /><input className="mono" value={defaultModel} onChange={(event) => setDefaultModel(event.currentTarget.value)} placeholder="CLI default" style={{ fontSize: 12 }} /></div>
-        </div>
-        <div className="la-fieldgroup full">
-          <label>Models</label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-            {provider.models.length ? provider.models.map((model) => <span key={model} className="la-tag mono" style={{ fontSize: 11 }}>{model}<Icon name="x" size={11} className="x" /></span>) : <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>none configured</span>}
-            <span className="la-tag"><Icon name="plus" size={11} />add model</span>
-          </div>
-        </div>
-      </div>
-      {error ? <p role="alert">{error}</p> : null}
-      <div className="pfoot">
-        <span style={{ display: "flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--text-muted)" }}>
-          <Icon name="info" size={12} />{provider.connectCommand ?? "CLI provider harness"}
-        </span>
-        <span className="spacer" />
-        <Btn variant="ghost" sm icon="refresh-cw" onClick={() => perform(() => onUpdateProvider(provider.id, {}))}>Refresh status</Btn>
-        {provider.connected ? <Btn variant="ghost" sm icon="log-out">Disconnect</Btn> : <Btn variant="primary" sm icon="key-round" onClick={() => perform(() => onConnectProvider(provider.id))}>Connect / Auth</Btn>}
-        <Btn variant="deep" sm icon="save" onClick={() => perform(() => onUpdateProvider(provider.id, { enabled, command, defaultModel: defaultModel.trim() || null }))}>Save</Btn>
-      </div>
-    </div>
-  );
-}
-
-function DriverProviderCard({ provider, onUpdateProvider, onConnectProvider, onRefreshDriver }: ProviderCardProps) {
-  const driver = provider.driver!;
-  const catalogOnly = driver.restrictedModels && provider.models.length === 0;
-  const reportedModels = [...new Set([...(driver.modelCatalog?.models ?? []), ...provider.models])];
-  const [model, setModel] = useState(provider.defaultModel ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setModel(provider.defaultModel ?? ""); }, [provider.defaultModel]);
-  const validModel = Boolean(model.trim()) && (!driver.restrictedModels || provider.models.includes(model));
-  const action = async (operation: () => Promise<unknown>) => {
-    setBusy(true); setError(null);
-    try { await operation(); } catch (error) { setError(error instanceof Error ? error.message : "The settings request failed."); }
-    finally { setBusy(false); }
-  };
-  const save = () => onUpdateProvider(provider.id, { defaultModel: model.trim(),
-    ...(!driver.restrictedModels ? { customModels: [...new Set([...provider.customModels, model.trim()])] } : {}) });
-  const status = !driver.available ? "Unavailable" : catalogOnly ? "Catalog only" : provider.authStatus === "authenticated" ? "Ready" : "Authentication unverified";
-  return <section className="la-provider" aria-label={provider.label}>
-    <div className="phead">
-      <div className="picon" aria-hidden="true">{driver.iconText}</div>
-      <div className="pinfo">
-        <div className="pname">{provider.label}<Badge variant={driver.available && provider.authStatus === "authenticated" ? "success" : "warning"}>{status}</Badge><Badge variant="outline">{provider.enabled ? "Enabled" : "Disabled"}</Badge></div>
-        <div className="pstatus"><span className="mono">{driver.instanceId}</span><span>{driver.authMode === "cli-session" ? "CLI session" : driver.authMode === "api-key" ? "API account" : driver.authMode}</span><span>{driver.accountLabel}</span></div>
-      </div>
-    </div>
-    <div className="pbody">
-      <div className="la-fieldgroup full"><p role={!driver.available ? "alert" : undefined} style={{ margin: 0, font: "var(--text-caption)", color: "var(--text-secondary)" }}>{driver.message}</p></div>
-      <div className="la-fieldgroup full">
-        <label htmlFor={`model-${provider.id}`}>Default model</label>
-        {driver.restrictedModels ? <Select id={`model-${provider.id}`} label={`Model for ${driver.instanceId}`} value={model} disabled={busy || catalogOnly} onChange={setModel} options={[
-          { value: "", label: catalogOnly ? "No models permitted by host" : "Select a permitted model" },
-          ...(model && !provider.models.includes(model) ? [{ value: model, label: model, disabled: true, detail: "No longer permitted" }] : []),
-          ...provider.models.map((value) => ({ value, label: value })),
-        ]} /> : <div className="la-field"><input id={`model-${provider.id}`} aria-label={`Model for ${driver.instanceId}`} value={model} disabled={busy} onChange={(event) => setModel(event.currentTarget.value)} placeholder="Enter an explicit model ID" /></div>}
-        {!driver.restrictedModels ? <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>The host does not publish a model allowlist. Enter the exact model you intend to use.</span> : null}
-      </div>
-      {driver.modelCatalog && <div className="la-fieldgroup full driver-model-catalog">
-        <div className="driver-model-catalog-heading"><strong>Reported models ({reportedModels.length})</strong><span>{driver.modelCatalog.source} catalog · {driver.modelCatalog.complete ? "Inventory complete" : "Partial inventory"}</span></div>
-        <ul aria-label={`Reported models for ${driver.instanceId}`}>
-          {reportedModels.map((id) => <li key={id}><code>{id}</code><span>{!driver.restrictedModels ? "Permission unreported" : provider.models.includes(id) ? "Host permitted" : "Not permitted"}</span></li>)}
-        </ul>
-        {!reportedModels.length && <span>No model inventory reported.</span>}
-        <span>Inventory is not verification of account access or generation.</span>
-      </div>}
-      {error ? <p role="alert" className="la-fieldgroup full">{error}</p> : null}
-    </div>
-    <div className="pfoot">
-      <span style={{ font: "var(--text-caption)", color: "var(--text-muted)" }}>{provider.lastCheckedAt ? `Checked ${new Date(provider.lastCheckedAt).toLocaleTimeString()}` : "Not checked"}</span><span className="spacer" />
-      <Btn sm icon="refresh-cw" disabled={busy} onClick={() => { void action(onRefreshDriver); }}>Refresh status</Btn>
-      <Btn sm icon="save" disabled={busy || !validModel} onClick={() => { void action(save); }}>Save model</Btn>
-      {provider.enabled ? <Btn sm icon="log-out" disabled={busy} onClick={() => { void action(() => onUpdateProvider(provider.id, { enabled: false, connected: false })); }}>Disable</Btn>
-        : <Btn variant="primary" sm icon="link" disabled={busy || !driver.available || !validModel} onClick={() => { void action(async () => { await save(); await onConnectProvider(provider.id); }); }}>Enable provider</Btn>}
-    </div>
-  </section>;
-}
+type ProviderSettingsPatch = { enabled?: boolean; connected?: boolean; defaultModel?: string | null; customModels?: string[] };
 
 function SettingsScreen({
   theme,
@@ -3938,9 +3777,7 @@ function SettingsScreen({
   onProviderChange,
   onModelChange,
   onUpdateProvider,
-  onConnectProvider,
   driverConnection,
-  onRefreshDriver,
   onSyncDriver,
   status
 }: {
@@ -3951,10 +3788,8 @@ function SettingsScreen({
   selectedModel: string | null;
   onProviderChange: (providerId: string) => void;
   onModelChange: (model: string | null) => void;
-  onUpdateProvider: ProviderCardProps["onUpdateProvider"];
-  onConnectProvider: ProviderCardProps["onConnectProvider"];
+  onUpdateProvider: (providerId: string, patch: ProviderSettingsPatch) => Promise<void>;
   driverConnection: DriverConnection | null;
-  onRefreshDriver: () => Promise<DriverConnection>;
   onSyncDriver: () => Promise<void>;
   status: AppStatus | null;
 }) {
@@ -3981,7 +3816,6 @@ function SettingsScreen({
               <DriverProviderPanel theme={theme} providers={providers} connection={driverConnection}
                 onSync={onSyncDriver} onUpdate={onUpdateProvider}
                 onSelect={(provider, model) => { onProviderChange(provider); onModelChange(model); }} />
-              <details className="driver-legacy"><summary>Legacy local CLI adapters</summary>{providers.filter((provider) => !provider.id.startsWith("driver.")).map((provider) => <ProviderCard key={provider.id} provider={provider} onUpdateProvider={onUpdateProvider} onConnectProvider={onConnectProvider} onRefreshDriver={onRefreshDriver} />)}</details>
             </div>
           ) : null}
           {section === "defaults" ? (
@@ -4033,12 +3867,11 @@ function SettingsScreen({
 
 function PresetsScreen() {
   const presets = [
-    ["Screening Preset", "list-checks", "Title/abstract screening with include, exclude, maybe and reasons tied to RQs.", "Claude Code", true],
-    ["Relevance Tagging Preset", "tag", "Score papers against active project research questions and propose reviewable tags.", "Claude Code", true],
-    ["Metadata Extraction Preset", "list", "Extract venue, year, DOI and authors from PDF and propose canonical metadata patches.", "Codex", true],
-    ["Comparison Preset", "columns-3", "Build a comparison matrix across selected papers on method, dataset, metric and result.", "Claude Code", false],
-    ["Synthesis Note Preset", "notebook-pen", "Draft a cited synthesis note for a research question from the evidence stack.", "Gemini CLI", false],
-    ["Custom Command Preset", "square-terminal", "Wrap a shell agent harness with inputs, artifacts and evidence refs.", "Custom", false]
+    ["Screening Preset", "list-checks", "Title/abstract screening with include, exclude, maybe and reasons tied to RQs.", "Selected Driver", true],
+    ["Relevance Tagging Preset", "tag", "Score papers against active project research questions and propose reviewable tags.", "Selected Driver", true],
+    ["Metadata Extraction Preset", "list", "Extract venue, year, DOI and authors from PDF and propose canonical metadata patches.", "Selected Driver", true],
+    ["Comparison Preset", "columns-3", "Build a comparison matrix across selected papers on method, dataset, metric and result.", "Selected Driver", false],
+    ["Synthesis Note Preset", "notebook-pen", "Draft a cited synthesis note for a research question from the evidence stack.", "Selected Driver", false]
   ] as const;
   return (
     <div className="la-screen">

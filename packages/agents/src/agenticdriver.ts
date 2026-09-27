@@ -15,6 +15,7 @@ import {
 } from "@litagent/contracts";
 import {
   AgentProviderCatalog,
+  requireDriverProvider,
   createRunEvent,
   type ProviderAdapter,
   type ProviderDefinition,
@@ -50,7 +51,6 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
   private visible = new Set<string>();
   private pendingRefresh: Promise<void> | undefined;
   private connection: DriverConnection;
-  private localProviders: AgentProvider[] | undefined;
   private discoverInstances: (() => Promise<ProviderInfo[]>) | undefined;
 
   constructor(
@@ -60,7 +60,7 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     connection?: DriverConnection,
     private identity?: DriverHostIdentity,
   ) {
-    super(undefined, settings);
+    super();
     this.driverSettings = settings;
     this.replaceInventory(instances);
     this.connection = connection ?? {
@@ -158,22 +158,11 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       });
     return this.pendingRefresh;
   }
-  refreshLocalProviders(): void {
-    this.localProviders = undefined;
-  }
   override setSettings(settings: Record<string, AgentProviderSettings>): void {
-    const local = (value: Record<string, AgentProviderSettings>) =>
-      JSON.stringify(
-        Object.entries(value).filter(([id]) => !id.startsWith("driver.")),
-      );
-    if (local(settings) !== local(this.driverSettings))
-      this.refreshLocalProviders();
-    super.setSettings(settings);
     this.driverSettings = settings;
   }
   override discover(): AgentProvider[] {
-    this.localProviders ??= super.discover();
-    return [...this.localProviders, ...this.discoverDrivers()];
+    return this.discoverDrivers();
   }
   discoverDrivers(): AgentProvider[] {
     const ids = new Set([
@@ -229,7 +218,6 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     return AgentProviderSchema.parse({
       id: `${this.prefix}${id}`,
       label: `${info?.name ?? id}${this.identity ? ` - ${this.identity.label}` : ""} (AgenticDriver)`,
-      command: "",
       installed: true,
       enabled: settings?.enabled ?? false,
       connected: available && (settings?.connected ?? false),
@@ -244,7 +232,6 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       customModels:
         info?.models === undefined ? (settings?.customModels ?? []) : [],
       version: "agenticdriver.v1",
-      connectCommand: null,
       lastCheckedAt: this.connection.checkedAt,
       driver: {
         instanceId: id,
@@ -270,13 +257,8 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
     providerId: string,
     patch: AgentProviderSettingsPatch,
   ): void {
-    if (!providerId.startsWith("driver.")) return;
+    requireDriverProvider(providerId);
     const provider = this.describeInstance(providerId.slice(this.prefix.length));
-    if (patch.command !== undefined && patch.command !== "")
-      throw new DriverSettingsError(
-        "INVALID_SETTINGS",
-        "Driver instances do not accept local command paths.",
-      );
     if (patch.enabled && !provider.driver!.available)
       throw new DriverSettingsError(
         "PROVIDER_UNAVAILABLE",
@@ -295,25 +277,20 @@ export class AgenticDriverCatalog extends AgentProviderCatalog {
       );
   }
   override definition(providerId: string): ProviderDefinition | null {
-    if (!providerId.startsWith("driver.")) return super.definition(providerId);
+    if (!providerId.startsWith("driver.")) return null;
     // Even a removed/unknown driver ID stays an explicit driver selection. Workflows
     // must not silently fall through to their local heuristic or another provider.
     const provider = this.describeInstance(providerId.slice(this.prefix.length));
     return {
       id: providerId,
       label: provider.label,
-      command: "",
-      versionArgs: [],
       capabilities: provider.capabilities,
-      runArgs: () => [],
-      connectCommand: "",
       models: provider.models,
       defaultModel: provider.defaultModel,
     };
   }
   override createAdapter(providerId: string): ProviderAdapter | null {
-    if (!providerId.startsWith("driver."))
-      return super.createAdapter(providerId);
+    requireDriverProvider(providerId);
     const id = providerId.slice(this.prefix.length);
     return new AgenticDriverAdapter(
       this.describeInstance(id),
@@ -332,13 +309,12 @@ export class AgenticDriverRegistry extends AgentProviderCatalog {
   private readonly hosts = new Map<string, AgenticDriverCatalog>();
   private readonly active = new Set<string>();
   private savedSettings: Record<string, AgentProviderSettings>;
-  private localProviders: AgentProvider[] | undefined;
   private readonly missing = new AgenticDriverCatalog(null, []);
   private legacyId: string | undefined;
   private configurationError = false;
 
   constructor(settings: Record<string, AgentProviderSettings> = {}) {
-    super(undefined, settings);
+    super();
     this.savedSettings = settings;
     this.missing.setSettings(settings);
   }
@@ -380,31 +356,28 @@ export class AgenticDriverRegistry extends AgentProviderCatalog {
     if (id) { await this.hosts.get(id)?.refresh(); return; }
     await Promise.all([...this.active].map((key) => this.hosts.get(key)!.refresh()));
   }
-  refreshLocalProviders(): void { this.localProviders = undefined; }
   override setSettings(settings: Record<string, AgentProviderSettings>): void {
-    const local = (value: Record<string, AgentProviderSettings>) => JSON.stringify(Object.entries(value).filter(([id]) => !id.startsWith("driver.")));
-    if (local(settings) !== local(this.savedSettings)) this.refreshLocalProviders();
-    super.setSettings(settings);
     this.savedSettings = settings;
     this.missing.setSettings(settings);
     for (const host of this.hosts.values()) host.setSettings(settings);
   }
   override discover(): AgentProvider[] {
-    this.localProviders ??= super.discover();
     const entries = [...this.hosts.values()].flatMap((host) => host.discoverDrivers());
     const known = new Set(entries.map((entry) => entry.id));
     // Removed connection selections stay unavailable; they are never rerouted.
     const orphaned = Object.keys(this.savedSettings).filter((id) => id.startsWith("driver.") && !known.has(id)).map((id) => this.missing.describeProvider(id));
-    return [...this.localProviders, ...entries, ...orphaned];
+    return [...entries, ...orphaned];
   }
   validateSettings(providerId: string, patch: AgentProviderSettingsPatch): void {
-    if (providerId.startsWith("driver.")) this.owner(providerId).validateSettings(providerId, patch);
+    requireDriverProvider(providerId);
+    this.owner(providerId).validateSettings(providerId, patch);
   }
   override definition(providerId: string): ProviderDefinition | null {
-    return providerId.startsWith("driver.") ? this.owner(providerId).definition(providerId) : super.definition(providerId);
+    return providerId.startsWith("driver.") ? this.owner(providerId).definition(providerId) : null;
   }
   override createAdapter(providerId: string): ProviderAdapter | null {
-    return providerId.startsWith("driver.") ? this.owner(providerId).createAdapter(providerId) : super.createAdapter(providerId);
+    requireDriverProvider(providerId);
+    return this.owner(providerId).createAdapter(providerId);
   }
 }
 
@@ -557,7 +530,6 @@ export class AgenticDriverAdapter implements ProviderAdapter {
       cwd: input.cwd,
       prompt: input.prompt,
       status: "starting",
-      process: null,
       events,
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

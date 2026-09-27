@@ -1,24 +1,22 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgenticClient } from "@agenticdriver/sdk/client";
 import { AgenticDriver, DriverError } from "@agenticdriver/sdk";
 import { mockProvider } from "@agenticdriver/sdk/providers";
 import { serve } from "@agenticdriver/sdk/server";
-import { AgentProviderSchema } from "@litagent/contracts";
+import { AgentProviderSchema, AgentProviderSettingsPatchSchema } from "@litagent/contracts";
 import {
   AgenticDriverAdapter,
   AgenticDriverCatalog,
   agenticDriverCatalogFromEnvironment,
 } from "./agenticdriver";
-import { AgentHarness, AgentProviderCatalog, AgentProviderSettingsStore } from "./index";
+import { AgentHarness, AgentProviderSettingsStore } from "./index";
 
 const token = "litagent-driver-test-token-with-32-characters";
 const directories: string[] = [];
 let close: (() => Promise<void>) | undefined;
-// Remote-adapter fixtures must not probe the machine's installed CLI accounts.
-beforeEach(() => { vi.spyOn(AgentProviderCatalog.prototype, "discover").mockReturnValue([]); });
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -35,7 +33,6 @@ function workspace() {
 const provider = AgentProviderSchema.parse({
   id: "driver.mock",
   label: "Driver mock",
-  command: "",
   installed: true,
   enabled: true,
   connected: true,
@@ -215,7 +212,7 @@ describe("AgenticDriver integration", () => {
       }),
     ).toThrow(/permitted/);
     expect(() =>
-      catalog.validateSettings(instance.id, { command: "/bin/sh" }),
+      AgentProviderSettingsPatchSchema.parse({ command: "/bin/sh" }),
     ).toThrow(/command/);
   }, 15_000); // Discovery has a bounded 10s transport watchdog; allow loaded CI to finish it.
 
@@ -228,7 +225,7 @@ describe("AgenticDriver integration", () => {
     vi.spyOn(client, "protocol").mockResolvedValue({ protocol: "agenticdriver", version: "1.0", supportedVersions: ["1.0"], features: [] });
     vi.spyOn(client, "providers").mockImplementation(async () => [info]);
     const catalog = new AgenticDriverCatalog(client, [info], {
-      "driver.mock": { providerId: "driver.mock", command: "", enabled: true, connected: true, defaultModel: "demo", customModels: [], lastCheckedAt: null, updatedAt: new Date().toISOString() },
+      "driver.mock": { providerId: "driver.mock", enabled: true, connected: true, defaultModel: "demo", customModels: [], lastCheckedAt: null, updatedAt: new Date().toISOString() },
     });
     await catalog.refresh();
     const instance = catalog.discover().find((p) => p.id === "driver.mock")!;

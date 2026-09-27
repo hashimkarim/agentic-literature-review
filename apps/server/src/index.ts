@@ -27,7 +27,7 @@ import {
   UpdateAnnotationRequestSchema,
   UpdateNoteRequestSchema
 } from "@litagent/contracts";
-import { AgentHarness, AgentProviderSettingsStore } from "@litagent/agents";
+import { AgentHarness, AgentProviderSettingsStore, ProviderSelectionError, requireDriverProvider } from "@litagent/agents";
 import { AgenticDriverRegistry, DriverSettingsError } from "@litagent/agents/agenticdriver";
 import { SearchIndex } from "@litagent/indexer";
 import { CitationSourceChangedError, DEFAULT_REPO_ROOT, LitAgentRepository, ManuscriptStore } from "@litagent/library";
@@ -285,7 +285,7 @@ app.post(
     const project = repo.createProject({
       name: String(req.body.name ?? "Untitled project"),
       description: String(req.body.description ?? ""),
-      defaultProvider: String(req.body.defaultProvider ?? "codex"),
+      defaultProvider: String(req.body.defaultProvider ?? ""),
       researchQuestion: typeof req.body.researchQuestion === "string" ? req.body.researchQuestion : undefined
     });
     res.status(201).json(repo.getProjectDetails(project.id));
@@ -800,7 +800,6 @@ app.get(
 app.get(
   "/api/provider-status",
   asyncHandler((_req, res) => {
-    providers.refreshLocalProviders();
     res.json(refreshProviders());
   })
 );
@@ -838,44 +837,17 @@ app.patch(
   "/api/settings/providers/:providerId",
   asyncHandler((req, res) => {
     const providerId = routeParam(req, "providerId");
+    requireDriverProvider(providerId);
     const definition = providers.definition(providerId);
     if (!definition) {
       res.status(404).json({ error: `Unknown provider: ${providerId}` });
       return;
     }
     const patch = AgentProviderSettingsPatchSchema.parse(req.body);
-    if (providerId.startsWith("driver.")) {
-      providers.validateSettings(providerId, patch);
-      if (patch.connected === false) patch.enabled = false;
-      if (patch.enabled !== undefined) patch.connected = patch.enabled;
-    } else {
-      providers.refreshLocalProviders();
-    }
+    providers.validateSettings(providerId, patch);
+    if (patch.connected === false) patch.enabled = false;
+    if (patch.enabled !== undefined) patch.connected = patch.enabled;
     providerSettings.patch(providerId, patch, [definition]);
-    res.json(refreshProviders());
-  })
-);
-
-app.post(
-  "/api/settings/providers/:providerId/connect",
-  asyncHandler(async (req, res) => {
-    const providerId = routeParam(req, "providerId");
-    if (providerId.startsWith("driver.")) await providers.refresh();
-    else providers.refreshLocalProviders();
-    const provider = refreshProviders().find((candidate) => candidate.id === providerId);
-    if (!provider) {
-      res.status(404).json({ error: `Unknown provider: ${providerId}` });
-      return;
-    }
-    if (!provider.installed) {
-      res.status(400).json({ error: `${provider.label} command is not installed: ${provider.command}` });
-      return;
-    }
-    if (providerId.startsWith("driver.")) providers.validateSettings(providerId, { enabled: true });
-    providerSettings.patch(providerId, {
-      enabled: true,
-      connected: provider.authStatus !== "unavailable"
-    }, [providers.definition(providerId)!]);
     res.json(refreshProviders());
   })
 );
@@ -889,6 +861,10 @@ if (fs.existsSync(webDist)) {
 }
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof ProviderSelectionError) {
+    res.status(409).json({ error: error.message, code: error.code });
+    return;
+  }
   if (error instanceof DriverSettingsError) {
     res.status(400).json({ error: error.message, code: error.code });
     return;

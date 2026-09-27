@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
 
-import { AgentHarness, AgentProviderCatalog, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
+import { AgentHarness, AgentProviderCatalog, requireDriverProvider, type AgentProviderSettingsStore, type ProviderRunResult } from "@litagent/agents";
 import {
   ClearQaThreadRequestSchema,
   type ClearQaThreadRequestInput,
@@ -2077,6 +2077,7 @@ export class WorkflowEngine {
 
   async answerQuestionWithProvider(input: QaRequestInput): Promise<QaResponse> {
     const parsed = QaRequestSchema.parse(input);
+    requireDriverProvider(parsed.providerId);
     const scope = resolveQaScope(this.repo, parsed);
     const context = buildQaMarkdownContext(this.repo, scope);
     const thread = this.readQaThread(parsed);
@@ -2329,8 +2330,13 @@ export class WorkflowEngine {
 
   startWorkflow(input: WorkflowStartRequest, reservedRunId?: string): WorkflowRun {
     const parsed = WorkflowStartRequestSchema.parse(input);
+    const localOperation = parsed.type === "pdf-markdown-processing" || parsed.type === "bib-export";
+    if (localOperation) { parsed.providerId = "local"; parsed.model = null; }
     if (parsed.options.tools || parsed.options.requiredTools) throw new Error("Tool-enabled workflows require a qualified application tool bridge; no request was dispatched.");
-    if (parsed.providerId !== "local-heuristic" && !this.isProviderBackedRun(parsed.providerId)) throw new Error("Selected provider is unavailable; no fallback was selected.");
+    if (!localOperation && parsed.providerId !== "local-heuristic") {
+      requireDriverProvider(parsed.providerId);
+      if (!this.isProviderBackedRun(parsed.providerId)) throw new Error("Selected provider is unavailable; no fallback was selected.");
+    }
     const runId = reservedRunId ?? createId("run");
     if (!/^run_[A-Za-z0-9_-]+$/.test(runId)) throw new Error("Invalid reserved workflow ID.");
     if (fs.existsSync(this.repo.resolve(`workflows/${runId}.run.json`))) throw new Error("Workflow ID already dispatched; reconcile its existing result instead of replaying.");

@@ -1,9 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { AgentHarness, AgentProviderCatalog, type ProviderDefinition } from "@litagent/agents";
+import { AgentHarness } from "@litagent/agents";
+import { AgenticDriverCatalog } from "@litagent/agents/agenticdriver";
+import { AgentProviderSettingsSchema } from "@litagent/contracts";
+import { AgenticDriver } from "@agenticdriver/sdk";
+import { AgenticClient } from "@agenticdriver/sdk/client";
+import { mockProvider } from "@agenticdriver/sdk/providers";
+import { serve } from "@agenticdriver/sdk/server";
 import { QaResponseSchema, type ResearchRecordKind } from "@litagent/contracts";
 import { SearchIndex } from "@litagent/indexer";
 import { LitAgentRepository } from "@litagent/library";
@@ -11,11 +17,26 @@ import { LitAgentRepository } from "@litagent/library";
 import { WorkflowEngine, assessMarkdownReadiness, discoverPdfInputs, markerRuntimeStatus, processPdfInbox, processPdfInboxAsync, processPaperSetWithMarker, type ConversionResult } from "./index";
 import type { ProviderQaDraft } from "./qa-grounding";
 
-function qaProviderArgs(prompt: string, claims: ProviderQaDraft["claims"], supported = true): string[] {
+const driverClosers: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const close of driverClosers.splice(0)) await close(); });
+
+async function driverFixture(instance: string, reply: (prompt: string) => string) {
+  const mock = mockProvider((request) => ({ text: reply(request.messages.at(-1)?.content ?? "") }));
+  const adapter = { ...mock, info: { ...mock.info, id: instance } };
+  const token = "workflow-fixture-token-with-32-characters";
+  const server = await serve(new AgenticDriver({ providers: [adapter] }), { port: 0, tokens: [{ token, subject: "workflow-fixture", providers: [instance] }] });
+  driverClosers.push(server.close);
+  const client = new AgenticClient({ url: server.url, token });
+  const id = `driver.${instance}`;
+  const settings = AgentProviderSettingsSchema.parse({ providerId: id, enabled: true, defaultModel: "demo", updatedAt: new Date().toISOString() });
+  return { id, catalog: new AgenticDriverCatalog(client, await client.providers(), { [id]: settings }) };
+}
+
+function qaProviderReply(prompt: string, claims: ProviderQaDraft["claims"], supported = true): string {
   const reply = prompt.startsWith("LitAgent Q&A source review")
     ? { supported, reason: supported ? "The supplied sources support the answer." : "The source is about a different subject.", claims: claims.map((_, index) => ({ index, supported, reason: "Compared to the cited passage." })) }
     : { status: claims.length ? "answered" : "not_found", claims };
-  return ["-e", `process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(${JSON.stringify(JSON.stringify(reply))}))`];
+  return JSON.stringify(reply);
 }
 
 function makeRepo(): LitAgentRepository {
@@ -318,21 +339,10 @@ describe("relevance proposals", () => {
         evidencePassageIds: [passages[0]?.id]
       }]
     });
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-relevance",
-      label: "Fake Relevance Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
-      promptDelivery: "stdin"
-    };
+    const fakeProvider = await driverFixture("fake-relevance", () => providerOutput);
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
     const run = engine.startWorkflow({
       type: "relevance-tagging",
@@ -412,21 +422,10 @@ describe("metadata proposals", () => {
         }]
       }]
     });
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-metadata",
-      label: "Fake Metadata Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
-      promptDelivery: "stdin"
-    };
+    const fakeProvider = await driverFixture("fake-metadata", () => providerOutput);
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
     const run = engine.startWorkflow({
       type: "metadata-extraction",
@@ -523,21 +522,10 @@ describe("structured research findings", () => {
         }]
       }]
     });
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-findings",
-      label: "Fake Findings Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
-      promptDelivery: "stdin"
-    };
+    const fakeProvider = await driverFixture("fake-findings", () => providerOutput);
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
     const run = engine.startWorkflow({
       type: "key-findings",
@@ -687,20 +675,9 @@ describe("paper comparison artifacts", () => {
         }))
       }))
     });
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-comparison",
-      label: "Fake Comparison Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
-      promptDelivery: "stdin"
-    };
+    const fakeProvider = await driverFixture("fake-comparison", () => providerOutput);
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
 
     const run = engine.startWorkflow({
@@ -785,19 +762,8 @@ describe("synthesis artifacts", () => {
         }]
       }]
     });
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-synthesis",
-      label: "Fake Synthesis Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: () => ["-e", `process.stdout.write(${JSON.stringify(providerOutput)})`],
-      promptDelivery: "stdin"
-    };
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+    const fakeProvider = await driverFixture("fake-synthesis", () => providerOutput);
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
     const run = engine.startWorkflow({
       type: "synthesis-note",
@@ -940,7 +906,7 @@ describe("RAG question answering", () => {
     index.close();
   });
 
-  it("can synthesize a cited answer with a selected CLI provider", async () => {
+  it("can synthesize a cited answer through the SDK adapter", async () => {
     const repo = makeRepo();
     const project = repo.createProject({ name: "Provider QA" });
     const imported = repo.importPaper({
@@ -953,28 +919,17 @@ describe("RAG question answering", () => {
     );
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const fakeProvider: ProviderDefinition = {
-      id: "fake",
-      label: "Fake Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: (prompt) => qaProviderArgs(prompt, [{
+    const fakeProvider = await driverFixture("fake", (prompt) => qaProviderReply(prompt, [{
         text: "Provider synthesis says low latency streaming inference improves reliability.",
         kind: "reported", passageIds: [repo.readPassages(imported.paper.id)[0]!.id]
-      }]),
-      promptDelivery: "stdin"
-    };
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+      }]));
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
 
     const answer = await engine.answerQuestionWithProvider({
       question: "What improves reliable mobile music analysis?",
       projectId: project.id,
-      providerId: "fake"
+      providerId: fakeProvider.id
     });
 
     expect(answer.status).toBe("answered");
@@ -1032,22 +987,11 @@ describe("RAG question answering", () => {
     );
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-follow-up",
-      label: "Fake Follow-up Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: (prompt) => qaProviderArgs(prompt, prompt.includes("What context is described?") ? [{
+    const fakeProvider = await driverFixture("fake-follow-up", (prompt) => qaProviderReply(prompt, prompt.includes("What context is described?") ? [{
         text: "Conversation context enables precise follow-up questions.", kind: "reported",
         passageIds: [repo.readPassages(imported.paper.id)[0]!.id]
-      }] : []),
-      promptDelivery: "stdin"
-    };
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+      }] : []));
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
     const first = engine.answerQuestion({
       question: "What context is described?",
@@ -1060,7 +1004,7 @@ describe("RAG question answering", () => {
       question: "What does that enable?",
       projectId: project.id,
       paperId: imported.paper.id,
-      providerId: "fake-follow-up"
+      providerId: fakeProvider.id
     });
 
     expect(followUp.status).toBe("answered");
@@ -1095,23 +1039,12 @@ describe("RAG question answering", () => {
     expect(trainingPassage).toBeTruthy();
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-inference",
-      label: "Fake Inference Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: (prompt) => qaProviderArgs(prompt,
+    const fakeProvider = await driverFixture("fake-inference", (prompt) => qaProviderReply(prompt,
         (prompt.startsWith("LitAgent Q&A source review") || prompt.includes("Reasonable source-grounded deductions are allowed and expected")) && !prompt.includes("Assistant: Not found in the selected sources.") ? [{
           text: "The model is likely offline/non-causal, not online. It uses connections both forwards and backwards in time and is trained on full sequences.",
           kind: "inference", passageIds: [approachPassage!.id, trainingPassage!.id]
-        }] : []),
-      promptDelivery: "stdin"
-    };
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+        }] : []));
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
     const earlierBase = engine.answerQuestion({
       question: "Does the paper report deployment latency?",
@@ -1188,24 +1121,13 @@ describe("RAG question answering", () => {
     expect(limitationPassage).toBeTruthy();
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-addressed-evidence",
-      label: "Fake Addressed Evidence Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: (prompt) => qaProviderArgs(prompt, prompt.includes("Summarize both findings") ? [
+    const fakeProvider = await driverFixture("fake-addressed-evidence", (prompt) => qaProviderReply(prompt, prompt.includes("Summarize both findings") ? [
         { text: "A transformer encoder classifies streaming audio frames with a score of 0.841.", kind: "reported", passageIds: [methodPassage!.id] },
         { text: "Battery consumption constrains mobile deployment.", kind: "reported", passageIds: [limitationPassage!.id] }
       ] : prompt.includes("limits mobile deployment") ? [
         { text: "Battery consumption constrains mobile deployment.", kind: "reported", passageIds: [limitationPassage!.id] }
-      ] : [{ text: "A transformer encoder classifies streaming audio frames.", kind: "reported", passageIds: [methodPassage!.id] }]),
-      promptDelivery: "stdin"
-    };
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+      ] : [{ text: "A transformer encoder classifies streaming audio frames.", kind: "reported", passageIds: [methodPassage!.id] }]));
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
 
     const methodAnswer = await engine.answerQuestionWithProvider({
@@ -1245,21 +1167,10 @@ describe("RAG question answering", () => {
     const passage = repo.readPassages(imported.paper.id)[0];
     const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
     index.rebuild(repo);
-    const fakeProvider: ProviderDefinition = {
-      id: "fake-unsupported-evidence",
-      label: "Fake Unsupported Evidence Agent",
-      command: process.execPath,
-      versionArgs: ["--version"],
-      capabilities: ["cli", "stream", "research"],
-      connectCommand: "node --version",
-      models: [],
-      defaultModel: null,
-      runArgs: (prompt) => qaProviderArgs(prompt, [{
+    const fakeProvider = await driverFixture("fake-unsupported-evidence", (prompt) => qaProviderReply(prompt, [{
         text: "Ocean temperature trends determine coastal erosion.", kind: "reported", passageIds: [passage!.id]
-      }], false),
-      promptDelivery: "stdin"
-    };
-    const catalog = new AgentProviderCatalog([fakeProvider]);
+      }], false));
+    const catalog = fakeProvider.catalog;
     const engine = new WorkflowEngine(repo, index, catalog, new AgentHarness({ catalog }));
 
     await expect(engine.answerQuestionWithProvider({

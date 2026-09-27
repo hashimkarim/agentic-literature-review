@@ -336,7 +336,6 @@ export const api = {
     body: {
       enabled?: boolean;
       connected?: boolean;
-      command?: string;
       defaultModel?: string | null;
       customModels?: string[];
     }
@@ -345,9 +344,5 @@ export const api = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
-    }),
-  connectProvider: (providerId: string) =>
-    request<AgentProvider[]>(`/api/settings/providers/${providerId}/connect`, {
-      method: "POST"
     })
 };
