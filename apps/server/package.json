@@ -10,7 +10,7 @@
     "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agenticdriver/sdk": "https://github.com/agenticdriver/agenticdriver/releases/download/v0.2.0-alpha.4/agenticdriver-sdk-0.2.0-alpha.4.tgz",
+    "@agenticdriver/sdk": "0.2.0-alpha.4",
     "@litagent/agents": "*",
     "@litagent/contracts": "*",
     "@litagent/indexer": "*",

@@ -81,3 +81,21 @@ alternative browser automation was substituted.
 These checks exercise browser/HTTP integration, not packaged Electron transport,
 remote SSH setup, device sign-in or new live model capabilities. The SDK's
 `connected:false` recovery contract requires no backend protocol migration.
+
+## Application CI And Registry Follow-Up
+
+The original independent adoption commit is
+`65edf8f026b5e9b232b914ad76224bdbab741e93` on `chat-reliability`.
+[Application run 36348690606](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36348690606)
+passed frozen installation, typecheck, tests and build on
+`prometheus-literature-01`, runner 2, job `108702970786`.
+
+On 2026-09-28 the three manifests moved from the GitHub URL to exact npm version
+`0.2.0-alpha.4`. The independently downloaded registry archive at
+<https://registry.npmjs.org/@agenticdriver/sdk/-/sdk-0.2.0-alpha.4.tgz>
+matches both hashes above; the lock retains that integrity. Earlier archive-pin
+and npm-unavailable statements describe the original acceptance date.
+The Settings save/reload, catalog, denied-execution and offline recovery checks
+above remain the application acceptance for these identical bytes; they were not
+replayed or represented as new browser checks. No shared service, credential,
+grant or saved user selection was changed, and no model call was made.

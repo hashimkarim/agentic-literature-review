@@ -289,10 +289,11 @@ for exact artifact identity, tests and native browser evidence.
 
 ## Public Alpha.4 Adoption
 
-All three owning manifests now pin `@agenticdriver/sdk` to the immutable public
-GitHub `v0.2.0-alpha.4` release archive. The package is version `0.2.0-alpha.4`;
-the archive's SHA-512 is locked in `bun.lock`. This is not a claim of npm registry
-publication. Provider-icons remains at its independent `v0.1.0-alpha.1` pin.
+All three owning manifests now pin the exact npm registry version
+`@agenticdriver/sdk@0.2.0-alpha.4`. On 2026-09-28 the registry archive was
+independently verified against the previously accepted public GitHub archive:
+its SHA-256 and locked SHA-512 are unchanged. Provider-icons remains at its
+independent `v0.1.0-alpha.1` pin. This changes package location, not runtime code.
 
 The shared panel hides stale provider/account controls after failed discovery.
 LitAgent also hides its app-owned enablement and pending model controls during
