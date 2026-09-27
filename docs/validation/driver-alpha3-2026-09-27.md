@@ -102,5 +102,15 @@ or library payload was sent.
 
 ## Application CI
 
-App-owned Prometheus validation is pending publication of this task commit; SDK
-CI is not treated as app acceptance. No hosted-compute workflow is enabled.
+- Application adoption commit: `6cd6ec4dcb71a2455394b7a63aded787496becb7`.
+- [Run 36321592089](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36321592089):
+  passed for that exact source, job `108626357356`, repository runner 2,
+  `prometheus-literature-01` (`self-hosted`, `linux`, `x64`, `prometheus-ci`).
+- Frozen install, typecheck, normal `bun run test --maxWorkers=2` and build all
+  passed. CI independently reports 290 passed / two skipped across 41 files.
+- Existing warnings remain: SQLite experimental status, the large Vite chunk,
+  and checkout's Node 20 action being run on Node 24. No failure was suppressed.
+
+SDK CI is not treated as app acceptance. No hosted-compute workflow is enabled.
+Only the four disposable acceptance process groups were stopped after browser
+checks; shared and regular services were left running.
