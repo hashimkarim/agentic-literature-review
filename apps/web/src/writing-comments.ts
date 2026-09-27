@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CreateManuscriptComment, ManuscriptCommentView, UpdateManuscriptComment } from "@litagent/contracts";
+import type { CreateManuscriptComment, ManuscriptCommentView, ManuscriptFile, UpdateManuscriptComment } from "@litagent/contracts";
 import { api } from "./api";
 
 export type CommentAction = UpdateManuscriptComment extends infer T ? T extends UpdateManuscriptComment ? Omit<T, "requestId" | "expectedVersion"> : never : never;
@@ -10,6 +10,7 @@ export function useWritingComments(id: string, revisions: string) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const sequence = useRef(0), inFlight = useRef(false);
+  const acceptanceRequests = useRef(new Map<string, string>());
   const refresh = useCallback(async () => {
     const request = ++sequence.current;
     try {
@@ -35,6 +36,17 @@ export function useWritingComments(id: string, revisions: string) {
   }
   return { threads, loading, busy, error, refresh,
     create: (input: CreateManuscriptComment) => save(() => api.createManuscriptComment(id, input)),
-    update: (thread: ManuscriptCommentView, action: CommentAction) => save(() => api.updateManuscriptComment(id, thread.id, { ...action, expectedVersion: thread.version, requestId: crypto.randomUUID() }))
+    update: (thread: ManuscriptCommentView, action: CommentAction) => save(() => api.updateManuscriptComment(id, thread.id, { ...action, expectedVersion: thread.version, requestId: crypto.randomUUID() })),
+    accept: async (thread: ManuscriptCommentView, expectedRevision: string) => {
+      const key = `${thread.id}:${thread.version}:${expectedRevision}`;
+      const requestId = acceptanceRequests.current.get(key) ?? crypto.randomUUID();
+      acceptanceRequests.current.set(key, requestId);
+      let file: ManuscriptFile | undefined;
+      await save(async () => {
+        const result = await api.acceptManuscriptSuggestion(id, thread.id, { expectedRevision, expectedVersion: thread.version, requestId });
+        file = result.file; return result.comment;
+      });
+      return file!;
+    }
   };
 }

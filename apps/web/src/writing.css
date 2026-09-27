@@ -217,6 +217,18 @@
 .writing-comment-compose blockquote { margin:8px 0; padding:4px 8px; border-left:2px solid var(--state-warning); max-height:64px; overflow:auto; overflow-wrap:anywhere; font-size:12px; color:var(--text-secondary); white-space:pre-wrap; }
 .writing-comment-path { display:block; font-size:11px; overflow-wrap:anywhere; color:var(--text-muted); }
 .writing-comment-compose footer span { flex:1; font-size:11px; color:var(--text-muted); }
+.writing-review-mode { margin:10px 0; }
+.writing-review-mode button { flex:1; justify-content:center; min-width:0; font-size:12px; }
+.writing-review-mode button[aria-pressed="true"] { background:var(--surface-selection); color:var(--text-primary); border-color:var(--accent-primary); }
+.writing-suggestion-input { display:grid; gap:5px; margin:10px 0; font-size:12px; color:var(--text-secondary); }
+.writing-suggestion-input textarea { font-family:var(--font-mono); }
+.writing-suggestion { min-width:0; padding:8px 0; }
+.writing-suggestion header { display:flex; align-items:center; gap:8px; }
+.writing-suggestion header strong { flex:1; min-width:0; font-size:12px; }
+.writing-suggestion pre { margin:8px 0; padding:5px 8px; max-height:180px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-family:var(--font-mono); font-size:12px; line-height:1.6; color:var(--text-primary); border-left:2px solid var(--state-success); background:transparent; }
+.writing-suggestion pre.writing-suggestion-deletion { border-left-color:var(--state-error); font-family:inherit; font-style:italic; }
+.writing-suggestion-notice { margin:8px 0; font-size:12px; line-height:1.5; color:var(--text-secondary); }
+.writing-suggestion footer { flex-wrap:wrap; }
 .writing-comment-error { margin:8px 12px; padding:8px; color:var(--state-error); background:var(--bg-primary); font-size:12px; overflow-wrap:anywhere; }
 .cm-review-comment { background:color-mix(in srgb, var(--state-warning) 14%, transparent); border-bottom:1px solid var(--state-warning); }
 .cm-review-comment-selected { background:color-mix(in srgb, var(--state-warning) 24%, transparent); border-bottom-width:2px; }

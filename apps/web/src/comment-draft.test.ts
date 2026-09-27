@@ -24,6 +24,15 @@ it("does not overwrite a different tab's draft or confuse documents", () => {
   expect(new CommentDraftStore("doc", local).load()).toEqual(draft);
   expect(new CommentDraftStore("other", local).load()).toBeNull();
 });
+it("recovers proposed replacements including intentional deletion without changing the anchor", () => {
+  const local = storage(), store = new CommentDraftStore("doc", local);
+  store.load();
+  for (const replacement of ["A narrower claim.", ""]) {
+    const suggestion = { ...draft, body: "", replacement };
+    store.save(suggestion);
+    expect(new CommentDraftStore("doc", local).load()).toEqual(suggestion);
+  }
+});
 it("reports unavailable recovery rather than pretending an unsent draft was stored", () => {
   const store = new CommentDraftStore("doc", null);
   expect(store.load()).toBeNull();

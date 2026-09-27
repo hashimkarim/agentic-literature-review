@@ -15,6 +15,7 @@ import { WritingAssistant } from "./WritingAssistant";
 import { WritingActions, WritingDivider } from "./WritingLayout";
 import { WritingComments } from "./WritingComments";
 import { useWritingComments } from "./writing-comments";
+import { suggestionIssue } from "./writing-suggestions";
 import { commentMarks } from "./comment-decorations";
 import { useBrowserPreference } from "./browser-preferences";
 import { defaultWritingView, parseWritingView, reconcileWritingView, writingViewKey, type WritingView } from "./writing-view";
@@ -319,6 +320,19 @@ function ManuscriptEditor({ document, providers, onConfigureProviders }: { docum
     } else if (view.mode === "source") setViewMode("split");
     selectComment(thread.id);
   }
+  async function acceptSuggestion(thread: ManuscriptCommentView) {
+    if (busy) throw new Error("Wait for the current file operation to finish.");
+    setBusy(true);
+    try {
+      await requireSaved();
+      const current = session.getSnapshot().files[thread.anchor?.path ?? ""];
+      const issue = suggestionIssue(thread, current);
+      if (issue) throw new Error(issue);
+      const saved = await comments.accept(thread, current!.revision);
+      session.acceptRemote(saved); setCandidateReview(null); setHistorical(null); setRemote(null);
+      selectFile(saved.path); await comments.refresh();
+    } finally { setBusy(false); }
+  }
   const candidatePanel = file ? <WritingCandidatesPanel key={active} manuscriptId={id} file={file} initialBatchId={initialBatchId} busy={busy}
     bibliographyPaths={Object.keys(state.files).filter((name) => /\.bib$/i.test(name))}
     onClose={() => { setCandidatesOpen(false); setAssistantOpen(false); setCandidateReview(null); }}
@@ -430,6 +444,8 @@ function ManuscriptEditor({ document, providers, onConfigureProviders }: { docum
       {candidatesOpen && candidatePanel}
       <WritingComments id={id} visible={commentsOpen} comments={comments} activePath={active} selected={selectedComment} onSelect={selectComment} onJump={jumpToComment}
         onJumpPdf={jumpToCommentPdf}
+        disabled={busy} acceptanceIssue={(thread) => suggestionIssue(thread, state.files[thread.anchor?.path ?? ""])} onAccept={acceptSuggestion}
+        onCompare={(thread) => { if (!thread.anchor || !thread.suggestion) return; setHistorical(null); setRemote(null); setCandidateReview({ before: thread.anchor.quote, after: thread.suggestion.replacement, label: `Suggested edit / ${thread.anchor.path}` }); }}
         onClose={() => preference("panel", "none")} onCapture={captureComment} canComment={!busy && canComment} incoming={incomingComment} onConsumed={() => setIncomingComment(null)} />
       <WritingAssistant manuscriptId={id} file={file} selection={selection} providers={providers} visible={assistantOpen} disabled={busy || !!compare || !!candidateReview || viewMode === "preview"}
         tab={view.assistantTab} setTab={(tab) => preference("assistantTab", tab)} onConfigureProviders={onConfigureProviders}
