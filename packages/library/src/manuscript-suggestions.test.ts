@@ -97,7 +97,11 @@ it("does not overwrite an external edit made after an interrupted acceptance", (
   expect(() => f.store.acceptSuggestion(f.document.id, f.thread.id, f.accept)).toThrow("synthetic crash");
   vi.restoreAllMocks();
   fs.writeFileSync(target, "An external correction.");
-  expect(() => new ManuscriptStore(f.root).read(f.document.id)).toThrow(/file changed elsewhere/);
+  const restarted = new ManuscriptStore(f.root);
+  expect(restarted.read(f.document.id).files.find((file) => file.path === f.file.path)?.content).toBe("An external correction.");
+  expect(restarted.comments(f.document.id)[0]?.suggestion?.status).toBe("pending");
+  expect(() => restarted.acceptSuggestion(f.document.id, f.thread.id, f.accept)).toThrow(/source changed/);
+  expect(fs.existsSync(path.join(f.root, "manuscripts", f.document.id, ".comments", ".interrupted", `${f.accept.requestId}.json`))).toBe(true);
   expect(fs.readFileSync(target, "utf8")).toBe("An external correction.");
 });
 

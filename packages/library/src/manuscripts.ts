@@ -306,9 +306,15 @@ export class ManuscriptStore {
     if (revision(content) !== suggestion.resultRevision) throw new ManuscriptError(409, "suggestion_recovery_conflict", "Interrupted suggestion failed its result check; no file was overwritten.");
     const records = this.commentRecords(manuscriptId), current = records.find((item) => item.id === comment.id);
     if (current && JSON.stringify(current) === JSON.stringify(comment)) { fs.unlinkSync(journal); return; }
-    if (!current || revision(JSON.stringify(current)) !== previousCommentRevision) throw new ManuscriptError(409, "suggestion_recovery_conflict", "Interrupted suggestion conflicts with its comment thread; no file was overwritten.");
     this.recoveringSuggestions.add(manuscriptId);
     try {
+      const file = this.read(manuscriptId).files.find((item) => item.path === before.path);
+      if (!current || revision(JSON.stringify(current)) !== previousCommentRevision || !file || (file.revision !== before.revision && file.revision !== suggestion.resultRevision)) {
+        // A later external edit supersedes the interrupted decision. Preserve its
+        // intent for recovery without blocking the document or overwriting text.
+        fs.renameSync(journal, this.safePath(`${this.directory(manuscriptId)}/.comments/.interrupted/${suggestion.decision.id}.json`, true));
+        return;
+      }
       this.writeFile(manuscriptId, { path: before.path, content, expectedRevision: before.revision }, "suggestion");
       this.saveComment(comment, records);
       fs.unlinkSync(journal);
