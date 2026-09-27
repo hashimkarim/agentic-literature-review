@@ -79,7 +79,12 @@ export function WritingAssistant({ manuscriptId, file, selection, providers, vis
       {error && !preview && <p className="writing-error" role="alert">{error}</p>}
       </div><footer><button type="submit" className="writing-primary" disabled={disabled || pending || !validFile || !validTarget || !instruction.trim() || total > 6}><Eye size={16} />{pending ? "Preparing..." : "Review context"}</button></footer>
     </form>}
-    {preview && <WritingContextDialog prepared={preview} error={error} pending={pending} onClose={() => { if (!pending) { setPreview(null); setError(null); } }} onGenerate={() => void run(async () => { const batch = await api.createWritingCandidates(manuscriptId, preview.request); onCreated(batch); setPreview(null); setTab("drafts"); })} />}
+    {preview && <WritingContextDialog prepared={preview} error={error} pending={pending} onClose={() => { if (!pending) { setPreview(null); setError(null); } }} onGenerate={() => void run(async () => {
+      const batch = await api.createWritingCandidates(manuscriptId, preview.request);
+      // Keep the idempotency key on transport failure, not after an acknowledged generation.
+      attempt.current = null;
+      onCreated(batch); setPreview(null); setTab("drafts");
+    })} />}
   </aside>;
 }
 
@@ -91,7 +96,7 @@ function WritingContextDialog({ prepared, pending, error, onClose, onGenerate }:
   return <dialog ref={ref} className="writing-dialog writing-context-dialog" aria-label="Review writing context" onCancel={(event) => { event.preventDefault(); onClose(); }}>
     <header><Eye size={18} /><h2>Review context</h2><button type="button" className="writing-tool" title="Close context preview" aria-label="Close context preview" disabled={pending} onClick={onClose}><X size={16} /></button></header>
     <p><strong>{actions.find(([value]) => value === request.assistant?.action)?.[1]}</strong> / <code>{request.path}</code></p><p>{request.instruction}</p>
-    <dl className="writing-context-summary"><dt>Audience</dt><dd>{audiences[request.audience]}</dd><dt>Sources</dt><dd>{context.coverage.length} / {context.characters.toLocaleString()} characters</dd><dt>Model calls</dt><dd>{total} drafts + {total} support reviews</dd></dl>
+    <dl className="writing-context-summary"><dt>Audience</dt><dd>{audiences[request.audience]}</dd><dt>Sources</dt><dd>{context.coverage.length} / {context.characters.toLocaleString()} characters</dd><dt>Model calls</dt><dd>{total} drafts + {total} support reviews; up to {total} format corrections</dd></dl>
     <ul className="writing-coverage">{context.coverage.map((item) => <li key={item.sourceId}><span>{item.title}</span><strong className={item.status === "complete" ? "" : "writing-draft-notice"}>{item.status}</strong><small>{item.includedCharacters.toLocaleString()} / {item.totalCharacters.toLocaleString()} characters</small></li>)}</ul>
     {!context.sources.length && <p className="writing-draft-notice">No evidence selected. New factual claims cannot be supported.</p>}
     <details className="writing-sent-context"><summary>Selected text and surrounding context</summary><h3>Before</h3><pre>{selection.file.content.slice(Math.max(0, selection.from - 1500), selection.from) || "(none)"}</pre><h3>Selection</h3><pre>{selection.file.content.slice(selection.from, selection.to) || "(insert at cursor)"}</pre><h3>After</h3><pre>{selection.file.content.slice(selection.to, selection.to + 1500) || "(none)"}</pre></details>

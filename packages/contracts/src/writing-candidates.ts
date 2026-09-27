@@ -28,7 +28,7 @@ export const WritingCandidateSchema = z.object({
   status: z.enum(["queued", "running", "completed", "failed", "cancelled", "interrupted"]),
   text: z.string().max(32_000).nullable(),
   error: z.string().max(500).nullable(),
-  phase: z.enum(["drafting", "reviewing"]).optional(),
+  phase: z.enum(["drafting", "repairing", "reviewing"]).optional(),
   claims: z.array(WritingClaimSchema).max(40).optional(),
   warnings: z.array(z.string().max(1000)).max(20).optional(),
   review: WritingSourceReviewSchema.optional(),

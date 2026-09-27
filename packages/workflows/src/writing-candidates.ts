@@ -10,7 +10,7 @@ import {
 } from "@litagent/contracts";
 import { WritingContextService } from "./writing-context";
 import { writingEditorial } from "./writing-editorial";
-import { assistantPrompt, inspectWritingOutput, parseWritingOutput, renderWritingOutput, validateWritingReview, writingReviewPrompt } from "./writing-assistant";
+import { assistantPrompt, inspectWritingOutput, parseWritingOutput, renderWritingOutput, validateWritingReview, writingReviewPrompt, WritingClaimTextError, writingClaimRepairPrompt } from "./writing-assistant";
 
 type Runtime = Pick<AgentHarness, "startRun" | "cancelRun">;
 const audiences = ["Layperson", "Undergraduate", "Graduate", "Doctoral / specialist"];
@@ -144,8 +144,25 @@ export class WritingCandidateService {
         } else {
           const raw = result.transcript.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1");
           if (batch.request.assistant) {
-            const output = parseWritingOutput(raw);
-            inspectWritingOutput(output, batch);
+            let output = parseWritingOutput(raw);
+            try { inspectWritingOutput(output, batch); }
+            catch (error) {
+              if (!(error instanceof WritingClaimTextError)) throw error;
+              this.assertSources(batch);
+              this.validateTarget({ providerId: candidate.providerId, model: candidate.model, count: 1 });
+              candidate.phase = "repairing"; this.store.saveCandidateBatch(batch);
+              const repairRun = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: `${candidate.id}_repair`, cwd: this.store.root,
+                prompt: writingClaimRepairPrompt(batch, candidate.variant, raw),
+                eventsPath: path.join(this.store.root, ".litagent/cache/provider-runs", candidate.id, "repair.events.jsonl") });
+              const repaired = await repairRun.finished;
+              batch = this.get(original.manuscriptId, original.id);
+              if (batch.status !== "running") return;
+              candidate = batch.candidates.find((item) => item.id === queued.id)!;
+              if (repaired.status !== "completed") throw new Error("Draft correction did not complete.");
+              this.assertSources(batch);
+              output = parseWritingOutput(repaired.transcript);
+              inspectWritingOutput(output, batch);
+            }
             this.assertSources(batch);
             candidate.phase = "reviewing"; this.store.saveCandidateBatch(batch);
             this.validateTarget({ providerId: candidate.providerId, model: candidate.model, count: 1 });
@@ -166,12 +183,12 @@ export class WritingCandidateService {
             candidate.status = "completed"; candidate.text = output.text;
           }
         }
-      } catch {
+      } catch (error) {
         batch = this.get(original.manuscriptId, original.id);
         if (batch.status !== "running") return;
         candidate = batch.candidates.find((item) => item.id === queued.id)!;
         candidate.status = "failed";
-        candidate.error = "Candidate could not be generated or its output was invalid. No text was applied.";
+        candidate.error = error instanceof WritingClaimTextError ? error.message : "Candidate could not be generated or its output was invalid. No text was applied.";
       }
       this.store.saveCandidateBatch(batch);
     }
@@ -188,7 +205,11 @@ export class WritingCandidateService {
       candidate.status = "cancelled"; candidate.error = "Generation cancelled.";
     }
     this.store.saveCandidateBatch(batch);
-    running.forEach((candidate) => { this.runtime.cancelRun(candidate.id); if (candidate.phase === "reviewing") this.runtime.cancelRun(`${candidate.id}_review`); });
+    running.forEach((candidate) => {
+      this.runtime.cancelRun(candidate.id);
+      if (candidate.phase === "repairing") this.runtime.cancelRun(`${candidate.id}_repair`);
+      if (candidate.phase === "reviewing") this.runtime.cancelRun(`${candidate.id}_review`);
+    });
     return batch;
   }
 
