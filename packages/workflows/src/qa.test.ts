@@ -278,6 +278,54 @@ describe("Q&A claim-specific grounding", () => {
 });
 
 describe("Q&A source coverage", () => {
+  it("does not retrieve an unlinked paper through stale collection membership", async () => {
+    const { engine, request, repo, paper, start } = fixture();
+    const project = repo.createProject({ name: "Selected project" });
+    const collection = repo.createCollection({ projectId: project.id, name: "Selected collection" });
+    repo.linkPaperToProject(paper.id, { projectId: project.id, subcollectionIds: [collection.id] });
+    repo.writePaperLinks(project.id, []);
+    expect(repo.readCollection(project.id, collection.id)?.paperIds).toContain(paper.id);
+    await expect(engine.answerQuestionInThread({ ...request, projectId: project.id, collectionId: collection.id })).rejects.toThrow(/conversion/i);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each(["draft", "review"])("rejects unlinking during %s without saving a chat answer", async (stage) => {
+    const { engine, request, repo, paper, start } = fixture((input) => {
+      const reviewing = input.prompt.startsWith("LitAgent Q&A source review");
+      if (reviewing === (stage === "review")) repo.writePaperLinks(project.id, []);
+      return reviewing ? reviewReply(input) : draftReply([{
+        text: "Accuracy was 0.92.", kind: "reported", passageIds: contextIds(input)
+      }]);
+    });
+    const project = repo.createProject({ name: "Selected project" });
+    const collection = repo.createCollection({ projectId: project.id, name: "Selected collection" });
+    repo.linkPaperToProject(paper.id, { projectId: project.id, subcollectionIds: [collection.id] });
+    const selected = { ...request, projectId: project.id, collectionId: collection.id };
+    await expect(engine.answerQuestionInThread(selected)).rejects.toThrow("selected scope changed");
+    expect(start).toHaveBeenCalledTimes(stage === "draft" ? 1 : 2);
+    expect(engine.readQaThread(selected).messages).toEqual([]);
+    expect(engine.listRuns()[0]?.status).toBe("failed");
+  });
+
+  it.each(["collection", "project", "expanded-scope", "markdown"])("rejects %s changes before dispatching a review", async (change) => {
+    const { engine, request, repo, paper, start } = fixture((input) => {
+      if (change === "collection") fs.rmSync(repo.resolve(`projects/${project.id}/collections/${collection.id}.json`));
+      if (change === "project") fs.rmSync(repo.resolve(`projects/${project.id}/project.json`));
+      if (change === "expanded-scope") repo.linkPaperToProject(other.id, { projectId: project.id, subcollectionIds: [collection.id] });
+      if (change === "markdown") repo.writeMarkdown(paper.id, "# Results\n\nAccuracy was 0.74.");
+      return draftReply([{ text: "Accuracy was 0.92.", kind: "reported", passageIds: contextIds(input) }]);
+    });
+    const project = repo.createProject({ name: "Changing project" });
+    const collection = repo.createCollection({ projectId: project.id, name: "Changing collection" });
+    repo.linkPaperToProject(paper.id, { projectId: project.id, subcollectionIds: [collection.id] });
+    const other = repo.importPaper({ metadata: { title: "New paper" } }).paper;
+    repo.writeMarkdown(other.id, "# Results\n\nDifferent results.");
+    const selected = { ...request, paperId: null, projectId: project.id, collectionId: collection.id };
+    await expect(engine.answerQuestionInThread(selected)).rejects.toThrow("selected scope changed");
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(engine.readQaThread(selected).messages).toEqual([]);
+  });
+
   it("never accepts an omitted passage from a truncated document", async () => {
     const markdown = `# Overview\n\nThe detector processes images.\n\n# Background\n\n${"Extended background. ".repeat(11_000)}\n\n# Results\n\nAccuracy was 0.92.`;
     const { engine, request, repo, paper, start } = fixture(() => draftReply([{
