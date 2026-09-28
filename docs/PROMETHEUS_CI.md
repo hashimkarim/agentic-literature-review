@@ -28,8 +28,10 @@ checks skipped) and build passed. SDK runner results are not used as app evidenc
 - Short-lived registration token supplied on stdin through
   `ACTIONS_RUNNER_INPUT_TOKEN`; never persisted in Compose/source control.
 - Root-owned `.sh` wrapper and TypeScript policy admit only this repository's
-  `refs/heads/chat-reliability` and push/manual events. PR and main-ref rejection
-  were tested. Repository approval policy is `all_external_contributors`.
+  reviewed `refs/heads/main` and `refs/heads/chat-reliability` for push/manual
+  events. The main ref was added for consolidation on 2026-09-28; the original
+  provisioning check rejected it. PR events, other repositories and unreviewed
+  refs remain rejected. Repository approval policy is `all_external_contributors`.
 - `RUNNER_MANUALLY_TRAP_SIG=1` and `stop_grace_period: 2m` use the official
   listener's signal forwarding. Neither adds a model execution timeout.
 
@@ -44,6 +46,17 @@ Only deterministic/disposable fixtures are used. Native compiler checks remain
 opt-in; skipped checks are not compiler validation. Interactive UI verification
 uses native T3 on the workstation. macOS/Windows coverage stays paused. No
 hosted compute, publishing workflow or production deployment is configured.
+
+## Main Consolidation (2026-09-28)
+
+The workflow and root-owned runner policy now share an explicit two-ref
+allowlist. Policy regression tests execute the actual TypeScript hook for both
+accepted refs and rejected PR/fork/other-ref cases. The runner image uses the
+new `literature-review-ci-runner:2.337.0-bun1.3.14-main` tag; the previous image
+is retained for rollback. Updating this CI-only container preserves its runner
+registration, volumes and limits, and does not change any application or SDK
+host. Main pushes run the same frozen install, typecheck, tests and build as
+the reviewed task branch. No PR trigger or hosted compute is added.
 
 ## Original Handoff (Superseded Readiness)
 

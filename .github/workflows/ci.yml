@@ -1,7 +1,7 @@
 name: LitAgent Linux
 on:
   push:
-    branches: [chat-reliability]
+    branches: [main, chat-reliability]
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   check:
-    if: github.repository == 'hashimkarim/agentic-literature-review' && github.ref == 'refs/heads/chat-reliability' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.repository == 'hashimkarim/agentic-literature-review' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/chat-reliability') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, linux, x64, prometheus-ci]
     timeout-minutes: 20
     env:
