@@ -32,7 +32,8 @@ it("uses the installed SDK for cited Q&A while LitAgent validates source revisio
       providers: [
         mockProvider((request) => {
           calls++;
-          const prompt = request.messages.at(-1)?.content ?? "";
+          const prompt = request.messages.find((message) => message.role === "user")?.content ?? "";
+          const supplied = request.messages.map((message) => message.content).join("\n");
           let result;
           if (prompt.startsWith("LitAgent Q&A source review")) {
             result = {
@@ -48,7 +49,7 @@ it("uses the installed SDK for cited Q&A while LitAgent validates source revisio
             };
           } else {
             const passage = [
-              ...prompt.matchAll(/\[\[passage:([^\]\s]+)\]\]/g),
+              ...supplied.matchAll(/\[\[passage:([^\]\s]+)\]\]/g),
             ][0]?.[1];
             expect(passage).toBeTruthy();
             result = {
@@ -142,6 +143,10 @@ it("uses the installed SDK for cited Q&A while LitAgent validates source revisio
     const ids = new Set(events.flatMap((event) => event.payload.sdkRunId ? [event.payload.sdkRunId] : []));
     expect(ids.size).toBe(2);
     expect(events.every((event) => event.runId === run.id)).toBe(true);
+    const manifests = events.filter((event) => event.type === "run.completed").map((event) => event.payload.sources);
+    expect(manifests).toHaveLength(2);
+    expect(manifests[0]).toEqual(manifests[1]);
+    expect(manifests[0]).toEqual([expect.objectContaining({ id: paper.id, revision: result.response.evidence[0]!.markdownHash, origin: "inline" })]);
     expect(engine.readRun(run.id).events.some((event) => event.type === "run.progress" && event.payload.sdkRunId)).toBe(true);
   } finally {
     await server.close();

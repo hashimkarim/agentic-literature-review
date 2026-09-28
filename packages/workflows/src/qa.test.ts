@@ -372,6 +372,29 @@ describe("Q&A source coverage", () => {
     expect(response.diagnostics.retrievedCount).toBe(response.diagnostics.sources[0]?.includedPassages);
   });
 
+  it("reports sources omitted by the inline attachment count limit", async () => {
+    const { engine, request, repo, paper, start } = fixture((input) => input.prompt.startsWith("LitAgent Q&A source review")
+      ? reviewReply(input) : draftReply([{ text: "Accuracy was 0.92.", kind: "reported", passageIds: [contextIds(input)[0]!] }]));
+    const ids = [paper.id, ...Array.from({ length: 16 }, (_, n) => {
+      const added = repo.importPaper({ metadata: { title: `Additional study ${n}` } }).paper;
+      repo.writeMarkdown(added.id, "# Results\n\nThe detector processes images.");
+      return added.id;
+    })];
+    const response = await engine.answerQuestionWithProvider({ ...request, paperId: null, paperIds: ids });
+    expect(start.mock.calls[0]?.[0].selectedContext?.sources).toHaveLength(16);
+    expect(response.diagnostics.sources.at(-1)?.coverage).toBe("omitted");
+  });
+
+  it("bounds multibyte Markdown by the SDK attachment byte limit", async () => {
+    const markdown = `# Results\n\nThe detector processes images.\n\n${Array.from({ length: 2_000 }, () => "\u20ac".repeat(60)).join("\n\n")}`;
+    const { engine, request, start } = fixture((input) => input.prompt.startsWith("LitAgent Q&A source review")
+      ? reviewReply(input) : draftReply([{ text: "The detector processes images.", kind: "reported", passageIds: [contextIds(input)[0]!] }]), markdown);
+    const response = await engine.answerQuestionWithProvider(request);
+    expect(response.diagnostics.sources[0]?.coverage).toBe("truncated");
+    const selected = start.mock.calls[0]?.[0].selectedContext?.sources[0];
+    expect(Buffer.byteLength(selected!.text, "utf8")).toBeLessThanOrEqual(256 * 1024);
+  });
+
   it("does not treat placeholder/demo Markdown as a converted paper", async () => {
     const { engine, request, start } = fixture(undefined, "# Demo\n\nRun the Marker conversion workflow to replace this placeholder.");
     await expect(engine.answerQuestionWithProvider(request)).rejects.toThrow(/conversion/i);

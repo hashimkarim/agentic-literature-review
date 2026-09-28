@@ -14,7 +14,7 @@ import {
 } from "@litagent/contracts";
 
 export type AgentRunStatus = "starting" | "running" | "completed" | "failed" | "cancelled";
-export type ProviderFailureClass = "auth" | "rate_limit" | "permission" | "cancelled" | "unknown";
+export type ProviderFailureClass = "auth" | "rate_limit" | "permission" | "cancelled" | "source_changed" | "source_mismatch" | "unknown";
 
 export interface ProviderRunResult {
   sessionId: string;
@@ -42,6 +42,20 @@ export interface ProviderRuntimeSession {
   finished: Promise<ProviderRunResult>;
 }
 
+export interface ProviderContextSource {
+  id: string;
+  revision: string;
+  title: string;
+  text: string;
+}
+
+export interface ProviderSelectedContext {
+  /** Instruction prompt without the duplicate inline source text. */
+  prompt: string;
+  sources: readonly ProviderContextSource[];
+  isCurrent: () => boolean;
+}
+
 export interface ProviderRunStartInput {
   cwd: string;
   prompt: string;
@@ -51,6 +65,7 @@ export interface ProviderRunStartInput {
   artifactPaths?: string[];
   outputPath?: string;
   onEvent?: (event: NormalizedRunEvent) => void;
+  selectedContext?: ProviderSelectedContext;
 }
 
 export interface ProviderAdapter {

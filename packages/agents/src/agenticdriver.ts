@@ -5,6 +5,7 @@ import path from "node:path";
 import { AgenticClient, type ClientOptions } from "@agenticdriver/sdk/client";
 import { DriverError, type ProviderInfo } from "@agenticdriver/sdk";
 import { providerPresentation } from "@agenticdriver/sdk/catalog";
+import { matchesContextManifest, snapshotSelectedContext } from "./selected-context";
 import {
   AgentProviderSchema,
   type AgentProvider,
@@ -423,6 +424,10 @@ export function driverFailure(error: unknown): {
   failureClass: ProviderFailureClass;
 } {
   const code = error instanceof DriverError ? error.code : "DRIVER_UNREACHABLE";
+  if (code === "SOURCE_CHANGED" || code === "SOURCE_MISMATCH") return {
+    code, message: "Selected source access, revision or supplied provenance changed. No artifact was accepted; select current sources again.",
+    failureClass: code === "SOURCE_CHANGED" ? "source_changed" : "source_mismatch"
+  };
   if (
     [
       "UNAUTHORIZED",
@@ -518,6 +523,9 @@ export class AgenticDriverAdapter implements ProviderAdapter {
         "MODEL_NOT_ALLOWED",
         "Select an exact model ID permitted by this driver instance.",
       );
+    const { attachments, manifests } = snapshotSelectedContext(input.selectedContext);
+    const prompt = input.selectedContext?.prompt ?? input.prompt;
+    const isContextCurrent = input.selectedContext?.isCurrent;
     const controller = new AbortController(),
       events = new EventEmitter(),
       captured: NormalizedRunEvent[] = [];
@@ -565,15 +573,20 @@ export class AgenticDriverAdapter implements ProviderAdapter {
         let transcript = "",
           failureClass: ProviderFailureClass | null = null;
         const artifacts: string[] = [];
+        const checkContext = () => {
+          if (isContextCurrent && !isContextCurrent()) throw new DriverError("SOURCE_CHANGED", "Selected sources changed.");
+        };
         try {
           controller.signal.throwIfAborted();
+          checkContext();
           session.status = "running";
           emit("run.started", "AgenticDriver session started", { sessionId });
           for await (const event of this.client.stream(
             {
               provider: this.instanceId,
               model,
-              input: input.prompt,
+              input: prompt,
+              ...(attachments ? { attachments } : {}),
               instructions:
                 "Use only supplied research context. Return the proposed artifact as your final response; the application saves it locally. Cite supplied paper and passage identifiers. Do not invent citations or claim to have read local files.",
               metadata: { app: "literature-review", runId: input.runId },
@@ -599,6 +612,8 @@ export class AgenticDriverAdapter implements ProviderAdapter {
             }
             if (event.type === "run.completed") {
               controller.signal.throwIfAborted();
+              if (!matchesContextManifest(event.result.sources, manifests)) throw new DriverError("SOURCE_MISMATCH", "Supplied source provenance did not match.");
+              checkContext();
               transcript = event.result.text;
               if (event.result.finishReason === "length")
                 throw new Error("The provider reached its output limit.");
@@ -627,6 +642,7 @@ export class AgenticDriverAdapter implements ProviderAdapter {
                 sessionId,
                 usage: event.result.usage,
                 usageScope: "run",
+                ...(attachments ? { sources: manifests } : {}),
               });
             }
           }
