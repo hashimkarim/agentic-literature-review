@@ -71,7 +71,7 @@ remain historical records, not the current live-acceptance claim.
 
 The original scoped-package migration pinned the published MIT-licensed
 `@agenticdriver/sdk` exactly to `0.1.0`. This historical receipt is superseded
-for the active dependency by [alpha.4 adoption](#public-alpha4-adoption).
+for the active dependency by [alpha.5 adoption](#registry-alpha5-adoption).
 No sibling SDK build, checkout-relative dependency or TypeScript alias is needed.
 The external root/client/providers/server imports use the scoped package.
 
@@ -289,7 +289,7 @@ for exact artifact identity, tests and native browser evidence.
 
 ## Public Alpha.4 Adoption
 
-All three owning manifests now pin the exact npm registry version
+All three owning manifests previously pinned the exact npm registry version
 `@agenticdriver/sdk@0.2.0-alpha.4`. On 2026-09-28 the registry archive was
 independently verified against the previously accepted public GitHub archive:
 its SHA-256 and locked SHA-512 are unchanged. Provider-icons remains at its
@@ -304,3 +304,15 @@ The [alpha.4 receipt](validation/driver-alpha4-2026-09-27.md) records actual
 Settings/backend recovery checks against regular-host metadata with generation
 blocked, fresh frozen installation and application verification. No running shared
 host, credential, account grant or authentication stack was changed.
+
+## Registry Alpha.5 Adoption
+
+Server, browser panel and execution adapter pin the exact npm version
+`@agenticdriver/sdk@0.2.0-alpha.5`, with the reviewed SHA-512 in `bun.lock`.
+Provider-icons remains independently pinned. Protocol remains 1.0; installing
+the client does not upgrade an existing host or add an app-owned SSH manager.
+
+The [alpha.5 receipt](validation/driver-alpha5-2026-09-28.md) records app tests
+and native T3 Settings checks using a disposable metadata-only host, including
+saved selection, offline recovery, denied execution and missing older-host
+metadata. No real model call, shared-service restart or access change was made.

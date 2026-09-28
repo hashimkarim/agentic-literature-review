@@ -10,7 +10,7 @@
     "typecheck": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agenticdriver/sdk": "0.2.0-alpha.4",
+    "@agenticdriver/sdk": "0.2.0-alpha.5",
     "@codemirror/commands": "6.11.1",
     "@codemirror/language": "6.12.4",
     "@codemirror/legacy-modes": "6.5.4",
