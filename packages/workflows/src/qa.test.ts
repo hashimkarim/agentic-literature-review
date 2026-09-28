@@ -54,15 +54,16 @@ function draftReply(claims: ProviderQaDraft["claims"]): Partial<ProviderRunResul
   return { transcript: JSON.stringify({ status: claims.length ? "answered" : "not_found", claims }) };
 }
 
-function reviewInput(input: ProviderRunStartInput): { draft: ProviderQaDraft; markdownContext?: string; passages: Array<{ quote: string }> } {
+function reviewInput(input: ProviderRunStartInput): { draft: ProviderQaDraft; markdownContext?: string; passages: Array<{ passageId: string; quote: string }> } {
   const raw = JSON.parse(input.prompt.split("Review input (JSON):\n")[1]!);
   return { ...raw, draft: ProviderQaDraftSchema.parse(raw.draft) };
 }
 
 function reviewReply(input: ProviderRunStartInput, supported = true, reason = "Cited passages support this claim."): Partial<ProviderRunResult> {
-  const { draft } = reviewInput(input);
+  const { draft, passages } = reviewInput(input);
   return { transcript: JSON.stringify({
-    supported, reason, claims: draft.claims.map((_, index) => ({ index, supported, reason }))
+    supported, reason, claims: draft.claims.map((claim, index) => ({ index, supported, scopeSupported: supported, reason,
+      evidence: passages.filter((p) => claim.passageIds.includes(p.passageId)).map(({ passageId, quote }) => ({ passageId, quote })) }))
   }) };
 }
 
@@ -197,6 +198,47 @@ describe("Q&A claim-specific grounding", () => {
       ? { transcript: JSON.stringify({ supported: true, reason: "Looks right", claims: [] }) }
       : draftReply([{ text: "Accuracy was 0.92.", kind: "reported", passageIds: [contextIds(input)[0]!] }]));
     await expect(engine.answerQuestionWithProvider(request)).rejects.toThrow("every claim exactly once");
+  });
+
+  it.each(["paraphrased", "foreign", "missing"])("rejects a positive review with %s source excerpts", async (failure) => {
+    const { engine, request, start } = fixture((input) => {
+      if (!input.prompt.startsWith("LitAgent Q&A source review")) return draftReply([{
+        text: "Accuracy was 0.92.", kind: "reported", passageIds: contextIds(input)
+      }]);
+      const review = JSON.parse(reviewReply(input).transcript!);
+      if (failure === "paraphrased") review.claims[0].evidence[0].quote = "Accuracy was 0.92.";
+      if (failure === "foreign") review.claims[0].evidence[0].passageId = "unselected-passage";
+      if (failure === "missing") review.claims[0].evidence = [];
+      return { transcript: JSON.stringify(review) };
+    });
+    await expect(engine.answerQuestionInThread(request)).rejects.toThrow("after one repair attempt");
+    expect(start).toHaveBeenCalledTimes(4);
+    expect(engine.readQaThread(request).messages).toEqual([]);
+  });
+
+  it("repairs an overbroad comparison even when citation existence and quoted text pass", async () => {
+    const markdown = "# Evaluation\n\nThe study compares shared passages with passages that can change per token. Evaluations found better factuality than the tested parametric-only baseline.";
+    let drafts = 0;
+    const { engine, request, start, repo } = fixture((input) => {
+      if (!input.prompt.startsWith("LitAgent Q&A source review")) {
+        drafts++;
+        return draftReply([{ kind: "reported", passageIds: contextIds(input), text: drafts === 1
+          ? "Both passage variants improve factuality over the parametric baseline."
+          : "Evaluations found better factuality than the tested parametric-only baseline." }]);
+      }
+      const review = JSON.parse(reviewReply(input).transcript!);
+      review.claims[0].scopeSupported = drafts > 1;
+      review.claims[0].reason = drafts > 1 ? "Matches the aggregate finding." : "The notes do not report separate outcomes for both variants.";
+      return { transcript: JSON.stringify(review) };
+    }, markdown);
+    const answer = await engine.answerQuestionInThread(request);
+    expect(answer.response.answer).not.toContain("Both");
+    expect(answer.response.answer).toContain("tested parametric-only baseline");
+    expect(start).toHaveBeenCalledTimes(4);
+    expect(start.mock.calls[2]![0].prompt).toContain("do not report separate outcomes");
+    const trace = JSON.parse(fs.readFileSync(repo.resolve(`.litagent/cache/provider-runs/${answer.response.runId}/qa-validation.json`), "utf8"));
+    expect(trace[0].review.claims[0]).toMatchObject({ supported: true, scopeSupported: false });
+    expect(trace[1].issues).toEqual([]);
   });
 
   it("preserves more than five independently sourced claims", async () => {
@@ -386,7 +428,7 @@ describe("Q&A source coverage", () => {
   });
 
   it("bounds multibyte Markdown by the SDK attachment byte limit", async () => {
-    const markdown = `# Results\n\nThe detector processes images.\n\n${Array.from({ length: 2_000 }, () => "\u20ac".repeat(60)).join("\n\n")}`;
+    const markdown = `# Results\n\nThe detector processes images.\n\n${Array.from({ length: 120 }, () => "\u20ac".repeat(1_000)).join("\n\n")}`;
     const { engine, request, start } = fixture((input) => input.prompt.startsWith("LitAgent Q&A source review")
       ? reviewReply(input) : draftReply([{ text: "The detector processes images.", kind: "reported", passageIds: [contextIds(input)[0]!] }]), markdown);
     const response = await engine.answerQuestionWithProvider(request);

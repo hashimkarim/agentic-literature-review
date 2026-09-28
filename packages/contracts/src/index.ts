@@ -656,6 +656,8 @@ export const QaDiagnosticsSchema = z.object({
     claims: z.array(z.object({
       index: z.number().int().nonnegative(),
       supported: z.boolean(),
+      scopeSupported: z.boolean().optional(),
+      evidence: z.array(z.object({ passageId: z.string(), quote: z.string() })).optional(),
       reason: z.string()
     }))
   }).nullable().default(null),

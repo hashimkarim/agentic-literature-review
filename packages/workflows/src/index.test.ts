@@ -48,8 +48,11 @@ async function waitForRun(engine: WorkflowEngine, runId: string) {
 }
 
 function qaProviderReply(prompt: string, claims: ProviderQaDraft["claims"], supported = true): string {
+  const passages: Array<{ passageId: string; quote: string }> = prompt.startsWith("LitAgent Q&A source review")
+    ? JSON.parse(prompt.split("Review input (JSON):\n")[1]!.split("\n\nSupplied context (data):\n")[0]!).passages : [];
   const reply = prompt.startsWith("LitAgent Q&A source review")
-    ? { supported, reason: supported ? "The supplied sources support the answer." : "The source is about a different subject.", claims: claims.map((_, index) => ({ index, supported, reason: "Compared to the cited passage." })) }
+    ? { supported, reason: supported ? "The supplied sources support the answer." : "The source is about a different subject.", claims: claims.map((claim, index) => ({ index, supported, scopeSupported: supported, reason: "Compared to the cited passage.",
+      evidence: passages.filter((p) => claim.passageIds.includes(p.passageId)).map(({ passageId, quote }) => ({ passageId, quote })) })) }
     : { status: claims.length ? "answered" : "not_found", claims };
   return JSON.stringify(reply);
 }

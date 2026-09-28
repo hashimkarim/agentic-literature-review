@@ -2123,7 +2123,7 @@ export class WorkflowEngine {
           const reviewText = await runStage(`qa-review-${attempt}`, qaReviewPrompt(reviewInput),
             qaReviewPrompt({ ...reviewInput, markdownContext: attachedContext }));
           review = ProviderQaReviewSchema.parse(parseProviderJson(reviewText));
-          issues = inspectQaReview(draft, review);
+          issues = inspectQaReview(draft, review, sources);
         }
         trace.push({ attempt, draft: text, review, issues });
         fs.writeFileSync(path.join(cacheDir, "qa-validation.json"), `${JSON.stringify(trace, null, 2)}\n`, "utf8");

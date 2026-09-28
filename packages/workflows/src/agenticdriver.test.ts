@@ -43,6 +43,8 @@ it("uses the installed SDK for cited Q&A while LitAgent validates source revisio
                 {
                   index: 0,
                   supported: true,
+                  scopeSupported: true,
+                  evidence: repo.readPassages(paper.id).map((p) => ({ passageId: p.id, quote: p.quote })),
                   reason: "The passage reports this value.",
                 },
               ],
