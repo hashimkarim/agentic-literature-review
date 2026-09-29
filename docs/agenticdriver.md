@@ -71,7 +71,7 @@ remain historical records, not the current live-acceptance claim.
 
 The original scoped-package migration pinned the published MIT-licensed
 `@agenticdriver/sdk` exactly to `0.1.0`. This historical receipt is superseded
-for the active dependency by [alpha.5 adoption](#registry-alpha5-adoption).
+for the active dependency by [alpha.6 adoption](#registry-alpha6-adoption).
 No sibling SDK build, checkout-relative dependency or TypeScript alias is needed.
 The external root/client/providers/server imports use the scoped package.
 
@@ -316,3 +316,24 @@ The [alpha.5 receipt](validation/driver-alpha5-2026-09-28.md) records app tests
 and native T3 Settings checks using a disposable metadata-only host, including
 saved selection, offline recovery, denied execution and missing older-host
 metadata. No real model call, shared-service restart or access change was made.
+
+## Registry Alpha.6 Adoption
+
+The server, browser and adapter now pin `@agenticdriver/sdk@0.2.0-alpha.6`
+from npm, with the exact registry SHA-512 in `bun.lock`. The archive SHA-256 is
+`b06c67eb847c7806db056351eaea338de5977fcf823212aac0dc27a03395df36`.
+
+Upgrade a management host before using this client to edit providers. Older
+hosts can advertise removed setup categories despite sharing wire protocol 1.0.
+LitAgent validates management metadata before host writes and surfaces an
+incompatible-response error without changing saved choices or exposing raw
+upstream responses. Installing the package does not upgrade or restart a host.
+Execution-only connections remain read-only; no grant is inferred from inventory.
+
+Mock SDK providers and simulated provider acceptance scripts are removed.
+Fresh LitAgent repositories are no longer populated with demo papers/projects;
+existing repositories are not altered. Offline policy/schema/storage tests and
+actual SDK management tests with an uninstalled Codex adapter remain separate
+from real model acceptance. They do not imply native account qualification.
+The [alpha.6 receipt](validation/driver-alpha6-2026-09-29.md) records the explicit
+real remote Claude Q&A/writing check and its limits.
