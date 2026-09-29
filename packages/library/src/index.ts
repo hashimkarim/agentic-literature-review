@@ -1319,62 +1319,6 @@ export class LitAgentRepository {
     if (changed) this.writeAnnotations(note.projectId, updated);
   }
 
-  seedDemoData(): void {
-    if (this.listProjects().length > 0) return;
-    const project = this.createProject({
-      name: "Mobile MIR Literature Review",
-      description: "Local-first review workspace for real-time music information retrieval papers.",
-      researchQuestion:
-        "Which model and dataset choices make mobile real-time music genre and rhythm analysis reliable?"
-    });
-    const models = this.createCollection({ projectId: project.id, name: "Models" });
-    const datasets = this.createCollection({ projectId: project.id, name: "Datasets" });
-    const papers = [
-      {
-        collectionId: models.id,
-        metadata: {
-          title: "BeatNet: CRNN and Particle Filtering for Online Joint Beat, Downbeat, and Meter Tracking",
-          authors: ["Heydari", "Duan"],
-          year: 2021,
-          tags: ["beat tracking", "online", "particle filtering"]
-        },
-        markdown:
-          "# BeatNet\n\nBeatNet combines a CRNN front-end with particle filtering for online joint beat, downbeat, and meter tracking.\n\n## Key Finding\n\nThe paper is relevant to real-time rhythm analysis because it reports streaming inference and online post-processing constraints.\n\n## Limitations\n\nMobile deployment is not the primary target, so device constraints need separate validation."
-      },
-      {
-        collectionId: models.id,
-        metadata: {
-          title: "Music Classification Beyond Supervised Learning, Towards Real-world Applications",
-          authors: ["Won", "Ferraro", "Bogdanov", "Serra"],
-          year: 2021,
-          tags: ["music classification", "tagging", "evaluation"]
-        },
-        markdown:
-          "# Music Classification Beyond Supervised Learning\n\nThis survey reviews music classification and tagging systems for real-world applications.\n\n## Evaluation\n\nIt argues that supervised benchmark accuracy is not enough for deployment and that realistic data, noisy labels, and calibration matter.\n\n## Relevance\n\nThe paper is useful for metadata tagging, evaluation rubrics, and project-level comparison notes."
-      },
-      {
-        collectionId: datasets.id,
-        metadata: {
-          title: "Salsa, a Dataset for Beat Estimation in Salsa Music",
-          authors: ["Gomez-Marin", "Rapini", "Jordanous"],
-          year: 2024,
-          tags: ["dataset", "salsa", "beat estimation"]
-        },
-        markdown:
-          "# Salsa Dataset\n\nThe dataset targets beat estimation in salsa music and addresses genre-specific rhythmic structure.\n\n## Dataset Contribution\n\nIt is relevant for underrepresented Latin music styles and can support stress-testing rhythm models outside common Western datasets.\n\n## Evidence Need\n\nA project should compare annotation protocol, size, and genre coverage against other beat tracking datasets."
-      }
-    ];
-
-    for (const item of papers) {
-      const imported = this.importPaper({
-        projectId: project.id,
-        subcollectionIds: [item.collectionId],
-        projectTags: item.metadata.tags,
-        metadata: item.metadata
-      });
-      this.writeMarkdown(imported.paper.id, item.markdown);
-    }
-  }
 }
 
 export function parseMarkdownPassages(paperId: string, markdown: string): Passage[] {
