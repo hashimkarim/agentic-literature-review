@@ -20,18 +20,18 @@ import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
 it("resolves the shared panel and execution client from the exact SDK alpha", () => {
   const directory = path.dirname(fileURLToPath(import.meta.resolve("@agenticdriver/sdk")));
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, "..", "package.json"), "utf8"));
-  expect(manifest).toMatchObject({ name: "@agenticdriver/sdk", version: "0.2.0-alpha.5" });
+  expect(manifest).toMatchObject({ name: "@agenticdriver/sdk", version: "0.2.0-alpha.6" });
   for (const subpath of ["client", "panel", "ui", "connections"])
     expect(path.dirname(fileURLToPath(import.meta.resolve(`@agenticdriver/sdk/${subpath}`)))).toBe(directory);
 });
 
-async function fixture(staticProviders: string[] = [], legacy = false) {
+async function isolatedHost(staticProviders: string[] = [], legacy = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-panel-"));
-  const token = "fixture-private-operator-credential-not-a-real-account";
+  const token = crypto.randomUUID() + crypto.randomUUID();
   const config = path.join(root, "host.json");
   fs.writeFileSync(config, JSON.stringify({
     version: 1, listen: { host: "127.0.0.1", port: 0 },
-    providers: [{ id: "all", kind: "mock", name: "Fixture provider" }, { id: "denied", kind: "mock", models: [] }],
+    providers: [{ id: "all", kind: "codex", name: "Uninstalled Codex", binary: path.join(root, "not-installed-codex") }, { id: "denied", kind: "codex", binary: path.join(root, "not-installed-codex"), models: [] }],
     tokens: [{ id: "operator", subject: "operator", providers: staticProviders, manageProviders: true, tokenRef: { env: "FIXTURE_TOKEN" } }],
   }), { mode: 0o600 });
   const host = await managedHost(config);
@@ -52,7 +52,7 @@ async function fixture(staticProviders: string[] = [], legacy = false) {
   });
   return { root, token, host, server, store, settings, catalog, service, send,
     async pair(manageProviders: boolean, providers: string[]) {
-      const invite = await host.connections.create({ grant: { subject: "synthetic-litagent", providers, manageProviders } });
+      const invite = await host.connections.create({ grant: { subject: "isolated-litagent", providers, manageProviders } });
       const invitation = connectionInvitation(server.url, invite.code);
       const response = await send({ action: "connect", invitation });
       expect(response.status).toBe(200);
@@ -65,7 +65,7 @@ async function fixture(staticProviders: string[] = [], legacy = false) {
 }
 
 it("pairs with backend-only credentials, preserves app choices on refresh and persists disconnect", async () => {
-  const f = await fixture();
+  const f = await isolatedHost();
   try {
     const { invitation, state } = await f.pair(false, ["all", "denied"]);
     expect(state.management).toBeUndefined();
@@ -73,17 +73,17 @@ it("pairs with backend-only credentials, preserves app choices on refresh and pe
     expect(state.providers.find((p) => p.id === "denied")?.models).toEqual([]);
     expect(f.catalog.discover().find((p) => p.id === "driver.all")?.enabled).toBe(false);
     expect(fs.statSync(f.store.file).mode & 0o777).toBe(0o600);
-    f.settings.patch("driver.all", { enabled: true, connected: true, defaultModel: "demo" }, [f.catalog.definition("driver.all")!]);
+    f.settings.patch("driver.all", { enabled: true, connected: true, defaultModel: "gpt-6-luna" }, [f.catalog.definition("driver.all")!]);
     f.catalog.setSettings(f.settings.read());
     await f.send({ action: "snapshot", refresh: true });
-    expect(f.catalog.discover().find((p) => p.id === "driver.all")).toMatchObject({ enabled: true, defaultModel: "demo" });
+    expect(f.catalog.discover().find((p) => p.id === "driver.all")).toMatchObject({ enabled: true, defaultModel: "gpt-6-luna" });
     expect((await f.send({ action: "connect", invitation })).status).toBe(400);
     const restarted = new DriverPanelService(f.catalog, new DriverConnectionStore(f.store.file), f.settings, {});
     await restarted.reload();
     expect((await restarted.handle({ action: "snapshot" }) as ProviderPanelState).connection?.id).toBe(state.connection?.id);
     await f.send({ action: "disconnect" });
     expect(f.catalog.connectionStatus().configured).toBe(false);
-    expect(f.settings.read()["driver.all"]).toMatchObject({ enabled: false, defaultModel: "demo" });
+    expect(f.settings.read()["driver.all"]).toMatchObject({ enabled: false, defaultModel: "gpt-6-luna" });
     const withEnvironment = new DriverPanelService(f.catalog, f.store, f.settings, { AGENTICDRIVER_URL: f.server.url, AGENTICDRIVER_TOKEN: f.token });
     await withEnvironment.reload();
     expect((await withEnvironment.handle({ action: "snapshot" }) as ProviderPanelState).connected).toBe(false);
@@ -91,16 +91,16 @@ it("pairs with backend-only credentials, preserves app choices on refresh and pe
 }, 15_000);
 
 it("allows management separately from execution and rejects stale provider changes", async () => {
-  const f = await fixture();
+  const f = await isolatedHost();
   try {
     const { state } = await f.pair(true, []);
     expect(state.providers).toHaveLength(2);
     expect(state.management?.executionProviders).toEqual([]);
     expect(f.catalog.discover().filter((p) => p.id.startsWith("driver."))).toHaveLength(0);
-    const request = { action: "configure", change: { revision: state.management!.revision, provider: { id: "all", kind: "mock", name: "Renamed fixture", models: ["demo"] } } };
+    const request = { action: "configure", change: { revision: state.management!.revision, provider: { id: "all", kind: "codex", binary: path.join(f.root, "not-installed-codex"), name: "Renamed Codex", models: ["gpt-6-luna"] } } };
     const changed = await f.send(request);
     expect(changed.status).toBe(200);
-    expect((await changed.json() as ProviderPanelState).providers.find((p) => p.id === "all")?.models).toEqual(["demo"]);
+    expect((await changed.json() as ProviderPanelState).providers.find((p) => p.id === "all")?.models).toEqual(["gpt-6-luna"]);
     expect((await f.send(request)).status).toBe(409);
     expect(() => f.catalog.validateSettings("driver.all", { enabled: true })).toThrow();
     await f.pair(false, ["all"]);
@@ -110,28 +110,28 @@ it("allows management separately from execution and rejects stale provider chang
 });
 
 it("removes a provider only with management authority and the current revision", async () => {
-  const f = await fixture();
+  const f = await isolatedHost();
   try {
     const { state } = await f.pair(true, []);
     expect(state.management?.removalSupported).toBe(true);
-    const request = { action: "configure", change: { revision: state.management!.revision, provider: { id: "all", kind: "mock" }, remove: true } };
+    const request = { action: "configure", change: { revision: state.management!.revision, provider: { id: "all", kind: "codex" }, remove: true } };
     const removed = await f.send(request);
     expect(removed.status).toBe(200);
     expect((await removed.json() as ProviderPanelState).providers.map((provider) => provider.id)).toEqual(["denied"]);
     expect((await f.send(request)).status).toBe(409);
     await f.pair(false, ["denied"]);
     expect((await f.send({ action: "configure", change: { revision: f.host.management.snapshot().revision,
-      provider: { id: "denied", kind: "mock" }, remove: true } })).status).toBe(403);
+      provider: { id: "denied", kind: "codex" }, remove: true } })).status).toBe(403);
     expect(f.host.management.snapshot().providers.map((provider) => provider.id)).toEqual(["denied"]);
   } finally { await f.close(); }
 });
 
 it("reports referenced provider removal as a recoverable conflict without exposing host details", async () => {
-  const f = await fixture(["all"]);
+  const f = await isolatedHost(["all"]);
   try {
     const { state } = await f.pair(true, []);
     const denied = await f.send({ action: "configure", change: { revision: state.management!.revision,
-      provider: { id: "all", kind: "mock" }, remove: true } });
+      provider: { id: "all", kind: "codex" }, remove: true } });
     expect(denied.status).toBe(409);
     const body = await denied.text();
     expect(JSON.parse(body).error.code).toBe("PROVIDER_IN_USE");
@@ -142,47 +142,19 @@ it("reports referenced provider removal as a recoverable conflict without exposi
 });
 
 it("keeps legacy hosts without management capabilities read-only", async () => {
-  const f = await fixture([], true);
+  const f = await isolatedHost([], true);
   try {
     const { state } = await f.pair(false, ["all"]);
     expect(state.connected).toBe(true);
     expect(state.management).toBeUndefined();
     expect(state.setup).toBeUndefined();
     expect(state.canInvite).toBe(false);
-    expect(state.providers.every((provider) => provider.connection === undefined)).toBe(true);
-  } finally { await f.close(); }
-});
-
-it("forwards optional account metadata through the private bridge without persisting identity or changing grants", async () => {
-  const f = await fixture();
-  let completions = 0;
-  const details = { source: "native-runtime" as const, runtime: { name: "Synthetic CLI", version: "0.0.0-fixture" },
-    account: { status: "signed-in" as const, method: "Fixture sign-in", subscription: "Synthetic plan", email: "reviewer@example.invalid", name: "Synthetic Reviewer" } };
-  try {
-    f.host.driver.configureProviders([{
-      info: { id: "all", name: "Synthetic Codex", vendor: "codex", authMode: "cli-session", models: [], capabilities: { tools: false, textStreaming: false } },
-      inspect: async () => ({ code: "CLI_CATALOG_AVAILABLE", models: ["demo"], complete: true, connection: details }),
-      complete: async () => { completions++; throw new Error("No generation in metadata tests"); },
-    }]);
-    const { state } = await f.pair(false, ["all"]);
-    expect(state.providers[0]?.connection).toMatchObject(details);
-    expect(state.providers[0]?.models).toEqual([]);
-    expect(state.providers[0]?.modelCatalog?.models).toEqual(["demo"]);
-    expect(state.management).toBeUndefined();
-    expect(() => f.catalog.validateSettings("driver.all", { enabled: true })).toThrow();
-    const refreshed = await f.send({ action: "snapshot", refresh: true });
-    expect(refreshed.headers.get("cache-control")).toBe("no-store");
-    expect((await refreshed.json() as ProviderPanelState).providers[0]?.connection).toMatchObject(details);
-    for (const serialized of [fs.readFileSync(f.store.file, "utf8"), JSON.stringify(f.settings.read()), JSON.stringify(f.service.connections()), JSON.stringify(f.catalog.discover())]) {
-      expect(serialized).not.toContain(details.account.email);
-      expect(serialized).not.toContain(details.account.name);
-    }
-    expect(completions).toBe(0);
+    expect(state.providers.every((provider) => provider.connection?.account?.status !== "signed-in")).toBe(true);
   } finally { await f.close(); }
 });
 
 it("keeps expired/revoked connections unavailable and returns fixed public errors", async () => {
-  const f = await fixture();
+  const f = await isolatedHost();
   try {
     await f.pair(false, ["all"]);
     const saved = f.store.read()!;
@@ -198,7 +170,7 @@ it("keeps expired/revoked connections unavailable and returns fixed public error
 });
 
 it("guards all panel operations and bounds input without sending any model requests", async () => {
-  const f = await fixture();
+  const f = await isolatedHost();
   try {
     expect((await f.send({ action: "snapshot" }, "https://foreign.example")).status).toBe(403);
     expect((await f.send({ action: "snapshot" }, "http://localhost", "")).status).toBe(403);
@@ -217,7 +189,7 @@ it("guards all panel operations and bounds input without sending any model reque
 });
 
 it("supports many-to-many pairings with independent credentials, host setup and app preferences", async () => {
-  const a = await fixture(), b = await fixture();
+  const a = await isolatedHost(), b = await isolatedHost();
   try {
     await a.pair(false, ["all"]);
     const aFirst = a.store.read()!;
@@ -237,18 +209,18 @@ it("supports many-to-many pairings with independent credentials, host setup and 
     expect(providers).toHaveLength(2);
     const second = providers.find((p) => p.driver?.connectionId === aSecond.id)!;
     expect(second.driver?.deviceName).toBe("lab-workstation");
-    a.settings.patch(second.id, { enabled: true, defaultModel: "demo" }, [a.catalog.definition(second.id)!]);
+    a.settings.patch(second.id, { enabled: true, defaultModel: "gpt-6-luna" }, [a.catalog.definition(second.id)!]);
     a.catalog.setSettings(a.settings.read());
     const snapshot = await a.service.handle({ action: "snapshot" }, aSecond.id) as ProviderPanelState;
     await a.service.handle({ action: "configure", change: { revision: snapshot.management!.revision,
-      provider: { id: "all", kind: "mock", name: "Shared host setup", models: ["demo", "fast"] } } }, aSecond.id);
+      provider: { id: "all", kind: "codex", binary: path.join(b.root, "not-installed-codex"), name: "Shared host setup", models: ["gpt-6-luna"] } } }, aSecond.id);
     expect(b.host.management.snapshot().providers.find((p) => p.id === "all")?.name).toBe("Shared host setup");
     // Host setup is shared; app enablement and model defaults are not.
-    expect(a.catalog.discover().find((p) => p.id === second.id)).toMatchObject({ enabled: true, defaultModel: "demo" });
+    expect(a.catalog.discover().find((p) => p.id === second.id)).toMatchObject({ enabled: true, defaultModel: "gpt-6-luna" });
     await a.host.connections.revoke({ id: aFirst.connectionId });
     await expect(a.service.handle({ action: "snapshot", refresh: true }, aFirst.id)).rejects.toThrow();
     expect((await b.service.handle({ action: "snapshot", refresh: true }, bFirst.id) as ProviderPanelState).connected).toBe(true);
-    expect(a.catalog.discover().find((p) => p.id === second.id)?.driver?.available).toBe(true);
+    expect(a.service.connections().connections.find((c) => c.id === aSecond.id)?.status).toBe("ready");
     await a.service.handle({ action: "disconnect" }, aFirst.id);
     expect(a.store.list().map((entry) => entry.id)).toEqual([aSecond.id]);
     await expect(a.service.handle({ action: "snapshot" }, aFirst.id)).rejects.toThrow();

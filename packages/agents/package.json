@@ -20,6 +20,6 @@
   },
   "dependencies": {
     "@litagent/contracts": "*",
-    "@agenticdriver/sdk": "0.2.0-alpha.5"
+    "@agenticdriver/sdk": "0.2.0-alpha.6"
   }
 }

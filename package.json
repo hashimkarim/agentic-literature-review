@@ -21,9 +21,8 @@
     "test": "bun run test:isolation && bunx vitest run",
     "test:isolation": "bun scripts/check-test-isolation.ts",
     "test:chat-ui": "bun scripts/check-chat-ui.ts",
-    "test:driver-ui": "bun scripts/check-driver-ui.ts",
+    "test:driver-live": "bunx tsx scripts/check-driver-live.ts",
     "test:writing-ui": "bunx tsx scripts/check-writing-ui.ts",
-    "test:writing-assistant-ui": "bunx tsx scripts/check-writing-assistant-ui.ts",
     "test:writing-build-ui": "bunx tsx scripts/check-writing-build-ui.ts",
     "test:writing-import-ui": "bunx tsx scripts/check-writing-import-ui.ts",
     "check": "bun run typecheck && bun run test"

@@ -32,7 +32,7 @@
       "name": "@litagent/server",
       "version": "0.1.0",
       "dependencies": {
-        "@agenticdriver/sdk": "0.2.0-alpha.5",
+        "@agenticdriver/sdk": "0.2.0-alpha.6",
         "@litagent/agents": "*",
         "@litagent/contracts": "*",
         "@litagent/indexer": "*",
@@ -50,7 +50,7 @@
       "name": "@litagent/web",
       "version": "0.1.0",
       "dependencies": {
-        "@agenticdriver/sdk": "0.2.0-alpha.5",
+        "@agenticdriver/sdk": "0.2.0-alpha.6",
         "@codemirror/commands": "6.11.1",
         "@codemirror/language": "6.12.4",
         "@codemirror/legacy-modes": "6.5.4",
@@ -83,7 +83,7 @@
       "name": "@litagent/agents",
       "version": "0.1.0",
       "dependencies": {
-        "@agenticdriver/sdk": "0.2.0-alpha.5",
+        "@agenticdriver/sdk": "0.2.0-alpha.6",
         "@litagent/contracts": "*",
       },
     },
@@ -149,7 +149,7 @@
   "packages": {
     "@agenticdriver/provider-icons": ["@agenticdriver/provider-icons@https://github.com/agenticdriver/provider-icons/releases/download/v0.1.0-alpha.1/agenticdriver-provider-icons-0.1.0-alpha.1.tgz", {}, "sha512-lAazllv3zFwz9kF0eKdU533e9oJbyPXgCn+dP3sVlhemUdZCqQwOD05HVmv2C5t6uhzFsnmW9v1oFEAJ5uyjBg=="],
 
-    "@agenticdriver/sdk": ["@agenticdriver/sdk@0.2.0-alpha.5", "", { "dependencies": { "@agenticdriver/provider-icons": "https://github.com/agenticdriver/provider-icons/releases/download/v0.1.0-alpha.1/agenticdriver-provider-icons-0.1.0-alpha.1.tgz", "ajv": "^8.17.1", "zod": "^4.0.0" }, "bin": { "agenticdriver": "dist/cli.js" } }, "sha512-Sgjuhmcg1RlTOOueBZtVBL5IvVUvWL0UNVDxsVSsr5zF5DojcW/tjuHX1rSn20nLOtgDFjBDNVifokxk7Q5vlA=="],
+    "@agenticdriver/sdk": ["@agenticdriver/sdk@0.2.0-alpha.6", "", { "dependencies": { "@agenticdriver/provider-icons": "https://github.com/agenticdriver/provider-icons/releases/download/v0.1.0-alpha.1/agenticdriver-provider-icons-0.1.0-alpha.1.tgz", "ajv": "^8.17.1", "zod": "^4.0.0" }, "bin": { "agenticdriver": "dist/cli.js" } }, "sha512-eWUXwdnCNaLFHbbEkQezLRZvsjKnvlU4C7gnwJkd9ljsrqzKrp9Hh1ktxM6TJjDa2+/9n77Vx6hjKHVyAhLuMA=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 
