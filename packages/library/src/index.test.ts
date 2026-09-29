@@ -4,7 +4,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { LitAgentRepository } from "./index";
+import { LitAgentRepository, parseMarkdownPassages } from "./index";
+
+it("does not invent PDF pages for Markdown without explicit page markers", () => {
+  const passages = parseMarkdownPassages("paper", Array.from({ length: 20 }, (_, index) => `Paragraph ${index}`).join("\n\n"));
+  expect(passages).toHaveLength(20);
+  expect(passages.every((passage) => passage.page === null)).toBe(true);
+  expect(passages[19]?.markdownStart).toBe(38);
+});
+
+it("uses explicit zero-based Marker anchors for subsequent passage pages", () => {
+  const passages = parseMarkdownPassages("paper", 'Unmapped preface\n\n# <span id="page-0-0"></span>First\n\nFirst page\n\n# <span id="page-4-0"></span>Later\n\nLater page');
+  expect(passages.map((passage) => passage.page)).toEqual([null, 1, 5]);
+});
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const localPdfFixtureRoot = path.join(repoRoot, "tests/fixtures/pdfs");
@@ -381,7 +393,7 @@ describe("LitAgentRepository", () => {
       metadata: { title: "Citation Paper" }
     });
     const markdown = [
-      "# Overview",
+      '# <span id="page-0-0"></span>Overview',
       "",
       "First paragraph for the overview.",
       "",

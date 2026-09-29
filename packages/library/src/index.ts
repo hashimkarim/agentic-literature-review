@@ -1327,6 +1327,7 @@ export function parseMarkdownPassages(paperId: string, markdown: string): Passag
   let section = "Overview";
   let paragraph: string[] = [];
   let paragraphStart = 0;
+  let page: number | null = null;
 
   const flush = (lineIndex: number) => {
     const quote = paragraph.join(" ").trim();
@@ -1339,7 +1340,7 @@ export function parseMarkdownPassages(paperId: string, markdown: string): Passag
       PassageSchema.parse({
         id: `${paperId}_passage_${String(index + 1).padStart(4, "0")}`,
         paperId,
-        page: Math.floor(index / 8) + 1,
+        page,
         section,
         markdownStart: paragraphStart,
         markdownEnd: lineIndex,
@@ -1351,6 +1352,13 @@ export function parseMarkdownPassages(paperId: string, markdown: string): Passag
   };
 
   lines.forEach((line, index) => {
+    // Marker page anchors are zero-based. Paragraph counts are not PDF coordinates.
+    const marker = line.match(/<span\s+id=["']page-(\d+)-\d+["']\s*>\s*<\/span>/);
+    if (marker) {
+      flush(index);
+      const number = Number(marker[1]) + 1;
+      page = Number.isSafeInteger(number) ? number : null;
+    }
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       flush(index);

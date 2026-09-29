@@ -21,8 +21,8 @@ export function ReaderPanel({
   onTabChange: (tab: "pdf" | "markdown" | "notes") => void;
 }) {
   const paper = paperEntry?.paper ?? null;
-  const pdfHighlights = qa?.evidence.map((item) => ({
-    page: item.page ?? 1,
+  const pdfHighlights = qa?.evidence.filter((item) => item.page !== null).map((item) => ({
+    page: item.page!,
     quote: item.quote,
     color: "green" as const
   })) ?? [];

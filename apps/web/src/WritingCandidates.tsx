@@ -155,6 +155,6 @@ function WritingEvidenceDialog({ source, onClose }: { source: WritingSourceRef; 
     <h3>{source.title}</h3><p>{source.kind} / lines {source.startLine}-{source.endLine}{source.page ? ` / page ${source.page}` : ""}</p><code>Revision {source.revision.slice(0, 12)}</code>
     <blockquote>{source.quote}</blockquote>
     <div className="writing-evidence-links">{source.paperId && <><button type="button" onClick={() => setPdf((value) => !value)}><FileText size={15} />{pdf ? "Hide PDF" : "Open PDF"}</button><a href={`${API_BASE}/api/papers/${encodeURIComponent(source.paperId)}/markdown`} target="_blank" rel="noreferrer"><ExternalLink size={14} />Markdown source</a></>}{source.originUrl && <a href={source.originUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Original source</a>}</div>
-    {pdf && source.paperId && <Suspense fallback={<p>Loading PDF...</p>}><PdfReader readOnly source={`${API_BASE}/api/papers/${encodeURIComponent(source.paperId)}/pdf`} highlights={[{ id: source.id, page: source.page ?? 1, quote: source.quote, active: true }]} /></Suspense>}
+    {pdf && source.paperId && <Suspense fallback={<p>Loading PDF...</p>}><PdfReader readOnly source={`${API_BASE}/api/papers/${encodeURIComponent(source.paperId)}/pdf`} highlights={source.page ? [{ id: source.id, page: source.page, quote: source.quote, active: true }] : []} /></Suspense>}
   </dialog>;
 }
