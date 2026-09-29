@@ -115,7 +115,7 @@ try {
       assert.ok(hits.some((hit) => hit.paper.id === paper.id && hit.passage));
       receipt.retrieval = hits; checks.push("full-paper selected-scope passage retrieval");
     }
-    const answer: QaResponse = previous?.answer ?? await request<QaResponse>("/qa", "POST", { paperId: paper.id, question: rc ? "According to section 5, why does retrieving more documents not necessarily improve open-domain QA? Give two sentences and include the 20 versus 50 document comparison." : "In two sentences, what effect does the position of relevant information have? Preserve the qualification 'often'.", providerId: selected.id, model, threadRevision: 0 });
+    const answer: QaResponse = previous?.answer ?? await request<QaResponse>("/qa", "POST", { paperId: paper.id, question: rc ? "According to the selected paper, why does retrieving more documents not necessarily improve open-domain QA? Give two sentences and include the 20 versus 50 document comparison. Cite the introduction for that numerical comparison and section 5 for reader saturation." : "In two sentences, what effect does the position of relevant information have? Preserve the qualification 'often'.", providerId: selected.id, model, threadRevision: 0 });
     receipt.answer = answer; save();
     assert.equal(answer.status, "answered"); assert.ok(answer.evidence.length > 0);
     assert.ok(answer.evidence.every((e) => e.paperId === paper.id));
@@ -131,7 +131,7 @@ try {
     if (rc) assert.ok(context.coverage.every((item) => item.status === "complete"), "Do not claim full-paper coverage for truncated context.");
     const batch = await request<WritingCandidateBatch>(`/manuscripts/${document.id}/candidates`, "POST", {
       requestId: randomUUID(), path: file.path, expectedRevision: file.revision, from: file.content.length, to: file.content.length,
-      instruction: rc ? "Write two cautious sentences summarizing section 5's open-domain QA finding: increasing retrieved documents from 20 to 50 has limited benefit. Cite exact supporting passages and preserve the numerical qualifications." : "Write two cautious sentences about the positional limitation described in the selected reading notes. Preserve 'often'; do not invent numerical results.", audience: 2,
+      instruction: rc ? "Write two cautious sentences summarizing the paper's open-domain QA finding: increasing retrieved documents from 20 to 50 has limited benefit. Cite the introduction for the numerical comparison and section 5 for reader saturation. Cite exact supporting passages and preserve the numerical qualifications." : "Write two cautious sentences about the positional limitation described in the selected reading notes. Preserve 'often'; do not invent numerical results.", audience: 2,
       targets: [{ providerId: selected.id, model, count: 1 }],
       assistant: { action: "draft", context: selection, expectedContextRevision: context.revision, wordBudget: 60, jargon: "define", math: "conceptual", language: "English", style: "" },
     });
