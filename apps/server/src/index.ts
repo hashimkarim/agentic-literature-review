@@ -35,6 +35,7 @@ import { manuscriptRoutes } from "./manuscript-routes";
 import { DriverConnectionStore, driverConnectionRoutes } from "./driver-connection";
 import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
 import { localImportRoutes } from "./local-import";
+import { paperSourceRoutes } from "./paper-source-routes";
 import { WritingContextService } from "@litagent/workflows";
 import { TexBuildService } from "@litagent/workflows";
 import { WorkflowEngine, WorkflowStartRequestSchema, QaThreadConflictError, convertPaperWithMarker, discoverPdfInputs, markerRuntimeStatus, PdfProcessingOptionsSchema, WritingCandidateService, writingTargetValidator } from "@litagent/workflows";
@@ -90,6 +91,7 @@ app.use(express.json({ limit: "10mb" }));
 app.use("/api/settings/driver", driverConnectionRoutes(providers, driverConnectionStore, providerSettings, () => driverPanel.reload()));
 const manuscripts = new ManuscriptStore(repo.root);
 app.use("/api/local-import", localImportRoutes(repo, manuscripts, indexPaper));
+app.use("/api/papers", paperSourceRoutes(repo, indexPaper));
 const writingContext = new WritingContextService(manuscripts, repo);
 const writingCandidates = new WritingCandidateService(manuscripts, new AgentHarness({ catalog: providers }), writingTargetValidator(providers, () => providerSettings.read()), writingContext);
 const texBuilds = new TexBuildService(manuscripts);
@@ -557,6 +559,7 @@ app.get(
       return;
     }
     const stat = fs.statSync(pdfPath);
+    if (repo.readPaper(routeParam(req, "id"))?.storage === "linked-files") res.set("Cache-Control", "no-store");
     const range = req.headers.range;
     if (typeof range === "string") {
       const match = range.match(/^bytes=(\d*)-(\d*)$/);

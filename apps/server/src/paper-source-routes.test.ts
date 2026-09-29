@@ -1,0 +1,54 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type { AddressInfo } from "node:net";
+import express from "express";
+import { expect, it } from "vitest";
+import { LitAgentRepository, ManuscriptStore } from "@litagent/library";
+import type { PaperFolderPreview } from "@litagent/contracts";
+import { localImportRoutes } from "./local-import";
+import { paperSourceRoutes } from "./paper-source-routes";
+
+it("serves explicitly imported Markdown assets and refreshes linked source revisions over HTTP", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-paper-http-"));
+  const repo = new LitAgentRepository(path.join(root, "research")); repo.init();
+  const source = path.join(root, "sources"); fs.mkdirSync(path.join(source, "Study assets"), { recursive: true });
+  const image = Buffer.from([137, 80, 78, 71, 1]);
+  fs.writeFileSync(path.join(source, "Study.md"), "# Methods\n\nParticipants were randomized.\n\n![](Study assets/figure.png)");
+  fs.writeFileSync(path.join(source, "Study assets/figure.png"), image);
+  fs.writeFileSync(path.join(source, "unreferenced.png"), "private image");
+  const indexed: string[] = [];
+  const app = express(); app.use(express.json());
+  app.use("/import", localImportRoutes(repo, new ManuscriptStore(repo.root), (id) => indexed.push(id)));
+  app.use("/papers", paperSourceRoutes(repo, (id) => indexed.push(id)));
+  const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (route: string, body: unknown, headers: Record<string, string> = { "X-LitAgent-Local": "1" }) => fetch(base + route, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+  try {
+    expect((await post("/import/papers/preview", { path: source }, {})).status).toBe(403);
+    const preview = await (await post("/import/papers/preview", { path: source })).json() as PaperFolderPreview;
+    const input = { previewId: preview.id, entryId: preview.entries[0]!.id, storage: "linked-files" };
+    const imported = await post("/import/papers/entry", input); expect(imported.status).toBe(201);
+    const { paper } = await imported.json() as { paper: { id: string } };
+    const asset = () => fetch(`${base}/papers/${paper.id}/markdown-assets?path=${encodeURIComponent("Study assets/figure.png")}`);
+    const response = await asset(); expect(response.status).toBe(200); expect(response.headers.get("content-type")).toContain("image/png");
+    expect(response.headers.get("content-security-policy")).toBe("sandbox");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(image);
+    expect((await fetch(`${base}/papers/${paper.id}/markdown-assets?path=unreferenced.png`)).status).toBe(404);
+    expect((await fetch(`${base}/papers/${paper.id}/markdown-assets?path=../../unreferenced.png`)).status).toBe(404);
+    const status = () => fetch(`${base}/papers/${paper.id}/local-source`);
+    const before = await (await status()).json() as { state: { revision: string } };
+    fs.writeFileSync(path.join(source, "Study.md"), "# Methods\n\nParticipants were stratified.\n\n![](Study assets/figure.png)");
+    const refreshed = await status(); expect(refreshed.headers.get("cache-control")).toBe("no-store");
+    const after = await refreshed.json() as { state: { revision: string; available: boolean } };
+    expect(after.state.available).toBe(true); expect(after.state.revision).not.toBe(before.state.revision);
+    expect(indexed).toEqual([paper.id, paper.id]); expect(repo.readPassages(paper.id)[0]!.quote).toContain("stratified");
+    fs.renameSync(source, `${source}-away`);
+    expect((await (await status()).json() as { state: { available: boolean } }).state.available).toBe(false);
+    expect((await asset()).status).toBe(404); expect(repo.readPassages(paper.id)).toEqual([]);
+    fs.renameSync(`${source}-away`, source);
+    expect((await (await status()).json() as { state: { available: boolean } }).state.available).toBe(true);
+    expect((await asset()).status).toBe(200);
+    expect((await post("/import/papers/entry", input)).status).toBe(409);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+});

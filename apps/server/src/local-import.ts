@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { LocalFolderRequestSchema, ImportLocalEntrySchema, type LocalFolderPreview, type WritingAttachmentInput } from "@litagent/contracts";
-import type { LitAgentRepository, ManuscriptStore } from "@litagent/library";
+import { LocalPaperError, type LitAgentRepository, type ManuscriptStore } from "@litagent/library";
 import { requireLocalAccess } from "./local-access";
 
 const excluded = /^(node_modules|vendor|dist|build|out|target|__pycache__|venv|env|coverage|wandb|checkpoints)$/i;
@@ -72,6 +72,14 @@ export function localImportRoutes(repo: LitAgentRepository, manuscripts: Manuscr
   const router = Router(), folders = new LocalFolderImports();
   let importing = false;
   router.use(requireLocalAccess);
+  const paperError = (res: import("express").Response, error: unknown) => res.status(error instanceof LocalPaperError ? error.status : 400).json({ error: error instanceof LocalPaperError ? error.message : "Could not import those paper files. Check the selected paths and scan again." });
+  router.post("/papers/preview", (req, res) => {
+    try { res.json(repo.localPapers.preview(req.body)); } catch (error) { paperError(res, error); }
+  });
+  router.post("/papers/entry", (req, res) => {
+    try { const result = repo.localPapers.importEntry(req.body); indexPaper(result.paper.id); res.status(201).json(result); }
+    catch (error) { paperError(res, error); }
+  });
   router.post("/preview", async (req, res) => {
     try { res.json(await folders.preview(req.body)); }
     catch { res.status(400).json({ error: "Could not scan that folder. Use a readable absolute folder on the LitAgent server and retry." }); }
