@@ -1631,10 +1631,10 @@ function CitationTargetBanner({ target }: { target: CitationTarget }) {
       <div className="ct-head">
         <Icon name="quote" size={14} />
         <span>Resolved citation</span>
-        <Badge variant="accent">p.{target.page ?? "?"}</Badge>
+        <Badge variant="accent">{target.page ? `p.${target.page}` : "Page unmapped"}</Badge>
       </div>
       <div className="ct-meta">
-        <span>PDF {target.pdf.available ? `page ${target.pdf.page ?? "?"}` : "not attached"}</span>
+        <span>PDF {target.pdf.available ? target.pdf.page ? `page ${target.pdf.page}` : "page unmapped" : "not attached"}</span>
         <span>Markdown {target.markdown.available ? `L${target.markdown.startLine ?? "?"}-L${target.markdown.endLine ?? "?"}` : "not generated"}</span>
         <span>Rects: {target.pdf.rectSource}</span>
       </div>
@@ -1662,7 +1662,7 @@ function PdfView({
 }) {
   const pdfPath = paper.entry.paper.filePaths.pdf;
   const citationHighlight =
-    citationTarget && citationTarget.paperId === paper.id && citationTarget.pdf.available
+    citationTarget && citationTarget.paperId === paper.id && citationTarget.pdf.available && (citationTarget.pdf.page || citationTarget.page)
       ? [
           {
             id: citationTarget.passageId,

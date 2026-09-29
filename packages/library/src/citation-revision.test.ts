@@ -14,7 +14,7 @@ function fixture() {
   const repo = new LitAgentRepository(root);
   repo.init();
   const { paper } = repo.importPaper({ metadata: { title: "Synthetic citation study" } });
-  const markdown = "# Results\n\nAccuracy was 0.92.\n\nA separate limitation.";
+  const markdown = '# <span id="page-0-0"></span>Results\n\nAccuracy was 0.92.\n\nA separate limitation.';
   const { passages } = repo.writeMarkdown(paper.id, markdown);
   const passage = passages[0]!;
   const request = { paperId: paper.id, passageId: passage.id, expectedQuote: passage.quote,
