@@ -5,6 +5,20 @@ import { manuscriptLimits, skippedImportPath, sourceKind, validateTreePaths } fr
 
 export interface ManuscriptImportData { preview: ManuscriptImportPreview; contents: Map<string, Buffer> }
 
+export function describeManuscriptSources({ preview, contents }: ManuscriptImportData): void {
+  const roots = preview.entryCandidates.filter((name) => /^\s*\\documentclass(?:\[|\{)/m.test(contents.get(name)!.toString("utf8")));
+  preview.suggestedEntry = roots.includes("main.tex") ? "main.tex" : roots.length === 1 ? roots[0]! : preview.entryCandidates.length === 1 ? preview.entryCandidates[0]! : null;
+  const text = preview.files.filter((file) => file.kind === "source").map((file) => contents.get(file.path)!.toString("utf8")).join("\n");
+  if (/backend\s*=\s*biber/.test(text)) preview.requirements.push("biber");
+  if (/\\makeglossaries/.test(text)) preview.requirements.push("glossaries");
+  if (/\\(?:setmainfont|setsansfont|setmonofont|newfontfamily)/.test(text)) preview.requirements.push("fonts");
+  if (preview.files.some((file) => /(?:latexmkrc|\.(?:py|sh))$/.test(file.path))) {
+    preview.requirements.push("scripts");
+    preview.warnings.push("Build scripts are kept as text. Compilation uses the app's fixed build steps, never these scripts.");
+  }
+  preview.files.sort((a, b) => a.path.localeCompare(b.path)); preview.entryCandidates.sort();
+}
+
 // Inspect central-directory metadata before decoding any content. Never extract
 // archive names onto disk; publication is the store's separate atomic operation.
 export async function inspectManuscriptZip(bytes: Buffer): Promise<ManuscriptImportData> {
@@ -66,17 +80,7 @@ export async function inspectManuscriptZip(bytes: Buffer): Promise<ManuscriptImp
     }
     preview.folders = validateTreePaths([...contents.keys()], preview.folders);
     if (!preview.entryCandidates.length) throw new Error("No supported .tex files were found.");
-    const roots = preview.entryCandidates.filter((name) => /^\s*\\documentclass(?:\[|\{)/m.test(contents.get(name)!.toString("utf8")));
-    preview.suggestedEntry = roots.includes("main.tex") ? "main.tex" : roots.length === 1 ? roots[0]! : preview.entryCandidates.length === 1 ? preview.entryCandidates[0]! : null;
-    const text = preview.files.filter((file) => file.kind === "source").map((file) => contents.get(file.path)!.toString("utf8")).join("\n");
-    if (/backend\s*=\s*biber/.test(text)) preview.requirements.push("biber");
-    if (/\\makeglossaries/.test(text)) preview.requirements.push("glossaries");
-    if (/\\(?:setmainfont|setsansfont|setmonofont|newfontfamily)/.test(text)) preview.requirements.push("fonts");
-    if (preview.files.some((file) => /(?:latexmkrc|\.(?:py|sh))$/.test(file.path))) {
-      preview.requirements.push("scripts");
-      preview.warnings.push("Imported build scripts are kept as text. Compilation uses the app's fixed build steps, never these scripts.");
-    }
-    preview.files.sort((a, b) => a.path.localeCompare(b.path)); preview.entryCandidates.sort();
+    describeManuscriptSources({ preview, contents });
     return { preview, contents };
   } finally { zip.close(); }
 }

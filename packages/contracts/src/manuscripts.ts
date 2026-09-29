@@ -25,13 +25,15 @@ export const ManuscriptSchema = z.object({
   projectIds: ManuscriptProjectIdsSchema,
   name: z.string().trim().min(1).max(160),
   entryFile: ManuscriptEntryPathSchema,
+  storage: z.literal("linked-folder").optional(),
   createdAt: z.string().datetime()
 });
 export const ManuscriptDocumentSchema = ManuscriptSchema.extend({
   files: z.array(ManuscriptFileSchema).max(256),
   assets: z.array(z.object({ path: ManuscriptAssetPathSchema, revision: ManuscriptRevisionSchema, bytes: z.number().int().nonnegative() })).max(256).optional(),
   folders: z.array(ManuscriptNodePathSchema).max(256).optional(),
-  treeRevision: ManuscriptRevisionSchema.optional()
+  treeRevision: ManuscriptRevisionSchema.optional(),
+  linkedFolder: z.object({ path: z.string() }).optional()
 });
 export const ManuscriptTreeRequestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("folder"), path: ManuscriptNodePathSchema, expectedRevision: ManuscriptRevisionSchema }).strict(),
@@ -52,6 +54,15 @@ export const ManuscriptImportPreviewSchema = z.object({
   requirements: z.array(z.enum(["biber", "glossaries", "fonts", "scripts"])).default([]),
   compiler: z.object({ available: z.boolean(), version: z.string().nullable(), message: z.string() }).optional()
 });
+export const PreviewManuscriptFolderSchema = z.object({ path: z.string().trim().min(1).max(4096) }).strict();
+export const ManuscriptFolderPreviewSchema = ManuscriptImportPreviewSchema.extend({
+  folderPath: z.string(), revision: ManuscriptRevisionSchema
+});
+export const AttachManuscriptFolderSchema = ImportManuscriptRequestSchema.extend({
+  path: PreviewManuscriptFolderSchema.shape.path, expectedRevision: ManuscriptRevisionSchema
+});
+export type ManuscriptFolderPreview = z.infer<typeof ManuscriptFolderPreviewSchema>;
+export type AttachManuscriptFolderRequest = z.infer<typeof AttachManuscriptFolderSchema>;
 export const CreateManuscriptRequestSchema = z.object({
   name: ManuscriptSchema.shape.name,
   projectIds: ManuscriptProjectIdsSchema.default([])

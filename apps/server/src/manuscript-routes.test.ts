@@ -10,8 +10,34 @@ import { zipSync, strToU8, unzipSync } from "fflate";
 import { LitAgentRepository, ManuscriptStore } from "@litagent/library";
 import { WritingCandidateService, TexBuildService, WritingContextService } from "@litagent/workflows";
 import type { WritingCandidateBatch } from "@litagent/contracts";
-import { ManuscriptImportPreviewSchema, type TexRuntimeStatus } from "@litagent/contracts";
+import { ManuscriptImportPreviewSchema, ManuscriptFolderPreviewSchema, ManuscriptDocumentSchema, type TexRuntimeStatus } from "@litagent/contracts";
 import { manuscriptRoutes } from "./manuscript-routes";
+
+it("attaches local writing folders only through local access and serves current sources without copying them", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-folder-http-"));
+  const repo = path.join(root, "repo"), folder = path.join(root, "paper");
+  fs.mkdirSync(repo); fs.mkdirSync(folder); fs.writeFileSync(path.join(folder, "main.tex"), "\\documentclass{article}\nOriginal");
+  const store = new ManuscriptStore(repo), app = express(); app.use(express.json()); app.use("/api/manuscripts", manuscriptRoutes(store));
+  const server = app.listen(0, "127.0.0.1"); await new Promise<void>((resolve) => server.once("listening", resolve));
+  const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/api/manuscripts`;
+  const post = (route: string, body: unknown, headers: Record<string, string> = { "X-LitAgent-Local": "1" }) => fetch(url + route, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+  try {
+    expect((await post("/attach/preview", { path: folder }, {})).status).toBe(403);
+    expect((await post("/attach/preview", { path: folder }, { "X-LitAgent-Local": "1", origin: "https://example.com" })).status).toBe(403);
+    const preview = ManuscriptFolderPreviewSchema.parse(await (await post("/attach/preview", { path: folder })).json());
+    expect(preview.suggestedEntry).toBe("main.tex");
+    const response = await post("/attach", { path: folder, expectedRevision: preview.revision, requestId: randomUUID(), name: "Linked HTTP", entryFile: "main.tex", projectIds: [] });
+    expect(response.status).toBe(201);
+    const document = ManuscriptDocumentSchema.parse(await response.json());
+    fs.writeFileSync(path.join(folder, "main.tex"), "Changed outside the app");
+    expect(await (await fetch(`${url}/${document.id}`)).json()).toMatchObject({ files: [{ content: "Changed outside the app" }] });
+    const stale = await fetch(`${url}/${document.id}/files`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: "main.tex", content: "Stale draft", expectedRevision: document.files[0]!.revision }) });
+    expect(stale.status).toBe(409);
+    const archive = unzipSync(new Uint8Array(await (await fetch(`${url}/${document.id}/archive`)).arrayBuffer()));
+    expect(new TextDecoder().decode(archive["main.tex"])).toBe("Changed outside the app");
+    expect(fs.existsSync(path.join(repo, "manuscripts", document.id, "main.tex"))).toBe(false);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 it("stores revision-checked comments over HTTP without changing source or exported files", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-comments-http-"));
