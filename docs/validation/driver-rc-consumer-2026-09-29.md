@@ -175,3 +175,48 @@ inference is held until the reported reset at 2026-09-29T15:10:00Z and the
 replacement final artifact handoff. Preserve the selected Claude account/model;
 do not substitute Codex or enable overage. These compatibility results are
 historical preflight evidence, not final RC acceptance or registry adoption.
+
+## Corrected RC connection preflight
+
+The replacement archive from SDK source
+`726fd821a31d7c4462db36bfdf3884ab028f9b7a` was verified against SHA-256
+`d5f13587d78e4d887ad4879a14e317db7aba34ce1d3544ecba8239e940060822`
+and installed only in the disposable clone above. Fresh/frozen installs,
+typecheck, build and all 347 tests (2 skipped) passed.
+
+The actual app backend connected to the real final RC host at
+`http://127.0.0.1:17439/`, using its existing private application profile.
+No model request was sent. The mounted native T3 browser checked the first
+screen, Settings, read-only provider controls, metadata refresh and reload.
+The explicit Claude Haiku selection stayed enabled; Codex stayed disabled with
+no model selected. Account identity remained masked. Desktop and 390px-wide
+screenshots were inspected. The Settings tabs require horizontal scrolling at
+the narrow width; no new mobile-layout qualification is claimed.
+
+The app API rejected disabled-provider execution before dispatch. The live-check
+receipt reports no completed runs and only the four non-generation checks:
+empty onboarding, real read-only panel, disabled execution rejection, and
+refresh preserving the model selection. The task-owned temporary backend was
+stopped after inspection; shared SDK hosts/services were untouched.
+
+Private receipt:
+`/home/hashim/Applications/T3CodeNightly/tmp/litagent-alpha6-live-F9Sxed/receipt.json`.
+Browser screenshots:
+`/home/hashim/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mumokqhn-15b14a06.png`
+and
+`/home/hashim/.t3/userdata/browser-artifacts/browser-screenshot-127-0-0-1-mumol5xc-edf9f30e.png`.
+
+Final generation, supported-candidate acceptance and cancellation/restart checks
+remain pending the selected Claude account's recovery. No quota failure counts
+as positive generation acceptance, and the earlier alpha.6 live evidence is not
+relabelled.
+
+## Registry RC1 Pin
+
+After the SDK's publication confirmation, all three owning manifests
+(`apps/server`, `apps/web`, `packages/agents`) were pinned to npm
+`@agenticdriver/sdk@0.2.0-rc.1`. The installed package version matches.
+`bun.lock` records integrity
+`sha512-m4SWXDdP1vGxUAr2DXhtYU0BAXI344RmbF3O/ZDHAqxy3Aml09CI9YN4cAmiC1M/pzYWvsSJnnH1npTmCJpYow==`.
+It resolves the corrected 726fd82 archive, not the superseded candidate or a
+local path. Installation and frozen-lock installation passed.

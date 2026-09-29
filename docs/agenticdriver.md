@@ -71,7 +71,7 @@ remain historical records, not the current live-acceptance claim.
 
 The original scoped-package migration pinned the published MIT-licensed
 `@agenticdriver/sdk` exactly to `0.1.0`. This historical receipt is superseded
-for the active dependency by [alpha.6 adoption](#registry-alpha6-adoption).
+for the active dependency by [RC1 adoption](#registry-rc1-adoption).
 No sibling SDK build, checkout-relative dependency or TypeScript alias is needed.
 The external root/client/providers/server imports use the scoped package.
 
@@ -319,7 +319,7 @@ metadata. No real model call, shared-service restart or access change was made.
 
 ## Registry Alpha.6 Adoption
 
-The server, browser and adapter now pin `@agenticdriver/sdk@0.2.0-alpha.6`
+The server, browser and adapter previously pinned `@agenticdriver/sdk@0.2.0-alpha.6`
 from npm, with the exact registry SHA-512 in `bun.lock`. The archive SHA-256 is
 `b06c67eb847c7806db056351eaea338de5977fcf823212aac0dc27a03395df36`.
 
@@ -337,3 +337,24 @@ actual SDK management tests with an uninstalled Codex adapter remain separate
 from real model acceptance. They do not imply native account qualification.
 The [alpha.6 receipt](validation/driver-alpha6-2026-09-29.md) records the explicit
 real remote Claude Q&A/writing check and its limits.
+
+## Registry RC1 Adoption
+
+The server, browser and adapter pin `@agenticdriver/sdk@0.2.0-rc.1` from npm.
+The exact registry integrity is locked in `bun.lock`; archive SHA-256:
+`d5f13587d78e4d887ad4879a14e317db7aba34ce1d3544ecba8239e940060822`.
+SDK source is `726fd821a31d7c4462db36bfdf3884ab028f9b7a`, not the
+superseded d2d91ad candidate. No private archive or sibling checkout is required.
+
+The corrected SDK classifies native subscription quota rejection as
+`RATE_LIMITED` rather than generic `CLI_FAILED`. This does not authorize
+retrying, changing a model/account, or enabling alternate billing.
+Existing app credentials, permissions, saved choices and shared hosts are
+unchanged. The app continues using its own source validation and FTS index;
+adopting the SDK does not enable its optional embeddings or retrieval grants.
+
+The [RC consumer receipt](validation/driver-rc-consumer-2026-09-29.md)
+separates final-artifact compatibility and mounted connection checks from
+live generation. The selected Claude account's quota recovery remains a live
+acceptance prerequisite; earlier alpha.6 results are preserved as baseline
+evidence, not relabelled as RC runs.

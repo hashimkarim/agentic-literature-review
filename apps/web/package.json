@@ -10,6 +10,7 @@
     "typecheck": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@agenticdriver/sdk": "0.2.0-rc.1",
     "@codemirror/commands": "6.11.1",
     "@codemirror/language": "6.12.4",
     "@codemirror/legacy-modes": "6.5.4",
@@ -33,8 +34,7 @@
     "rehype-katex": "^7.0.1",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
-    "@agenticdriver/sdk": "file:../../vendor/agenticdriver-sdk-0.2.0-rc.1-d5f13587d78e.tgz"
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@types/cytoscape": "^3.21.9"
