@@ -8,6 +8,8 @@
 
 ## Git Workflow
 
+- Until the user requests otherwise, work and publish directly on `main`. Do not create or push feature branches or open pull requests.
+- Before publishing, integrate the live remote `main`, run the relevant checks, and push without force. Preserve unrelated work.
 - Make local commits once a feature, fix, or coherent unit of progress is complete and verified.
 - Keep commits small and incremental; avoid large dump commits that mix unrelated work.
 - Each commit should leave the app in a working state and should not knowingly break typecheck, tests, or core workflows.
