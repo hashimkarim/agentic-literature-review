@@ -64,6 +64,7 @@ function intersectSets(left: Set<string>, right: Set<string>): Set<string> {
 
 export class SearchIndex {
   private db: DatabaseSync | null = null;
+  private readonly linkedRevisions = new Map<string, string>();
 
   constructor(private readonly sqlitePath: string) {}
 
@@ -101,6 +102,7 @@ export class SearchIndex {
   close(): void {
     this.db?.close();
     this.db = null;
+    this.linkedRevisions.clear();
   }
 
   rebuild(repo: LitAgentRepository): void {
@@ -138,13 +140,18 @@ export class SearchIndex {
         passage.quote
       );
     }
+    if (paper.storage === "linked-files") this.linkedRevisions.set(paper.id, paper.sourceRevision ?? "");
   }
 
   search(repo: LitAgentRepository, request: SearchRequestInput): SearchResult[] {
     const parsed = SearchRequestSchema.parse(request);
+    const allowedPaperIds = scopedPaperIds(repo, parsed);
+    for (const paper of repo.listGlobalPapers().filter((item) => item.storage === "linked-files" && (!allowedPaperIds || allowedPaperIds.has(item.id)))) {
+      const state = repo.localPapers.refresh(paper.id).state;
+      if (this.linkedRevisions.get(paper.id) !== state.revision) this.indexPaper(repo.readPaper(paper.id)!, repo.readPassages(paper.id));
+    }
     this.open();
     const db = this.requireDb();
-    const allowedPaperIds = scopedPaperIds(repo, parsed);
     const linkByPaper = parsed.projectId
       ? new Map(repo.listPaperLinks(parsed.projectId).map((link) => [link.paperId, link]))
       : new Map();

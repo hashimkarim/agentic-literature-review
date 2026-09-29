@@ -53,6 +53,9 @@ export const PaperSchema = z.object({
     markdown: z.string().nullable().default(null),
     assets: z.string().nullable().default(null)
   }),
+  storage: z.literal("linked-files").optional(),
+  sourceRevision: z.string().optional(),
+  pdfRevision: z.string().optional(),
   createdAt: isoDateSchema,
   updatedAt: isoDateSchema
 });

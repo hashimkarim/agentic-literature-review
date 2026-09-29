@@ -108,6 +108,8 @@
       "dependencies": {
         "@litagent/contracts": "*",
         "fflate": "0.8.3",
+        "hast-util-from-html": "2.0.3",
+        "mdast-util-from-markdown": "2.0.3",
         "yauzl": "3.4.0",
         "zod": "^4.1.13",
       },

@@ -7,6 +7,26 @@ import { LitAgentRepository } from "@litagent/library";
 import { SearchIndex } from "./index";
 
 describe("SearchIndex", () => {
+  it("refreshes linked Markdown before ranking and removes unavailable source evidence", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-linked-index-"));
+    const repo = new LitAgentRepository(path.join(dir, "repo")); repo.init();
+    const folder = path.join(dir, "papers"); fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, "Results.md"), "# Results\n\nInitial latency was measured.");
+    const preview = repo.localPapers.preview({ path: folder });
+    const { paper } = repo.localPapers.importEntry({ previewId: preview.id, entryId: preview.entries[0]!.id, storage: "linked-files" });
+    const index = new SearchIndex(path.join(dir, "index.sqlite"));
+    try {
+      index.rebuild(repo);
+      expect(index.search(repo, { query: "latency", paperId: paper.id })[0]?.passage?.quote).toContain("Initial latency");
+      fs.writeFileSync(path.join(folder, "Results.md"), "# Results\n\nExternal correction measures throughput instead.");
+      expect(index.search(repo, { query: "throughput", paperId: paper.id })[0]?.passage?.quote).toContain("External correction");
+      expect(index.search(repo, { query: "latency", paperId: paper.id })).toEqual([]);
+      fs.renameSync(folder, `${folder}-away`);
+      expect(index.search(repo, { query: "throughput", paperId: paper.id })).toEqual([]);
+      fs.renameSync(`${folder}-away`, folder);
+      expect(index.search(repo, { query: "throughput", paperId: paper.id })[0]?.passage?.quote).toContain("External correction");
+    } finally { index.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+  });
   it("returns project-scoped passage evidence", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "litagent-index-test-"));
     const repo = new LitAgentRepository(path.join(dir, "repo"));

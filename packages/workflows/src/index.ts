@@ -1373,6 +1373,7 @@ function markerSpawnErrorMessage(error: unknown): string {
 export function convertPaperWithMarker(repo: LitAgentRepository, paperId: string): ConversionResult {
   const paper = repo.readPaper(paperId);
   if (!paper) throw new Error(`Paper not found: ${paperId}`);
+  if (paper.storage === "linked-files") return { status: "failed", markdownPath: paper.filePaths.markdown, passageCount: repo.readPassages(paperId).length, message: "This paper uses linked local files. Convert or edit its Markdown in the original folder, or import a copy first." };
   const pdfPath = repo.pdfPath(paperId);
   if (!pdfPath) {
     const markdown = ensureMarkdownFallback(repo, paper);
@@ -1512,6 +1513,7 @@ export async function convertPaperWithMarkerAsync(
 ): Promise<ConversionResult> {
   const paper = repo.readPaper(paperId);
   if (!paper) throw new Error(`Paper not found: ${paperId}`);
+  if (paper.storage === "linked-files") return convertPaperWithMarker(repo, paperId);
   const pdfPath = repo.pdfPath(paperId);
   if (!pdfPath) return convertPaperWithMarker(repo, paperId);
 

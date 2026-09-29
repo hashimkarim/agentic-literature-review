@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
+import { LocalPaperImports, LocalPaperError } from "./local-paper-imports";
+export { LocalPaperImports, LocalPaperError } from "./local-paper-imports";
 
 import {
   AnnotationSchema,
@@ -216,9 +218,11 @@ export class CitationSourceChangedError extends Error {
 
 export class LitAgentRepository {
   readonly root: string;
+  readonly localPapers: LocalPaperImports;
 
   constructor(root = DEFAULT_REPO_ROOT) {
     this.root = path.resolve(root);
+    this.localPapers = new LocalPaperImports(this);
   }
 
   init(): void {
@@ -265,6 +269,7 @@ export class LitAgentRepository {
       ".litagent/provider-settings.json",
       ".litagent/workflow-automations.json",
       ".litagent/manuscript-links/",
+      ".litagent/paper-links/",
       ".litagent/cache/",
       ".litagent/tex-builds/",
       ".litagent/thumbnails/",
@@ -1125,6 +1130,7 @@ export class LitAgentRepository {
 
   readMarkdown(paperId: string): string | null {
     const paper = this.readPaper(paperId);
+    if (paper?.storage === "linked-files") return this.localPapers.refresh(paperId).markdown;
     const markdownPath = paper?.filePaths.markdown ? this.resolve(paper.filePaths.markdown) : null;
     if (!markdownPath || !fs.existsSync(markdownPath)) return null;
     return fs.readFileSync(markdownPath, "utf8");
@@ -1133,6 +1139,7 @@ export class LitAgentRepository {
   writeMarkdown(paperId: string, markdown: string): { markdownPath: string; passages: Passage[] } {
     const paper = this.readPaper(paperId);
     if (!paper) throw new Error(`Paper not found: ${paperId}`);
+    if (paper.storage === "linked-files") throw new LocalPaperError(409, "This paper uses linked local files. Edit its Markdown in the original folder; automatic conversion cannot replace it.");
     const markdownDir = this.resolve(`library/markdown/${paperId}`);
     ensureDir(markdownDir);
     const markdownPath = path.join(markdownDir, "paper.md");
@@ -1153,6 +1160,7 @@ export class LitAgentRepository {
   }
 
   readPassages(paperId: string): Passage[] {
+    if (this.readPaper(paperId)?.storage === "linked-files" && !this.localPapers.refresh(paperId).state.available) return [];
     const filePath = this.resolve(`library/passages/${paperId}.jsonl`);
     if (!fs.existsSync(filePath)) return [];
     return fs
@@ -1226,6 +1234,7 @@ export class LitAgentRepository {
 
   pdfPath(paperId: string): string | null {
     const paper = this.readPaper(paperId);
+    if (paper?.storage === "linked-files") return this.localPapers.pdfPath(paperId);
     return paper?.filePaths.pdf ? this.resolve(paper.filePaths.pdf) : null;
   }
 
