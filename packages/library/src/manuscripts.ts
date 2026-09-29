@@ -8,6 +8,7 @@ import {
   ManuscriptHistoryEntrySchema, ManuscriptCheckpointRequestSchema, RestoreManuscriptFileRequestSchema,
   ManuscriptProjectIdSchema, UpdateManuscriptProjectsRequestSchema,
   ManuscriptNodePathSchema, ManuscriptAssetPathSchema, ManuscriptTreeRequestSchema, ImportManuscriptRequestSchema,
+  AttachManuscriptFolderSchema, PreviewManuscriptFolderSchema,
   WritingCandidateBatchSchema, type WritingCandidateBatch, type WritingCandidateSummary,
   WritingAttachmentSchema, WritingAttachmentInputSchema, type WritingAttachment,
   CreateManuscriptCommentSchema, UpdateManuscriptCommentSchema, ManuscriptCommentSchema,
@@ -19,17 +20,13 @@ import {
 import { manuscriptLimits, sourceRevision, sourceKind, validateTreePaths } from "./manuscript-files";
 import type { ManuscriptImportData } from "./manuscript-import";
 import { locateComment } from "./comment-anchor";
+import { ManuscriptError } from "./manuscript-error";
+import { folderIdentity, linkedPath, scanManuscriptFolder, FolderLinkSchema, type FolderLink } from "./manuscript-folder";
+export { ManuscriptError } from "./manuscript-error";
 
 const MAX_FILE_BYTES = manuscriptLimits.textFile;
 const MAX_DOCUMENT_BYTES = manuscriptLimits.textTotal;
 const LegacyManuscriptSchema = ManuscriptSchema.omit({ projectIds: true }).extend({ projectId: ManuscriptProjectIdSchema });
-
-export class ManuscriptError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
-    super(message);
-    this.name = "ManuscriptError";
-  }
-}
 
 export function assertWritingTextSafe(content: string): void {
   if (/\u0000|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b|(?:api[_-]?key|access[_-]?token|password|secret)\s*["']?\s*[:=]\s*["'][^"'\s]{8,}["']/i.test(content)) {
@@ -48,15 +45,17 @@ function revision(content: string): string {
   return sourceRevision(content);
 }
 
-function atomicWrite(filePath: string, content: string | Buffer): void {
+function atomicWrite(filePath: string, content: string | Buffer, beforeReplace?: () => void, mode = 0o600): void {
   const temporary = path.join(path.dirname(filePath), `.writing-${crypto.randomUUID()}.tmp`);
   let fd: number | undefined;
   try {
     fd = fs.openSync(temporary, "wx", 0o600);
     fs.writeFileSync(fd, content, "utf8");
     fs.fsyncSync(fd);
+    fs.fchmodSync(fd, mode);
     fs.closeSync(fd);
     fd = undefined;
+    beforeReplace?.();
     fs.renameSync(temporary, filePath);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
@@ -101,6 +100,59 @@ export class ManuscriptStore {
   private directory(manuscriptId: string): string {
     ManuscriptSchema.shape.id.parse(manuscriptId);
     return `manuscripts/${manuscriptId}`;
+  }
+
+  private folderLink(manuscriptId: string): FolderLink {
+    const file = this.safePath(`.litagent/manuscript-links/${manuscriptId}.json`);
+    if (!fs.existsSync(file)) throw new ManuscriptError(409, "linked_folder_unavailable", "This document's local folder link is unavailable on this server. Its source files have not been copied into LitAgent.");
+    return FolderLinkSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
+  }
+
+  private contentPath(manuscriptId: string, relative: string, createParents = false): string {
+    const manifest = ManuscriptSchema.parse(JSON.parse(fs.readFileSync(this.safePath(`${this.directory(manuscriptId)}/manuscript.json`), "utf8")));
+    return manifest.storage === "linked-folder" ? linkedPath(this.folderLink(manuscriptId), relative, createParents) : this.safePath(`${this.directory(manuscriptId)}/${relative}`, createParents);
+  }
+
+  previewFolder(input: unknown) {
+    const request = PreviewManuscriptFolderSchema.parse(input);
+    const link = folderIdentity(request.path);
+    if (link.path === this.root || link.path.startsWith(this.root + path.sep) || this.root.startsWith(link.path + path.sep)) {
+      throw new ManuscriptError(400, "invalid_folder", "Choose a source folder outside the LitAgent research repository.");
+    }
+    const result = scanManuscriptFolder(link);
+    if (!result.preview.entryCandidates.length) throw new ManuscriptError(400, "invalid_entry_file", "No supported .tex files were found in this folder.");
+    return result.preview;
+  }
+
+  attachFolder(input: unknown): ManuscriptDocument {
+    const request = AttachManuscriptFolderSchema.parse(input);
+    const id = `manuscript_${revision(`folder:${request.requestId}`).slice(0, 16)}`;
+    const fingerprint = revision(JSON.stringify(request));
+    const relative = this.directory(id), destination = this.safePath(relative, true);
+    if (fs.existsSync(destination)) {
+      const receipt = this.safePath(`${relative}/.attach.json`);
+      if (!fs.existsSync(receipt) || JSON.parse(fs.readFileSync(receipt, "utf8")).fingerprint !== fingerprint) throw new ManuscriptError(409, "import_request_changed", "This attachment request was already used for a different document.");
+      return this.read(id);
+    }
+    request.projectIds.forEach((project) => this.projectDirectory(project));
+    const preview = this.previewFolder({ path: request.path });
+    if (preview.revision !== request.expectedRevision) throw new ManuscriptError(409, "linked_folder_changed", "The folder changed since preview. Check the folder again before attaching.");
+    if (!preview.entryCandidates.includes(request.entryFile)) throw new ManuscriptError(400, "invalid_entry_file", "Choose a main TeX file from this folder.");
+    for (const item of this.list().filter((item) => item.storage === "linked-folder")) {
+      if (this.folderLink(item.id).path === preview.folderPath) throw new ManuscriptError(409, "folder_already_attached", `This folder is already attached as ${item.name}.`);
+    }
+    const link = folderIdentity(preview.folderPath);
+    const stage = this.safePath(`manuscripts/.attach-${crypto.randomUUID()}`);
+    fs.mkdirSync(stage);
+    try {
+      const metadata: Manuscript = { id, name: request.name, projectIds: [...request.projectIds].sort(), entryFile: request.entryFile, storage: "linked-folder", createdAt: new Date().toISOString() };
+      // Absolute paths and machine identity are local-only, never synced with the manuscript.
+      atomicWrite(this.safePath(`.litagent/manuscript-links/${id}.json`, true), JSON.stringify(link));
+      atomicWrite(path.join(stage, ".attach.json"), JSON.stringify({ fingerprint }));
+      atomicWrite(path.join(stage, "manuscript.json"), JSON.stringify(metadata, null, 2));
+      fs.renameSync(stage, destination);
+    } finally { fs.rmSync(stage, { recursive: true, force: true }); }
+    return this.read(id);
   }
 
   private migrateLegacy(onlyId?: string): void {
@@ -397,6 +449,14 @@ export class ManuscriptStore {
 
   read(manuscriptId: string): ManuscriptDocument {
     const metadata = this.metadata(manuscriptId);
+    if (metadata.storage === "linked-folder") {
+      const link = this.folderLink(manuscriptId);
+      const { files, assets, folders } = scanManuscriptFolder(link);
+      const treeRevision = revision(JSON.stringify({ entryFile: metadata.entryFile, files: [...files, ...assets].map(({ path, revision }) => [path, revision]), folders }));
+      // Save only observed text revisions to history, not a second editable source tree.
+      for (const file of files) this.snapshot(manuscriptId, file, "external");
+      return { ...metadata, files, assets, folders, treeRevision, linkedFolder: { path: link.path } };
+    }
     const directory = this.directory(manuscriptId);
     const files: ManuscriptFile[] = [];
     const assets: NonNullable<ManuscriptDocument["assets"]> = [];
@@ -458,9 +518,15 @@ export class ManuscriptStore {
     }
     if (!current) validateTreePaths([...document.files, ...(document.assets ?? [])].map((file) => file.path).concat(parsed.path), document.folders ?? []);
     if (parsed.path === "manuscript.json") throw new ManuscriptError(400, "reserved_path", "This filename is reserved for document metadata.");
-    const filePath = this.safePath(`${this.directory(manuscriptId)}/${parsed.path}`, true);
+    const filePath = this.contentPath(manuscriptId, parsed.path, true);
+    const checkLinkedRevision = document.storage === "linked-folder" ? () => {
+      this.contentPath(manuscriptId, parsed.path);
+      const latest = fs.existsSync(filePath) ? sourceRevision(fs.readFileSync(filePath)) : null;
+      if (latest !== parsed.expectedRevision) throw new ManuscriptError(409, "manuscript_file_changed", "This file changed outside LitAgent during save. Compare the saved version before retrying.");
+    } : undefined;
+    const mode = document.storage === "linked-folder" && fs.existsSync(filePath) ? fs.statSync(filePath).mode & 0o777 : 0o600;
     if (current) this.snapshot(manuscriptId, current, "external");
-    atomicWrite(filePath, parsed.content);
+    atomicWrite(filePath, parsed.content, checkLinkedRevision, mode);
     const saved = { path: parsed.path, content: parsed.content, revision: revision(parsed.content) };
     this.snapshot(manuscriptId, saved, reason);
     return saved;
@@ -469,6 +535,7 @@ export class ManuscriptStore {
   deleteFile(manuscriptId: string, input: { path: string; expectedRevision: string }): void {
     const parsed = DeleteManuscriptFileRequestSchema.parse(input);
     const document = this.read(manuscriptId);
+    if (document.storage === "linked-folder") throw new ManuscriptError(400, "linked_tree_external", "Delete linked files in your file manager. LitAgent will read the updated folder automatically.");
     if (parsed.path === document.entryFile) throw new ManuscriptError(400, "entry_file_required", "The entry file cannot be deleted.");
     const current = document.files.find((file) => file.path === parsed.path);
     if (!current) throw new ManuscriptError(404, "file_not_found", "File not found.");
@@ -523,7 +590,7 @@ export class ManuscriptStore {
   asset(manuscriptId: string, filePath: string, expectedRevision: string): Buffer {
     ManuscriptAssetPathSchema.parse(filePath);
     this.metadata(manuscriptId);
-    const file = this.safePath(`${this.directory(manuscriptId)}/${filePath}`);
+    const file = this.contentPath(manuscriptId, filePath);
     if (!fs.existsSync(file)) throw new ManuscriptError(404, "asset_not_found", "Asset not found.");
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.size > manuscriptLimits.asset) throw new ManuscriptError(413, "manuscript_limit", "Asset exceeds its size limit.");
@@ -545,7 +612,11 @@ export class ManuscriptStore {
     } else {
       const total = document.files.reduce((sum, file) => sum + Buffer.byteLength(file.content), 0) + (document.assets ?? []).reduce((sum, file) => sum + file.bytes, 0) + bytes.length;
       if (bytes.length > manuscriptLimits.asset || total > manuscriptLimits.total) throw new ManuscriptError(413, "manuscript_limit", "Asset or document exceeds the size limit.");
-      atomicWrite(this.safePath(`${this.directory(manuscriptId)}/${filePath}`, true), bytes);
+      const target = this.contentPath(manuscriptId, filePath, true);
+      atomicWrite(target, bytes, () => {
+        this.contentPath(manuscriptId, filePath);
+        if (fs.existsSync(target)) throw new ManuscriptError(409, "path_conflict", "A file now exists at the upload path. No file was overwritten.");
+      });
     }
     return this.read(manuscriptId);
   }
@@ -588,6 +659,7 @@ export class ManuscriptStore {
   changeTree(manuscriptId: string, input: unknown): ManuscriptDocument {
     const request = ManuscriptTreeRequestSchema.parse(input);
     const document = this.read(manuscriptId);
+    if (document.storage === "linked-folder" && (request.action === "move" || request.action === "delete")) throw new ManuscriptError(400, "linked_tree_external", "Rename or delete linked files in your file manager. LitAgent will read the updated folder automatically.");
     if (document.treeRevision !== request.expectedRevision) throw new ManuscriptError(409, "manuscript_tree_changed", "Files changed elsewhere. Reload the document before reorganizing it.");
     const directory = this.directory(manuscriptId);
     const names = [...document.files, ...(document.assets ?? [])].map((file) => file.path);
@@ -597,7 +669,7 @@ export class ManuscriptStore {
     if (request.action === "folder") {
       if (folders.includes(request.path) || names.includes(request.path)) throw new ManuscriptError(409, "path_conflict", "That file or folder already exists.");
       validateTreePaths(names, [...folders, request.path]);
-      fs.mkdirSync(this.safePath(`${directory}/${request.path}`, true));
+      fs.mkdirSync(this.contentPath(manuscriptId, request.path, true));
     } else {
       if (!names.includes(request.path) && !folders.includes(request.path)) throw new ManuscriptError(404, "file_not_found", "File or folder not found.");
       if (request.action === "entry") {

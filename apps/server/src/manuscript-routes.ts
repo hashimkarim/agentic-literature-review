@@ -4,6 +4,7 @@ import { zip } from "fflate";
 import { z } from "zod";
 import { ManuscriptError, ManuscriptStore, inspectManuscriptZip, manuscriptLimits, ManuscriptTreeError } from "@litagent/library";
 import type { WritingCandidateService, TexBuildService, WritingContextService } from "@litagent/workflows";
+import { requireLocalAccess } from "./local-access";
 
 export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCandidateService, builds?: TexBuildService, context?: WritingContextService): Router {
   const router = Router({ mergeParams: true });
@@ -11,6 +12,13 @@ export function manuscriptRoutes(store: ManuscriptStore, candidates?: WritingCan
   const project = (params: Record<string, unknown>) => z.string().optional().parse(params.id);
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: manuscriptLimits.archive, files: 1, fields: 1, fieldSize: 32_000, parts: 3 } });
   let importing = false;
+  router.post("/attach/preview", requireLocalAccess, (req, res) => {
+    res.json(store.previewFolder(req.body));
+  });
+  router.post("/attach", requireLocalAccess, (req, res) => {
+    const linkedProject = project(req.params);
+    res.status(201).json(store.attachFolder(linkedProject ? { ...req.body, projectIds: [linkedProject] } : req.body));
+  });
   router.post(["/import/preview", "/import"], (req, res, next) => {
     if (importing) { res.status(429).json({ error: "Another document import is being processed. Try again shortly." }); return; }
     importing = true;
