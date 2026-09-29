@@ -45,7 +45,6 @@ const repoRoot = process.env.LITAGENT_REPO ?? DEFAULT_REPO_ROOT;
 
 const repo = new LitAgentRepository(repoRoot);
 repo.init();
-repo.seedDemoData();
 
 const index = new SearchIndex(repo.resolve(".litagent/index.sqlite"));
 index.rebuild(repo);
