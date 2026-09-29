@@ -85,9 +85,9 @@ receipt. No accepted effect or uncertain generation was retried as a new run.
   did not dispatch either again. The second candidate has no provider log.
 - Repeated reads/reposts left the interrupted event logs unchanged and the
   accepted content and candidate-history entries unduplicated.
-- The disconnected call has no terminal app event. Host-side completion,
-  cancellation reaping and final usage require SDK-side reconciliation; this
-  receipt does not infer them from a stopped application process.
+- The disconnected call has no terminal app event. The SDK's subsequent
+  host-log reconciliation is recorded below; the app receipt does not infer
+  remote completion from a stopped application process.
 
 Native T3 browser checks covered the actual PDF, full Markdown, saved Q&A,
 writing file with accepted text, and both interrupted candidates after restart.
@@ -114,7 +114,27 @@ The checks exposed two app-owned defects:
 
 Local typecheck, standalone acceptance-script typecheck, build and 322 tests
 passed (two skipped). The build retains its existing large-chunk warning.
-CI evidence for the immutable application commit is returned in the handoff.
+Immutable application source `80381237f0d87c83c8042535785b7f98ee7e4386` passed
+[Prometheus run 36557934097](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36557934097),
+job `109371505005` (frozen install, typecheck, tests and build).
+
+## SDK cancellation reconciliation
+
+The authorized SDK thread reported a readback of only the two original run IDs
+from the existing alpha.6 host JSONL on 2026-09-29. No inference was replayed:
+
+| SDK run ID | Host terminal status | UTC timestamp |
+| --- | --- | --- |
+| `28cc2800-4025-47d5-aab5-142061dcd75e` | cancelled | `2026-09-29T10:44:42.316Z` |
+| `8e8b4c41-0ecb-45e1-9c2e-7c8515520300` | cancelled | `2026-09-29T10:44:45.026Z` |
+
+Both host usage objects were empty: usage is **unreported, not zero**. The
+completed-run totals above are unchanged. Terminal cancellation is now confirmed
+by the SDK's host receipt, but this reconciliation does not independently prove
+native process reaping or automatic Usagestat ingestion. The original app logs
+and interruption/restart outcomes remain unchanged.
+
+## Remaining gates
 
 Remaining gates are not SDK failures: vector retrieval is untested; a current
 PDF-to-Markdown page map is required for precise PDF navigation; general
