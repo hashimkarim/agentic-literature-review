@@ -135,13 +135,15 @@ export class ManuscriptStore {
       return this.read(id);
     }
     request.projectIds.forEach((project) => this.projectDirectory(project));
+    const link = folderIdentity(request.path);
     const preview = this.previewFolder({ path: request.path });
     if (preview.revision !== request.expectedRevision) throw new ManuscriptError(409, "linked_folder_changed", "The folder changed since preview. Check the folder again before attaching.");
     if (!preview.entryCandidates.includes(request.entryFile)) throw new ManuscriptError(400, "invalid_entry_file", "Choose a main TeX file from this folder.");
     for (const item of this.list().filter((item) => item.storage === "linked-folder")) {
+      if (!fs.existsSync(this.safePath(`.litagent/manuscript-links/${item.id}.json`))) continue;
       if (this.folderLink(item.id).path === preview.folderPath) throw new ManuscriptError(409, "folder_already_attached", `This folder is already attached as ${item.name}.`);
     }
-    const link = folderIdentity(preview.folderPath);
+    linkedPath(link);
     const stage = this.safePath(`manuscripts/.attach-${crypto.randomUUID()}`);
     fs.mkdirSync(stage);
     try {

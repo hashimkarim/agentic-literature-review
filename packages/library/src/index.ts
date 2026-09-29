@@ -264,6 +264,7 @@ export class LitAgentRepository {
       ".litagent/*.sqlite",
       ".litagent/provider-settings.json",
       ".litagent/workflow-automations.json",
+      ".litagent/manuscript-links/",
       ".litagent/cache/",
       ".litagent/tex-builds/",
       ".litagent/thumbnails/",

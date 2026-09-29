@@ -33,7 +33,7 @@ export function linkedPath(link: FolderLink, relative = "", createParents = fals
   if (!relative) return current.path;
   ManuscriptNodePathSchema.parse(relative);
   const parts = relative.split("/");
-  if (skippedImportPath(relative) || parts.slice(0, -1).some((part) => excludedDirectory.test(part))) throw new ManuscriptError(400, "excluded_linked_path", "Build and dependency paths are excluded from linked documents.");
+  if (skippedImportPath(relative) || parts.some((part) => excludedDirectory.test(part))) throw new ManuscriptError(400, "excluded_linked_path", "Build and dependency paths are excluded from linked documents.");
   let target = current.path;
   for (const [index, part] of parts.entries()) {
     target = path.join(target, part);
