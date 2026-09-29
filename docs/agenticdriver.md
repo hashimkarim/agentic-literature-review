@@ -355,6 +355,8 @@ adopting the SDK does not enable its optional embeddings or retrieval grants.
 
 The [RC consumer receipt](validation/driver-rc-consumer-2026-09-29.md)
 separates final-artifact compatibility and mounted connection checks from
-live generation. The selected Claude account's quota recovery remains a live
-acceptance prerequisite; earlier alpha.6 results are preserved as baseline
-evidence, not relabelled as RC runs.
+live generation. After the selected Claude account recovered, the final registry
+workflow passed grounded Q&A, supported-candidate acceptance and app-owned
+cancellation/restart recovery. The receipt preserves the rejected initial
+question, exact-quote repair, usage and TeX editorial warning. Earlier alpha.6
+results remain baseline evidence, not relabelled as RC runs.

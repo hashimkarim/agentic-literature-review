@@ -220,3 +220,120 @@ After the SDK's publication confirmation, all three owning manifests
 `sha512-m4SWXDdP1vGxUAr2DXhtYU0BAXI344RmbF3O/ZDHAqxy3Aml09CI9YN4cAmiC1M/pzYWvsSJnnH1npTmCJpYow==`.
 It resolves the corrected 726fd82 archive, not the superseded candidate or a
 local path. Installation and frozen-lock installation passed.
+
+Registry adoption commit: `cf67c0746a84eacf676f51696fe506bfcb3accf5`.
+[Prometheus CI 36573266371](https://github.com/hashimkarim/agentic-literature-review/actions/runs/36573266371)
+passed typecheck, 347 tests (2 skipped) and build on runner
+`prometheus-literature-01` (ID 2), job `109422286461`. No hosted compute.
+
+## Final RC Live Workflow
+
+The SDK confirmed the same Claude account recovered at 15:11 UTC. LitAgent
+then used only `prometheus-claude / claude-haiku-4-5-20251001`, native
+2.1.282, through the scoped RC host and exact registry package above. No
+account/model/billing fallback, grant expansion, private source or external
+send occurred. SDK recovery evidence is separate from these app calls.
+
+### Rejected first question
+
+The unchanged baseline question required the explicit 20-versus-50 comparison
+from section 5, although that wording is in the introduction. All four provider
+calls completed, but app support validation rejected the final answer after
+its one bounded repair. The API returned HTTP 500 with `invalid_evidence`;
+no answer or manuscript change was saved. This is not a successful answer or an
+SDK transport failure. Its private receipt/logs are preserved under
+`/home/hashim/Applications/T3CodeNightly/tmp/litagent-alpha6-live-iIiaV6/`.
+
+| Stage | SDK run | Input | Output | API-equivalent USD |
+| --- | --- | ---: | ---: | ---: |
+| Draft | `0b80832d-e0a4-481f-8d05-ab0a97bcedbd` | 30289 | 1994 | 0.070538 |
+| Review | `b48bda20-405b-4ab6-8032-646a842635ee` | 31242 | 11059 | 0.117769 |
+| Repair | `c0e4455d-81dd-4729-8a3f-e392bf117473` | 30876 | 2970 | 0.076592 |
+| Review | `3996b46f-de19-4bb5-9031-67da69759a9d` | 30895 | 4660 | 0.085080 |
+
+The acceptance question was corrected to cite the introduction for the numeric
+comparison and section 5 for saturation, in app commit
+`ffdd6e383bca2fb4eb759ac3e26b814491a471a5`. Source validators were not
+changed or relaxed. One new, known-failed-operation replacement was made;
+no uncertain request was replayed.
+
+### Successful workflow
+
+The corrected workflow passed using the same 18-page public PDF and full
+73,754-character Markdown snapshot (111 app passages). The source hashes above
+are unchanged. Selected-paper/project FTS retrieval returned actual passages.
+The answer preserved the approximate 1.5% and 1% gains for the 20-versus-50
+comparison and explained reader saturation, linking introduction passage
+`0018` and section-5 passage `0064`.
+
+Its first review judged support valid but changed a verbatim Markdown math
+expression to plain `~`; exact-quote validation rejected that review. The
+existing single repair succeeded. Both quote existence and support were
+checked; neither check was bypassed.
+
+The writing draft and separate support review completed. All three claim
+evidence links resolved to the exact supplied quotes. Before acceptance, the
+manuscript was unchanged. Explicit app-API acceptance added bibliography
+references and candidate `candidate_f9effd8be49d7d62` to the disposable
+`sections/introduction.tex`. Accepted revision:
+`2a24c9ed329f36a17251c0ed73f747c1a668362c1f42c0d60971cc2e104424ed`.
+Backend restart, repeated acceptance, and repeated generation request ID
+preserved the same file/history without another model request or duplicate edit.
+
+| Stage | SDK run | Input | Output | API-equivalent USD |
+| --- | --- | ---: | ---: | ---: |
+| Q&A draft | `3ebac6e4-6792-40e4-b294-db24ea0c114d` | 30307 | 2499 | 0.073099 |
+| Q&A review | `22feafeb-499a-459b-a23f-9ae4f225ab5c` | 31270 | 3045 | 0.077755 |
+| Q&A repair | `3fcbac8e-f814-4f41-a0d6-b00c7680ad3b` | 30649 | 6772 | 0.095148 |
+| Q&A review | `55a1f102-25cf-4d29-9570-b8755f9369a6` | 31268 | 1833 | 0.071691 |
+| Writing draft | `4c979040-8c11-4b76-800a-e31c8619fd05` | 32669 | 2791 | 0.079283 |
+| Writing review | `683b2aa5-62f7-4d79-b62a-c0deba7f9eb4` | 32891 | 1573 | 0.073637 |
+
+Successful-workflow completed usage: 189,054 input, 18,513 output, 0 cached,
+USD 0.470613 API-equivalent. Including the rejected first question: 312,356
+input, 39,196 output, 0 cached, USD 0.820592 API-equivalent. These are native
+reported estimates, not subscription charges; reasoning usage was unreported.
+
+### Cancellation and recovery
+
+- Explicit cancellation: `306210b1-723f-4efc-a9b4-e9db6eae0a00`.
+  The app observed SDK `CANCELLED` at 15:20:54.086Z. The cancelled batch
+  survived restart and request replay without new events or manuscript edits.
+- Backend interruption: `e04cf004-28d1-4dc3-90f6-b03baaac5a50`.
+  After restart both candidates were interrupted, including the queued second
+  candidate that never dispatched. Replaying the same batch did not resume or
+  duplicate processing. The accepted file/history was unchanged.
+- Neither interruption has a completed usage record locally. Usage is unknown,
+  not zero. Host terminal reconciliation was requested from SDK ownership;
+  abrupt-disconnect native terminal status is not inferred from app recovery.
+
+### Mounted browser and limits
+
+Native T3 browser inspected the 18-page PDF, saved Q&A after reload, citation 2
+navigation to Markdown L172, accepted writing candidate, and interrupted batch.
+Settings refresh/reload after backend restarts retained enabled Claude Haiku
+and disabled/unselected Codex. Disabled execution was rejected before dispatch.
+Acceptance/cancellation/restart were exercised through actual app HTTP APIs;
+the browser inspected their persisted UI states, not a second generated run.
+
+Screenshots in local T3 artifacts:
+`browser-screenshot-127-0-0-1-mumtrnid-6a5503f6.png` (citation),
+`browser-screenshot-127-0-0-1-mumtstjf-cd74f536.png` (accepted writing),
+`browser-screenshot-127-0-0-1-mumttk5u-a57998a9.png` (saved connection).
+
+The accepted draft has unescaped percent signs. The existing Editing checks UI
+correctly warns that these comment out TeX text, but advisory editorial checks
+do not block explicit acceptance. This is a remaining app output-quality issue:
+the supported draft is not certified compilation-ready. The support reviewer
+also mislabels the introduction quote as section 5 in its explanation; the
+actual source IDs/quotes remain correct. Source support is a model judgment,
+not independent factual certification.
+
+PDF page mapping remains unavailable for these Markdown passages, so the UI
+truthfully uses Markdown navigation instead of inventing pages. No vector
+retrieval, SDK tools/jobs, native process reaping, automatic Usagestat capture,
+or blanket model qualification is claimed by this app receipt.
+
+Successful private receipt:
+`/home/hashim/Applications/T3CodeNightly/tmp/litagent-alpha6-live-zhKifZ/receipt.json`.
+No credential contents are included in this handoff.
