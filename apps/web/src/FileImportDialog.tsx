@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, FilePlus2, FolderOpen, HardDrive, LibraryBig, Search, Square, Upload, X } from "lucide-react";
 import type { WritingAttachmentInput } from "@litagent/contracts";
 import { api } from "./api";
+import { PaperFolderImport } from "./PaperFolderImport";
 import "./file-import.css";
 
 type Entry = { id: string; path: string; bytes: number; file?: File; previewId?: string };
@@ -92,6 +93,7 @@ export function FileImportDialog({ kind, projectId = null, projectName, manuscri
       <button type="button" role="tab" aria-selected={mode === "local"} disabled={pending} onClick={() => changeMode("local")}><HardDrive size={16} />Local path</button>
       {kind === "pdf" && <button type="button" role="tab" aria-selected={mode === "zotero"} disabled={pending} onClick={() => changeMode("zotero")}><LibraryBig size={16} />Zotero PDFs</button>}
     </div>
+    {kind === "pdf" && mode === "local" ? <PaperFolderImport projectId={projectId} onImported={onImported} onClose={onClose} onPending={setBusy} /> : <>
     {mode === "files" ? <div className="file-import-pickers"><button type="button" disabled={pending} onClick={() => fileInput.current?.click()}><FilePlus2 size={16} />Choose files</button><button type="button" disabled={pending} onClick={() => folderInput.current?.click()}><FolderOpen size={16} />Choose folder</button></div> : <form className="file-import-path" onSubmit={(event) => { event.preventDefault(); void scan(); }}>
       <label>{mode === "zotero" ? "Zotero storage folder" : "Folder on this computer"}<input aria-label="Local folder path" value={folderPath} onChange={(event) => { setFolderPath(event.target.value); replace([], 0); }} placeholder={mode === "zotero" ? "/home/your-name/Zotero/storage" : "/absolute/path/to/folder"} disabled={pending} required autoFocus /></label>
       <button type="submit" disabled={pending || !folderPath.trim()}><Search size={16} />{scanning ? "Scanning..." : "Scan folder"}</button>
@@ -110,5 +112,6 @@ export function FileImportDialog({ kind, projectId = null, projectName, manuscri
     {error && <p className="file-import-error" role="alert">{error}</p>}
     {(busy || outcomes.length > 0) && <div className="file-import-progress" role="status"><span>{outcomes.filter((item) => item.state === "imported").length} imported / {outcomes.filter((item) => item.state === "error").length} failed{stopRequested ? " / stopped" : ""}</span>{busy && <progress max={selected.length} value={outcomes.length} />}<small title={current}>{current}</small></div>}
     <footer>{busy ? <button type="button" disabled={stopRequested} onClick={() => { stopped.current = true; setStopRequested(true); }}><Square size={15} />{stopRequested ? "Stopping after current file..." : "Stop import"}</button> : <button type="button" disabled={scanning} onClick={onClose}>{outcomes.length ? "Done" : "Cancel"}</button>}<button type="button" className="file-import-primary" disabled={pending || !todo.length || todo.length > limit} onClick={() => void importSelected()}><Upload size={16} />{kind === "pdf" ? "Import" : "Attach"} {todo.length || "selected"} files</button></footer>
+    </>}
   </dialog>, document.body);
 }

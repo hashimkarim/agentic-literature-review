@@ -18,6 +18,7 @@
     "@codemirror/state": "6.7.6",
     "@lezer/highlight": "1.2.3",
     "@litagent/contracts": "*",
+    "@litagent/library": "*",
     "@litagent/pdf": "*",
     "@litagent/ui": "*",
     "@radix-ui/react-select": "2.2.6",

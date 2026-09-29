@@ -366,6 +366,9 @@ select option:disabled { color: var(--text-secondary); }
 .la-rtab.on::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent-primary); }
 .la-readertabs .spacer { flex: 1; }
 .la-readertabs .rtools { display: flex; align-items: center; gap: 2px; padding: 0 8px; }
+.la-local-paper-status { display:flex; align-items:center; gap:8px; flex-shrink:0; padding:7px 14px; border-bottom:1px solid var(--border-deep); font-size:12px; color:var(--text-secondary); }
+.la-local-paper-status svg { flex-shrink:0; }
+.la-local-paper-status span { min-width:0; overflow-wrap:anywhere; }
 
 .la-readerbody { flex: 1; overflow-y: auto; background: var(--bg-tertiary); }
 
