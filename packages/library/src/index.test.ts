@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +72,17 @@ function findPdfFiles(dir: string): string[] {
 }
 
 describe("LitAgentRepository", () => {
+  it("keeps machine-local manuscript folder bindings out of version control", () => {
+    const repo = tempRepo();
+    try {
+      const binding = ".litagent/manuscript-links/manuscript.json";
+      fs.mkdirSync(path.dirname(repo.resolve(binding)), { recursive: true });
+      fs.writeFileSync(repo.resolve(binding), JSON.stringify({ path: "/private/local/paper", device: 1, inode: 1 }));
+      const ignored = spawnSync("git", ["check-ignore", "--", binding], { cwd: repo.root, encoding: "utf8" });
+      expect(ignored.status).toBe(0);
+      expect(ignored.stdout.trim()).toBe(binding);
+    } finally { fs.rmSync(repo.root, { recursive: true, force: true }); }
+  });
   it("keeps generated manuscript PDFs and build logs out of version control", () => {
     const repo = tempRepo();
     try { expect(fs.readFileSync(repo.resolve(".gitignore"), "utf8")).toContain(".litagent/tex-builds/\n"); }

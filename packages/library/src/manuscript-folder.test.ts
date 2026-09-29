@@ -116,3 +116,22 @@ it("uses linked assets, bibliography, new files and main-file settings through t
   expect(fs.readFileSync(path.join(f.folder, "figure2.png"))).toEqual(Buffer.from([1, 2, 3]));
   expect(fs.existsSync(path.join(f.folder, "manuscript.json"))).toBe(false);
 });
+
+it("rejects new excluded folders without leaving invisible changes on disk", () => {
+  const f = setup(), document = f.store.attachFolder(f.request);
+  expect(() => f.store.changeTree(document.id, { action: "folder", path: "build", expectedRevision: document.treeRevision })).toThrow(/excluded/);
+  expect(() => f.store.writeFile(document.id, { path: "build/hidden.tex", content: "No", expectedRevision: null })).toThrow(/excluded/);
+  expect(fs.existsSync(path.join(f.folder, "build"))).toBe(false);
+});
+
+it("allows a new folder attachment when another machine-local link is missing", () => {
+  const f = setup(), first = f.store.attachFolder(f.request);
+  fs.unlinkSync(path.join(f.repo, ".litagent/manuscript-links", `${first.id}.json`));
+  const other = path.join(f.root, "another-paper"); fs.mkdirSync(other);
+  fs.writeFileSync(path.join(other, "main.tex"), "\\documentclass{article}\nAnother paper");
+  const preview = f.store.previewFolder({ path: other });
+  const next = f.store.attachFolder({ ...f.request, requestId: randomUUID(), path: other, expectedRevision: preview.revision });
+  expect(next.linkedFolder?.path).toBe(other);
+  expect(f.store.list()).toHaveLength(2);
+  expect(() => f.store.read(first.id)).toThrow(/unavailable/);
+});
