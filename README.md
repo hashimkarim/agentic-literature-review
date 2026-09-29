@@ -82,8 +82,20 @@ present.
 repository against that real Driver connection. By default it checks discovery,
 permission gates and saved selection without generation; `--generate` spends
 real account usage on a public-paper Q&A and writing draft. `--keep-open` retains
-the isolated app for browser checks until interrupted. It never accepts text,
-changes the host, substitutes providers, or uses your canonical research library.
+the isolated app for browser checks until interrupted. It never changes the host,
+substitutes providers, or uses your canonical research library.
+The separate `--generate --rc` gate requires `LITAGENT_LIVE_PDF` and
+`LITAGENT_LIVE_MARKDOWN` pointing to the public Lost in the Middle paper (arXiv
+2307.03172v3) and its complete reading copy. This explicit gate accepts a supported
+candidate only in its disposable project, retries that acceptance after a backend
+restart, then tests cancellation and interrupted generation without replaying
+queued work. It consumes additional real requests; use only an authorized profile.
+The ordinary `--generate` check never accepts text. Source preparation and PDF
+page mapping are separate from these application checks.
+If a writing attempt fails without applying text, an operator may explicitly set
+`LITAGENT_LIVE_RESUME_FAILED_WRITING` to that disposable receipt directory to
+create one new writing attempt without replaying the completed Q&A. The script
+rejects interrupted/uncertain or already accepted batches for this retry path.
 The old mock-provider UI scripts have been removed; offline unit tests are not
 evidence of provider execution or complete browser acceptance.
 `test:writing-ui` retains editor, history and export checks with no providers
