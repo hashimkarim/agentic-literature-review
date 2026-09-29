@@ -121,7 +121,7 @@ export default function WritingWorkspace({ projects, providers, onConfigureProvi
       <h1 className="writing-document-name" title={currentDocument?.name}>{active ? currentDocument?.name ?? "Document" : "Documents"}</h1>
       <span className="writing-spacer" />
       {currentDocument && <button type="button" aria-label="Link projects" title={projectNames(currentDocument.projectIds) || "No linked projects"} onClick={() => setLinks(currentDocument)}><Link2 size={16} /><span className="writing-project-label">Projects</span><span>{currentDocument.projectIds.length}</span></button>}
-      <button type="button" className="writing-import-button" aria-label="Import writing document" title="Import folder or Overleaf ZIP" onClick={() => setImporting(true)}><Upload size={16} /><span>Import</span></button>
+      <button type="button" className="writing-import-button" aria-label="Import writing document" title="Import a copy or attach a local folder" onClick={() => setImporting(true)}><Upload size={16} /><span>Import</span></button>
       <button type="button" className="writing-primary writing-new-document" aria-label="New document" title="New document" onClick={() => setCreating(true)}><Plus size={16} /><span>New document</span></button>
     </header>
     {error && <div className="writing-banner" role="alert">{error}<Tool label="Retry loading documents" onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={16} /></Tool></div>}
@@ -135,7 +135,7 @@ export default function WritingWorkspace({ projects, providers, onConfigureProvi
         <Tool label="Refresh documents" disabled={loading} onClick={() => setRefresh((n) => n + 1)}><RefreshCw size={16} /></Tool>
       </div>
       {loading ? <div className="writing-empty"><h2>Loading documents...</h2></div> : visible.length ? <div className="writing-document-list"><table aria-label="Writing documents"><thead><tr><th>Document</th><th>Linked projects</th><th className="writing-created">Created</th><th aria-label="Actions" /></tr></thead><tbody>{visible.map((item) => <tr key={item.id}>
-        <td><button type="button" className="writing-open-document" onClick={() => openDocument(item.id)}><FileCode2 size={18} /><span>{item.name}</span></button></td>
+        <td><button type="button" className="writing-open-document" onClick={() => openDocument(item.id)}>{item.storage === "linked-folder" ? <Link2 size={18} aria-label="Linked folder" /> : <FileCode2 size={18} />}<span>{item.name}</span></button></td>
         <td><span className="writing-document-projects" title={projectNames(item.projectIds)}>{item.projectIds.length ? projectNames(item.projectIds) : "No linked projects"}</span></td>
         <td className="writing-created"><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleDateString()}</time></td>
         <td><Tool label={`Link projects to ${item.name}`} onClick={() => setLinks(item)}><Link2 size={16} /></Tool></td>
@@ -160,7 +160,33 @@ function ManuscriptEditor({ document, providers, onConfigureProviders }: { docum
     return new WritingSession(document, (input) => api.writeManuscriptFile(id, input), storage, clientId);
   });
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
-  const [view, setView] = useBrowserPreference(writingViewKey(id), defaultWritingView(document, window.innerWidth > 1100), (value) => parseWritingView(value, document, window.innerWidth > 1100));
+  const initialDocument = useMemo(() => ({ ...document, files: Object.values(session.getSnapshot().files) }), [session]);
+  const [view, setView] = useBrowserPreference(writingViewKey(id), defaultWritingView(initialDocument, window.innerWidth > 1100), (value) => parseWritingView(value, initialDocument, window.innerWidth > 1100));
+  const refreshLinked = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!document.linkedFolder) return;
+    let current = true, fetching = false;
+    const refresh = async () => {
+      if (!current || fetching || window.document.hidden) return;
+      fetching = true;
+      const before = session.getSnapshot();
+      try {
+        const next = await api.manuscript(id);
+        if (!current || before !== session.getSnapshot()) return;
+        if (session.reconcileRemote(next)) {
+          setTree((previous) => previous.treeRevision === next.treeRevision ? previous : next);
+          // Keep deleted-but-unsaved files open until explicitly discarded.
+          setView((view) => reconcileWritingView(view, { ...next, files: Object.values(session.getSnapshot().files) }));
+        }
+      } catch (error) { if (current) session.pauseSaves(error instanceof Error ? error.message : "Linked folder could not be refreshed."); }
+      finally { fetching = false; }
+    };
+    refreshLinked.current = () => { void refresh(); };
+    const timer = setInterval(() => void refresh(), 3000);
+    window.addEventListener("focus", refreshLinked.current);
+    window.document.addEventListener("visibilitychange", refreshLinked.current);
+    return () => { current = false; clearInterval(timer); window.removeEventListener("focus", refreshLinked.current); window.document.removeEventListener("visibilitychange", refreshLinked.current); };
+  }, [id, session, document.linkedFolder?.path, setView]);
   function preference<K extends keyof WritingView>(key: K, value: SetStateAction<WritingView[K]>) {
     setView((previous) => ({ ...previous, [key]: typeof value === "function" ? (value as (current: WritingView[K]) => WritingView[K])(previous[key]) : value }));
   }
@@ -361,6 +387,7 @@ function ManuscriptEditor({ document, providers, onConfigureProviders }: { docum
     setGenerating(null); setHistory(null); setHistorical(null); setRemote(null); setCandidateReview(null); setInitialBatchId(batch.id);
   }
   return <div className="writing-document">
+    {document.linkedFolder && <div className="writing-linked-folder"><Link2 size={14} /><span title={document.linkedFolder.path}>{document.linkedFolder.path}</span><small>{state.syncError ? "Folder unavailable" : "Live folder"}</small><Tool label="Refresh linked folder" onClick={() => refreshLinked.current()}><RefreshCw size={14} /></Tool></div>}
     <div className="writing-toolbar">
       <Tool label={view.filesVisible ? "Hide document files" : "Show document files"} className="writing-tool writing-desktop-tree" aria-expanded={view.filesVisible} onClick={() => preference("filesVisible", (visible) => !visible)}>{view.filesVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}</Tool>
       <button type="button" className="writing-mobile-tree" aria-label="Toggle document files" aria-expanded={filesOpen} onClick={() => { setFilesOpen((open) => !open); if (!filesOpen) preference("panel", "none"); }}><FolderTree size={16} /></button>
@@ -401,10 +428,16 @@ function ManuscriptEditor({ document, providers, onConfigureProviders }: { docum
     </div>
     {build.error && <div className="writing-banner" role="alert"><AlertTriangle size={16} /><span>{build.error}</span><Tool label="Refresh build status" onClick={() => void build.refresh()}><RefreshCw size={16} /></Tool></div>}
     {(error || state.storageError) && <div className="writing-banner" role="alert"><AlertTriangle size={16} />{error ?? state.storageError}</div>}
+    {state.syncError && <div className="writing-banner" role="alert"><AlertTriangle size={16} /><span>{state.syncError} Autosave is paused.</span><button type="button" onClick={() => refreshLinked.current()}><RefreshCw size={14} />Retry</button></div>}
     {(file?.state === "conflict" || file?.state === "error" || file?.state === "recovered") && <div className="writing-banner" role="alert">
       <span>{file.state === "recovered" ? "Recovered unsaved text. Review before saving." : file.error}</span>
       {file.state !== "conflict" && <button type="button" disabled={busy} onClick={() => void session.save(active)}><Save size={14} />{file.state === "error" ? "Retry save" : "Save recovered draft"}</button>}
-      <button type="button" disabled={busy} onClick={() => void run(async () => { const saved = (await api.manuscript(id)).files.find((item) => item.path === active); if (!saved) throw new Error("The saved file was deleted. Export your text before recreating it."); setHistorical(null); setRemote(saved); })}><History size={14} />Compare saved version</button>
+      {(!document.linkedFolder || tree.files.some((item) => item.path === active)) && <button type="button" disabled={busy} onClick={() => void run(async () => { const saved = (await api.manuscript(id)).files.find((item) => item.path === active); if (!saved) throw new Error("The saved file was deleted. Export your text before recreating it."); setHistorical(null); setRemote(saved); })}><History size={14} />Compare saved version</button>}
+      <button type="button" onClick={() => {
+        const url = URL.createObjectURL(new Blob([file.content], { type: "text/plain;charset=utf-8" }));
+        const link = window.document.createElement("a"); link.href = url; link.download = active.split("/").at(-1) ?? "draft.tex"; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }}><Download size={14} />Download draft</button>
+      {document.linkedFolder && !tree.files.some((item) => item.path === active) && <button type="button" disabled={busy} onClick={() => { if (window.confirm("Discard this local draft? The file no longer exists in the linked folder.")) { session.remove(active); setView((view) => reconcileWritingView(view, tree)); } }}>Discard local draft</button>}
     </div>}
     <div className={`writing-body${historyOpen ? " has-history" : ""}${candidatesOpen ? " has-candidates" : ""}${assistantOpen ? " has-assistant" : ""}${commentsOpen ? " has-comments" : ""}${filesOpen ? " files-open" : ""}${view.filesVisible ? "" : " files-hidden"}`}>
       <aside className="writing-files" aria-label="Manuscript files">
@@ -417,8 +450,8 @@ function ManuscriptEditor({ document, providers, onConfigureProviders }: { docum
         <label className="writing-entry-selector">Main file<select aria-label="Main TeX file" value={tree.entryFile} disabled={busy || build.pending || compiling} onChange={(event) => { const path = event.target.value; void run(async () => { const latest = await savedTree(); acceptTree(await api.changeManuscriptTree(id, { action: "entry", path, expectedRevision: latest.treeRevision! })); }); }}>{Object.keys(state.files).filter((name) => /\.tex$/i.test(name)).map((name) => <option key={name}>{name}</option>)}</select></label>
         <nav><WritingFileTree files={[...Object.values(state.files).map((file) => ({ path: file.path, dirty: file.state !== "saved" })), ...(tree.assets ?? []).map((file) => ({ path: file.path, asset: true }))]} folders={tree.folders ?? []} collapsedFolders={view.collapsedFolders} onCollapsedFoldersChange={(paths) => preference("collapsedFolders", paths)} selected={selected} mainFile={tree.entryFile} disabled={busy} onSelect={(path, folder) => { setSelected(path); if (!folder) selectFile(path); }} /></nav>
         <footer><span>{Object.keys(state.files).length + (tree.assets?.length ?? 0)} files</span>
-          <Tool label="Rename or move selected item" disabled={busy || build.pending || !selected} onClick={() => setDialog("move")}><Pencil size={15} /></Tool>
-          <Tool label="Delete selected file or folder" disabled={busy || build.pending || !selected || tree.entryFile === selected || tree.entryFile.startsWith(`${selected}/`)} onClick={() => { if (window.confirm(`Delete ${selected}${tree.folders?.includes(selected) ? " and its contents" : ""}?`)) void run(async () => { const latest = await savedTree(); acceptTree(await api.changeManuscriptTree(id, { action: "delete", path: selected, expectedRevision: latest.treeRevision! })); setSelected(""); }); }}><Trash2 size={15} /></Tool>
+          <Tool label="Rename or move selected item" title={document.linkedFolder ? "Rename linked files in your file manager" : "Rename or move selected item"} disabled={!!document.linkedFolder || busy || build.pending || !selected} onClick={() => setDialog("move")}><Pencil size={15} /></Tool>
+          <Tool label="Delete selected file or folder" title={document.linkedFolder ? "Delete linked files in your file manager" : "Delete selected file or folder"} disabled={!!document.linkedFolder || busy || build.pending || !selected || tree.entryFile === selected || tree.entryFile.startsWith(`${selected}/`)} onClick={() => { if (window.confirm(`Delete ${selected}${tree.folders?.includes(selected) ? " and its contents" : ""}?`)) void run(async () => { const latest = await savedTree(); acceptTree(await api.changeManuscriptTree(id, { action: "delete", path: selected, expectedRevision: latest.treeRevision! })); setSelected(""); }); }}><Trash2 size={15} /></Tool>
         </footer>
       </aside>
       <div className={`writing-editor-preview writing-mode-${viewMode}`} style={{ "--writing-split-tracks": `minmax(0, ${view.sourcePercent}fr) 6px minmax(0, ${100 - view.sourcePercent}fr)` } as CSSProperties}>

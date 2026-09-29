@@ -14,7 +14,7 @@ type Recovery = z.infer<typeof RecoverySchema>;
 type StoragePort = Pick<Storage, "length" | "key" | "getItem" | "setItem" | "removeItem">;
 
 export class WritingSession {
-  private snapshot: { files: Record<string, WritingFile>; storageError: string | null };
+  private snapshot: { files: Record<string, WritingFile>; storageError: string | null; syncError: string | null };
   private listeners = new Set<() => void>();
   private pending = new Map<string, Promise<void>>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -23,7 +23,7 @@ export class WritingSession {
 
   constructor(readonly document: ManuscriptDocument, private write: (input: WriteManuscriptFileRequest) => Promise<ManuscriptFile>, private storage: StoragePort | null, private clientId: string) {
     this.prefix = `litagent:writing:${document.id}:`;
-    this.snapshot = { files: Object.fromEntries(document.files.map((file) => [file.path, { ...file, savedContent: file.content, state: "saved" as const, error: null }])), storageError: null };
+    this.snapshot = { files: Object.fromEntries(document.files.map((file) => [file.path, { ...file, savedContent: file.content, state: "saved" as const, error: null }])), storageError: null, syncError: null };
     this.recover();
   }
 
@@ -62,15 +62,15 @@ export class WritingSession {
         if (!parsed.success) continue;
         const entry = parsed.data;
         const remote = this.snapshot.files[entry.path];
-        if (!remote || entry.content === remote.content) continue;
+        if (entry.content === remote?.content) continue;
         const keys = this.recoveryKeys.get(entry.path) ?? new Map<string, string>();
         keys.set(key, this.storage.getItem(key)!);
         this.recoveryKeys.set(entry.path, keys);
         if (entry.updatedAt > (recovered.get(entry.path)?.updatedAt ?? 0)) recovered.set(entry.path, entry);
       }
       for (const entry of recovered.values()) {
-        const remote = this.snapshot.files[entry.path]!;
-        this.snapshot.files[entry.path] = { ...remote, content: entry.content, savedContent: entry.savedContent, revision: entry.expectedRevision ?? remote.revision, state: "recovered", error: null };
+        const remote = this.snapshot.files[entry.path];
+        this.snapshot.files[entry.path] = { path: entry.path, content: entry.content, savedContent: entry.savedContent, revision: entry.expectedRevision ?? remote?.revision ?? "0".repeat(64), state: remote ? "recovered" : "conflict", error: remote ? null : "This file was removed outside LitAgent. Your local draft has been retained." };
       }
     } catch { this.storageFailure(); }
   }
@@ -85,14 +85,14 @@ export class WritingSession {
   }
   private schedule(filePath: string) {
     clearTimeout(this.timers.get(filePath));
-    if (this.snapshot.files[filePath]?.state === "dirty") this.timers.set(filePath, setTimeout(() => { void this.save(filePath); }, 1200));
+    if (!this.snapshot.syncError && this.snapshot.files[filePath]?.state === "dirty") this.timers.set(filePath, setTimeout(() => { void this.save(filePath); }, 1200));
   }
 
   save = (filePath: string): Promise<void> => {
     const pending = this.pending.get(filePath);
     if (pending) return pending;
     const file = this.snapshot.files[filePath];
-    if (!file || file.state === "saved" || file.state === "conflict") return Promise.resolve();
+    if (this.snapshot.syncError || !file || file.state === "saved" || file.state === "conflict") return Promise.resolve();
     clearTimeout(this.timers.get(filePath));
     this.set({ ...file, state: "saving", error: null });
     const work = Promise.resolve().then(() => this.write({ path: filePath, content: file.content, expectedRevision: file.revision }))
@@ -111,7 +111,31 @@ export class WritingSession {
 
   async flush(): Promise<boolean> {
     for (const file of Object.values(this.snapshot.files)) await this.save(file.path);
-    return Object.values(this.snapshot.files).every((file) => file.state === "saved");
+    return !this.snapshot.syncError && Object.values(this.snapshot.files).every((file) => file.state === "saved");
+  }
+  pauseSaves(message: string) {
+    this.timers.forEach(clearTimeout);
+    if (this.snapshot.syncError !== message) { this.snapshot.syncError = message; this.emit(); }
+  }
+  reconcileRemote(document: ManuscriptDocument): boolean {
+    // Do not apply a poll snapshot while a write acknowledgement is still in flight.
+    if (this.pending.size) return false;
+    const remote = new Map(document.files.map((file) => [file.path, file]));
+    for (const current of Object.values(this.snapshot.files)) {
+      const next = remote.get(current.path);
+      if (next?.revision === current.revision) continue;
+      if (current.state === "saved" || next?.content === current.content) {
+        if (next) this.acceptRemote(next); else this.remove(current.path);
+      } else {
+        clearTimeout(this.timers.get(current.path));
+        const file: WritingFile = { ...current, state: "conflict", error: next ? "This file changed outside LitAgent. Your draft is retained; compare the saved version before saving." : "This file was removed outside LitAgent. Your local draft has been retained." };
+        this.set(file); this.persist(file);
+      }
+    }
+    for (const file of document.files) if (!this.snapshot.files[file.path]) this.acceptRemote(file);
+    if (this.snapshot.syncError) { this.snapshot.syncError = null; this.emit(); }
+    for (const file of Object.values(this.snapshot.files)) this.schedule(file.path);
+    return true;
   }
   acceptRemote(remote: ManuscriptFile, keepLocal = false) {
     const current = this.snapshot.files[remote.path];

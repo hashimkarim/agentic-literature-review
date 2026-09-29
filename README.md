@@ -38,6 +38,18 @@ Each document provides a multi-file TeX/BibTeX editor with autosave, local
 draft recovery, version history, named checkpoints, diff review and source ZIP
 export. History is per-file and independent of Git commits.
 
+In **Writing > Import**, choose **Import a copy** for folder uploads/Overleaf ZIPs,
+or **Attach local folder** for an existing absolute path on the LitAgent server,
+such as `/home/hashim/thesis-workspace/thesis-latex`. Attachment reads the original
+sources and saves edits directly back to them. The open editor checks for outside
+changes every three seconds and on window focus; conflicting unsaved text stays
+in the browser for comparison. A missing or replaced folder pauses autosave.
+Rename/delete linked files in your file manager; additions and removals appear
+automatically. Comments and observed text history remain in LitAgent. Machine-local
+folder links live under ignored `.litagent/manuscript-links/`, so syncing the
+research repository does not grant another machine access to a local path.
+Folder attachment is available through localhost, not remote/LAN setup requests.
+
 Compile saved sources locally and view the PDF beside the editor or on its own.
 Build errors link to source lines; cancellation and failed builds retain the last
 successful PDF. The preview labels earlier revisions and supports PDF download.

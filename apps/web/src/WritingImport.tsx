@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { FileArchive, FolderOpen, Upload, X, AlertTriangle, FileCode2, Image, CheckCircle2 } from "lucide-react";
+import { FileArchive, FolderOpen, Upload, X, AlertTriangle, FileCode2, Image, CheckCircle2, Link2, Search } from "lucide-react";
 import { zip } from "fflate";
-import type { ManuscriptDocument, ManuscriptImportPreview, Project } from "@litagent/contracts";
+import type { ManuscriptDocument, ManuscriptImportPreview, ManuscriptFolderPreview, Project } from "@litagent/contracts";
 import { api } from "./api";
 
 async function folderArchive(files: File[]) {
@@ -31,6 +31,9 @@ export function WritingImport({ projects, onImported, onClose }: { projects: Pro
   const zipInput = useRef<HTMLInputElement>(null);
   const [archive, setArchive] = useState<Blob | null>(null);
   const [preview, setPreview] = useState<ManuscriptImportPreview | null>(null);
+  const [mode, setMode] = useState<"copy" | "link">("copy");
+  const [folderPath, setFolderPath] = useState("");
+  const [folderPreview, setFolderPreview] = useState<ManuscriptFolderPreview | null>(null);
   const [name, setName] = useState("");
   const [entry, setEntry] = useState("");
   const [projectIds, setProjectIds] = useState<string[]>([]);
@@ -39,6 +42,18 @@ export function WritingImport({ projects, onImported, onClose }: { projects: Pro
   const [error, setError] = useState<string | null>(null);
   const request = useRef({ id: crypto.randomUUID(), signature: "" });
   useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
+  function changeMode(next: "copy" | "link") {
+    setMode(next); setPreview(null); setFolderPreview(null); setArchive(null); setError(null); setOmitted(0);
+    request.current = { id: crypto.randomUUID(), signature: "" };
+  }
+  async function checkFolder() {
+    setBusy("Checking folder..."); setError(null); setPreview(null); setFolderPreview(null);
+    try {
+      const result = await api.previewManuscriptFolder(folderPath);
+      setPreview(result); setFolderPreview(result); setEntry(result.suggestedEntry ?? ""); setName(result.rootFolder?.slice(0, 160) ?? "Document");
+    } catch (error) { setError(error instanceof Error ? error.message : "Could not read folder."); }
+    finally { setBusy(null); }
+  }
   async function choose(files: File[], isFolder: boolean) {
     if (!files.length) return;
     setBusy("Reading files..."); setError(null); setPreview(null); setArchive(null);
@@ -54,34 +69,43 @@ export function WritingImport({ projects, onImported, onClose }: { projects: Pro
     finally { setBusy(null); }
   }
   async function submit(event: FormEvent) {
-    event.preventDefault(); if (!archive || !entry) return;
-    setBusy("Importing..."); setError(null);
-    const signature = JSON.stringify({ name, entry, projectIds });
+    event.preventDefault();
+    if (mode === "link" && !folderPreview) { if (folderPath.trim()) await checkFolder(); return; }
+    if ((!archive && !folderPreview) || !entry) return;
+    setBusy(mode === "link" ? "Attaching..." : "Importing..."); setError(null);
+    const signature = JSON.stringify({ name, entry, projectIds, mode, path: folderPreview?.folderPath, revision: folderPreview?.revision });
     if (request.current.signature && request.current.signature !== signature) request.current.id = crypto.randomUUID();
     request.current.signature = signature;
-    try { onImported(await api.importManuscript(archive, { requestId: request.current.id, name, entryFile: entry, projectIds })); }
+    try {
+      const options = { requestId: request.current.id, name, entryFile: entry, projectIds };
+      onImported(mode === "link" && folderPreview
+        ? await api.attachManuscriptFolder({ ...options, path: folderPreview.folderPath, expectedRevision: folderPreview.revision })
+        : await api.importManuscript(archive!, options));
+    }
     catch (error) { setError(error instanceof Error ? error.message : "Import failed."); }
     finally { setBusy(null); }
   }
   return <dialog ref={dialog} className="writing-dialog writing-import-dialog" aria-labelledby="writing-import-title" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
     <form onSubmit={(event) => void submit(event)}>
       <header><h2 id="writing-import-title">Import document</h2><button type="button" className="writing-tool" aria-label="Close import" title="Close import" disabled={!!busy} onClick={onClose}><X size={16} /></button></header>
-      <div className="writing-import-pickers"><button type="button" disabled={!!busy} onClick={() => folder.current?.click()}><FolderOpen size={17} />Choose folder</button><button type="button" disabled={!!busy} onClick={() => zipInput.current?.click()}><FileArchive size={17} />Overleaf ZIP</button></div>
+      <div className="writing-import-modes" role="group" aria-label="Document storage"><button type="button" aria-pressed={mode === "copy"} disabled={!!busy} onClick={() => changeMode("copy")}><Upload size={16} />Import a copy</button><button type="button" aria-pressed={mode === "link"} disabled={!!busy} onClick={() => changeMode("link")}><Link2 size={16} />Attach local folder</button></div>
+      {mode === "copy" ? <div className="writing-import-pickers"><button type="button" disabled={!!busy} onClick={() => folder.current?.click()}><FolderOpen size={17} />Choose folder</button><button type="button" disabled={!!busy} onClick={() => zipInput.current?.click()}><FileArchive size={17} />Overleaf ZIP</button></div> : <div className="writing-folder-input"><label>Folder path on the LitAgent server<input autoFocus aria-label="Local writing folder path" placeholder="/home/hashim/thesis-workspace/thesis-latex" disabled={!!busy} value={folderPath} onChange={(event) => { setFolderPath(event.target.value); setPreview(null); setFolderPreview(null); setError(null); }} onKeyDown={(event) => { if (event.key === "Enter" && !busy) { event.preventDefault(); void checkFolder(); } }} /></label><button type="button" disabled={!!busy || !folderPath.trim()} onClick={() => void checkFolder()}><Search size={16} />Check folder</button></div>}
       <input ref={folder} hidden type="file" aria-label="Import document folder" {...{ webkitdirectory: "" }} multiple onChange={(event) => { void choose(Array.from(event.target.files ?? []), true); event.target.value = ""; }} />
       <input ref={zipInput} hidden type="file" aria-label="Import Overleaf ZIP" accept=".zip,application/zip" onChange={(event) => { void choose(Array.from(event.target.files ?? []), false); event.target.value = ""; }} />
       {busy && <p role="status">{busy}</p>}
       {error && <p className="writing-error" role="alert">{error}</p>}
       {preview && <>
+        {mode === "link" && <p className="writing-folder-notice"><Link2 size={16} /><span>Live folder. Edits save directly to the original files.</span></p>}
         <div className="writing-import-fields"><label>Title<input required maxLength={160} value={name} disabled={!!busy} onChange={(event) => setName(event.target.value)} /></label>
           <label>Main TeX file<select required aria-label="Imported main TeX file" disabled={!!busy} value={entry} onChange={(event) => setEntry(event.target.value)}><option value="">Choose main file</option>{preview.entryCandidates.map((path) => <option key={path}>{path}</option>)}</select></label></div>
         {!!projects.length && <details className="writing-import-projects"><summary>Linked projects ({projectIds.length})</summary>{projects.map((project) => <label key={project.id}><input type="checkbox" disabled={!!busy} checked={projectIds.includes(project.id)} onChange={(event) => setProjectIds((ids) => event.target.checked ? [...ids, project.id] : ids.filter((id) => id !== project.id))} /><span>{project.name}</span></label>)}</details>}
         <div className="writing-import-summary">{preview.files.length} files <span>{preview.folders.length} folders</span><span>{(preview.files.reduce((sum, file) => sum + file.bytes, 0) / 1024 / 1024).toFixed(1)} MB</span></div>
-        <ul className="writing-import-files" aria-label="Files to import">{preview.files.map((file) => <li key={file.path}>{file.kind === "source" ? <FileCode2 size={14} /> : <Image size={14} />}<span>{file.path}</span><small>{Math.max(1, Math.ceil(file.bytes / 1024))} KB</small></li>)}</ul>
+        <ul className="writing-import-files" aria-label={mode === "link" ? "Linked files" : "Files to import"}>{preview.files.map((file) => <li key={file.path}>{file.kind === "source" ? <FileCode2 size={14} /> : <Image size={14} />}<span>{file.path}</span><small>{Math.max(1, Math.ceil(file.bytes / 1024))} KB</small></li>)}</ul>
         {preview.compiler?.available && <p className="writing-import-runtime"><CheckCircle2 size={16} /><span>{preview.compiler.message}</span></p>}
         {!!preview.warnings.length && <section className="writing-import-warnings" aria-label="Compilation compatibility"><h3><AlertTriangle size={15} />Build notes</h3><ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
-        {(preview.skipped.length > 0 || omitted > 0) && <details className="writing-import-skipped"><summary>Not imported ({preview.skipped.length + omitted})</summary>{omitted > 0 && <p>{omitted} hidden or dependency files excluded before upload</p>}<ul>{preview.skipped.map((file) => <li key={file.path}><span>{file.path}</span><small>{file.reason}</small></li>)}</ul></details>}
+        {(preview.skipped.length > 0 || omitted > 0) && <details className="writing-import-skipped"><summary>{mode === "link" ? "Excluded" : "Not imported"} ({preview.skipped.length + omitted})</summary>{omitted > 0 && <p>{omitted} hidden or dependency files excluded before upload</p>}<ul>{preview.skipped.map((file) => <li key={file.path}><span>{file.path}</span><small>{file.reason}</small></li>)}</ul></details>}
       </>}
-      <footer><button type="button" disabled={!!busy} onClick={onClose}>Cancel</button><button type="submit" className="writing-primary" disabled={!!busy || !preview || !entry || !name.trim()}><Upload size={15} />Import document</button></footer>
+      <footer><button type="button" disabled={!!busy} onClick={onClose}>Cancel</button><button type="submit" className="writing-primary" disabled={!!busy || !preview || !entry || !name.trim()}>{mode === "link" ? <><Link2 size={15} />Attach folder</> : <><Upload size={15} />Import document</>}</button></footer>
     </form>
   </dialog>;
 }

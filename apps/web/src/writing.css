@@ -112,6 +112,19 @@
 .writing-import-runtime svg { flex-shrink:0; margin-top:3px; color:var(--accent-success, #36b38a); }
 .writing-import-pickers { display:flex; gap:10px; }
 .writing-import-pickers > button { flex:1; }
+.writing-import-modes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin-bottom:18px; padding:4px; border:1px solid var(--border-line); border-radius:6px; }
+.writing-dialog .writing-import-modes button { border-color:transparent; background:transparent; min-width:0; }
+.writing-dialog .writing-import-modes button[aria-pressed="true"] { color:var(--text-primary); background:var(--surface-selection); border-color:var(--accent-primary); }
+.writing-folder-input { display:flex; align-items:flex-end; flex-wrap:wrap; gap:10px; }
+.writing-folder-input label { flex:1 1 280px; min-width:0; }
+.writing-folder-input input { width:100%; box-sizing:border-box; font-family:var(--font-mono); font-size:12px; }
+.writing-folder-input > button { min-height:40px; }
+.writing-folder-notice { display:flex; align-items:flex-start; gap:8px; font-size:13px; line-height:1.5; color:var(--text-secondary); margin:16px 0 0; }
+.writing-folder-notice svg { flex-shrink:0; margin-top:2px; color:var(--accent-primary); }
+.writing-linked-folder { display:flex; align-items:center; gap:8px; padding:3px 10px; min-height:32px; flex-shrink:0; border-bottom:1px solid var(--border-line); color:var(--text-secondary); font-size:12px; }
+.writing-linked-folder > svg { flex-shrink:0; color:var(--accent-primary); }
+.writing-linked-folder > span { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-mono); }
+.writing-linked-folder small { flex-shrink:0; }
 .writing-import-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; margin:18px 0; }
 .writing-import-fields select { color:var(--text-primary); background:var(--surface-input); border:1px solid var(--border-line); padding:10px; border-radius:4px; font:inherit; min-width:0; }
 .writing-import-summary { display:flex; gap:16px; padding:12px 0; font-size:12px; border-top:1px solid var(--border-line); color:var(--text-secondary); }

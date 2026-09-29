@@ -12,6 +12,61 @@ function document(): ManuscriptDocument {
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
+it("refreshes clean linked files and additions without overwriting dirty text", async () => {
+  const write = vi.fn();
+  const storage = memoryStorage(), session = new WritingSession(document(), write, storage, "linked");
+  session.edit("main.tex", "Unsaved browser text");
+  const next = document();
+  next.files = [{ path: "main.tex", content: "External edit", revision: "c".repeat(64) }, { path: "new.tex", content: "New external file", revision: "d".repeat(64) }];
+  expect(session.reconcileRemote(next)).toBe(true);
+  expect(session.getSnapshot().files["main.tex"]).toMatchObject({ content: "Unsaved browser text", state: "conflict", revision: "a".repeat(64) });
+  expect(session.getSnapshot().files["methods.tex"]).toBeUndefined();
+  expect(session.getSnapshot().files["new.tex"]?.content).toBe("New external file");
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(write).not.toHaveBeenCalled();
+  expect(await session.flush()).toBe(false);
+  session.acceptRemote(next.files[0]!);
+  expect(session.getSnapshot().files["main.tex"]).toMatchObject({ content: "External edit", state: "saved" });
+  session.dispose();
+});
+
+it("retains a removed dirty file across folder refresh and browser recovery", async () => {
+  const storage = memoryStorage(), write = vi.fn();
+  const session = new WritingSession(document(), write, storage, "linked");
+  session.edit("main.tex", "Local work");
+  const next = { ...document(), files: document().files.filter((file) => file.path !== "main.tex") };
+  session.reconcileRemote(next);
+  expect(session.getSnapshot().files["main.tex"]).toMatchObject({ content: "Local work", state: "conflict" });
+  session.dispose();
+  const recovered = new WritingSession(next, write, storage, "reopened");
+  expect(recovered.getSnapshot().files["main.tex"]).toMatchObject({ content: "Local work", state: "conflict" });
+  await recovered.flush(); expect(write).not.toHaveBeenCalled();
+  recovered.dispose();
+});
+
+it("pauses saves while a linked folder is unavailable and reconciles before resuming", async () => {
+  const write = vi.fn().mockResolvedValue({ path: "main.tex", content: "Local", revision: "d".repeat(64) });
+  const session = new WritingSession(document(), write, memoryStorage(), "linked");
+  session.edit("main.tex", "Local"); session.pauseSaves("Folder missing");
+  await vi.advanceTimersByTimeAsync(3000); expect(write).not.toHaveBeenCalled();
+  expect(await session.flush()).toBe(false);
+  session.reconcileRemote(document());
+  await vi.advanceTimersByTimeAsync(1300);
+  expect(write).toHaveBeenCalledTimes(1);
+  expect(session.getSnapshot().syncError).toBeNull();
+  session.dispose();
+});
+
+it("does not apply poll snapshots during in-flight saves", async () => {
+  let finish!: (file: ManuscriptFile) => void;
+  const session = new WritingSession(document(), () => new Promise((resolve) => { finish = resolve; }), memoryStorage(), "linked");
+  session.edit("main.tex", "Local"); const pending = session.save("main.tex"); await Promise.resolve();
+  expect(session.reconcileRemote(document())).toBe(false);
+  finish({ path: "main.tex", content: "Local", revision: "f".repeat(64) }); await pending;
+  expect(session.getSnapshot().files["main.tex"]).toMatchObject({ content: "Local", state: "saved" });
+  session.dispose();
+});
+
 it("retains edits made during an active save and uses the acknowledged revision next", async () => {
   let resolve!: (file: ManuscriptFile) => void;
   const write = vi.fn().mockImplementationOnce(() => new Promise<ManuscriptFile>((done) => { resolve = done; }))
