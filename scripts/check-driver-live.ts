@@ -64,7 +64,8 @@ async function request<T>(route: string, method = "GET", body?: unknown): Promis
   assert.ok(response.ok, `${method} ${route} failed (${response.status}); inspect the private receipt directory.`);
   return response.json() as Promise<T>;
 }
-const receipt: Record<string, unknown> = { sdk: "0.2.0-alpha.6", provider: instance, model, endpoint: profile.url, projectId: project?.id, paperId: paper.id, manuscriptId: document.id, markdownSha256: createHash("sha256").update(markdown).digest("hex"), markdownCharacters: markdown.length, ...(rc ? { pdfSha256: createHash("sha256").update(fs.readFileSync(fullPdf!)).digest("hex") } : {}), checks: [] };
+const sdkVersion = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.resolve("@agenticdriver/sdk")), "utf8")).version as string;
+const receipt: Record<string, unknown> = { sdk: sdkVersion, provider: instance, model, endpoint: profile.url, projectId: project?.id, paperId: paper.id, manuscriptId: document.id, markdownSha256: createHash("sha256").update(markdown).digest("hex"), markdownCharacters: markdown.length, ...(rc ? { pdfSha256: createHash("sha256").update(fs.readFileSync(fullPdf!)).digest("hex") } : {}), checks: [] };
 if (previous) receipt.previousAttempt = previous;
 const checks = receipt.checks as string[];
 const save = () => fs.writeFileSync(path.join(root, "receipt.json"), JSON.stringify(receipt, null, 2), { mode: 0o600 });
@@ -90,7 +91,7 @@ try {
   if (!previous) {
   const empty = await request<ProviderPanelState>("/settings/driver/panel", "POST", { action: "snapshot" });
   assert.equal(empty.connected, false); assert.equal(empty.providers.length, 0); checks.push("empty onboarding");
-  await request("/settings/driver", "PUT", { url: profile.url, tokenFile: path.resolve(path.dirname(profilePath), profile.tokenFile), label: "Prometheus alpha.6 validation", deviceName: "Prometheus" });
+  await request("/settings/driver", "PUT", { url: profile.url, tokenFile: path.resolve(path.dirname(profilePath), profile.tokenFile), label: `Prometheus ${receipt.sdk} validation`, deviceName: "Prometheus" });
   }
   const panel = await request<ProviderPanelState>("/settings/driver/panel", "POST", { action: "snapshot", refresh: true });
   assert.equal(panel.connected, true); assert.equal(panel.management, undefined); checks.push("real read-only panel");
