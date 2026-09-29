@@ -148,3 +148,30 @@ Private local receipt and logs:
 and its `research/.litagent/cache/provider-runs/` directory. These contain the
 original failures and successful attempts; no credential contents are included
 in this committed handoff.
+
+## Superseded RC preflight
+
+On 2026-09-29, an isolated vanilla clone of application commit
+`1528f61d6692bec9a857bb06b896aa5d851d1dce` checked the exact SDK RC archive
+from source `d2d91ad4b89a585257cf1eec75c0d6de0b60412b`, SHA-256
+`18f75e863af6c0dc1a8e13e7ee433d65ffede47810bf7271da28e1e5e356bacc`.
+The clone is `/tmp/litagent-rc1-final-20260929`; its temporary local dependency
+is not committed. The main checkout remains pinned to registry alpha.6.
+
+- Fresh install and frozen-lock install passed.
+- Typecheck and full build passed (existing bundle-size warning).
+- Tests passed: 347 passed, 2 skipped, 45 files. The isolated package-identity
+  assertion was updated from alpha.6 to rc.1. One intermediate test run raced
+  the frozen install and observed temporarily missing modules; rerunning after
+  install completed passed. This is not classified as an SDK defect.
+- Acceptance receipts now read the actual installed package version rather
+  than hardcoding alpha.6.
+- No model request was started, no grant was expanded, and no shared host was
+  changed. Mounted RC browser/live acceptance was not performed.
+
+The SDK thread superseded this candidate before live checks because the native
+Claude subscription limit was incorrectly classified as CLI_FAILED. New Claude
+inference is held until the reported reset at 2026-09-29T15:10:00Z and the
+replacement final artifact handoff. Preserve the selected Claude account/model;
+do not substitute Codex or enable overage. These compatibility results are
+historical preflight evidence, not final RC acceptance or registry adoption.
