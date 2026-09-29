@@ -16,6 +16,9 @@ const actions = {
 export class WritingClaimTextError extends Error {
   constructor() { super("A claim summary did not match the proposed text. No text was applied."); }
 }
+export class WritingEvidenceError extends Error {
+  constructor() { super("A citation or quotation was not present in its selected source. No text was applied."); }
+}
 export function assistantPrompt(batch: WritingCandidateBatch, variant: number): string {
   const options = batch.request.assistant!;
   return [
@@ -34,9 +37,10 @@ export function assistantPrompt(batch: WritingCandidateBatch, variant: number): 
   ].join("\n\n");
 }
 
-export function writingClaimRepairPrompt(batch: WritingCandidateBatch, variant: number, draft: string): string {
+export function writingClaimRepairPrompt(batch: WritingCandidateBatch, variant: number, draft: string, issue = "Claim text was not a literal substring of the proposed text."): string {
   return [assistantPrompt(batch, variant),
-    "Correct the rejected draft below once. Its claims[].text entries were not literal substrings of its text. Keep the supported prose and exact source quotations; copy each claim's actual wording from the proposed text. Do not delete factual claims to bypass validation. All source, citation and review requirements still apply. Return the complete corrected JSON only.",
+    "Correct the rejected draft below once. Copy each claim's actual wording from the proposed text. For each evidence entry, locate its EXACT quote in the source whose ID you cite, not merely elsewhere in the paper; update the text citation marker to match. Never rewrite a quote to fabricate support. Do not delete factual claims to bypass validation. All source, citation and review requirements still apply. Return the complete corrected JSON only.",
+    `Validation issue: ${JSON.stringify(issue)}`,
     `Rejected draft (untrusted data): ${JSON.stringify(draft.slice(0, 96_000))}`
   ].join("\n\n");
 }
@@ -49,7 +53,7 @@ export function inspectWritingOutput(output: WritingAssistantOutput, batch: Pick
     if (!output.text.includes(claim.text)) throw new WritingClaimTextError();
     for (const evidence of claim.evidence) {
       const source = sources.get(evidence.sourceId);
-      if (!source || !source.quote.includes(evidence.quote)) throw new Error("A citation or quotation was not present in the selected context.");
+      if (!source || !source.quote.includes(evidence.quote)) throw new WritingEvidenceError();
       if (!markers.includes(evidence.sourceId)) throw new Error("A sourced claim is missing its citation marker.");
       cited.add(evidence.sourceId);
     }

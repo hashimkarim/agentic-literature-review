@@ -85,7 +85,8 @@ it("rejects fabricated evidence/quotes and unselected citation keys before revie
     f.setOutput({ text: change === "citekey" ? "Claim \\cite{imaginary}" : `Claim [[cite:${f.source.id}]]`, claims: [{ text: "Claim", kind: "reported", evidence: [{ sourceId: change === "source" ? `ws_${"f".repeat(24)}` : f.source.id, quote: change === "quote" ? "An invented quotation" : "Accuracy was 0.72" }] }], warnings: [] });
     const batch = f.service.start(f.document.id, f.request()); await f.service.idle();
     expect(f.service.get(f.document.id, batch.id).candidates[0]).toMatchObject({ status: "failed", text: null });
-    expect(f.runtime.startRun).toHaveBeenCalledTimes(1);
+    expect(f.runtime.startRun).toHaveBeenCalledTimes(change === "citekey" ? 1 : 2);
+    expect(f.runtime.startRun.mock.calls.every(([input]) => !input.prompt.startsWith("LitAgent writing source review"))).toBe(true);
   }
 });
 

@@ -10,7 +10,7 @@ import {
 } from "@litagent/contracts";
 import { WritingContextService } from "./writing-context";
 import { writingEditorial } from "./writing-editorial";
-import { assistantPrompt, inspectWritingOutput, parseWritingOutput, renderWritingOutput, validateWritingReview, writingReviewPrompt, WritingClaimTextError, writingClaimRepairPrompt } from "./writing-assistant";
+import { assistantPrompt, inspectWritingOutput, parseWritingOutput, renderWritingOutput, validateWritingReview, writingReviewPrompt, WritingClaimTextError, WritingEvidenceError, writingClaimRepairPrompt } from "./writing-assistant";
 
 type Runtime = Pick<AgentHarness, "startRun" | "cancelRun">;
 const audiences = ["Layperson", "Undergraduate", "Graduate", "Doctoral / specialist"];
@@ -147,12 +147,12 @@ export class WritingCandidateService {
             let output = parseWritingOutput(raw);
             try { inspectWritingOutput(output, batch); }
             catch (error) {
-              if (!(error instanceof WritingClaimTextError)) throw error;
+              if (!(error instanceof WritingClaimTextError) && !(error instanceof WritingEvidenceError)) throw error;
               this.assertSources(batch);
               this.validateTarget({ providerId: candidate.providerId, model: candidate.model, count: 1 });
               candidate.phase = "repairing"; this.store.saveCandidateBatch(batch);
               const repairRun = this.runtime.startRun({ providerId: candidate.providerId, model: candidate.model, runId: `${candidate.id}_repair`, cwd: this.store.root,
-                prompt: writingClaimRepairPrompt(batch, candidate.variant, raw),
+                prompt: writingClaimRepairPrompt(batch, candidate.variant, raw, error.message),
                 eventsPath: path.join(this.store.root, ".litagent/cache/provider-runs", candidate.id, "repair.events.jsonl") });
               const repaired = await repairRun.finished;
               batch = this.get(original.manuscriptId, original.id);
@@ -188,7 +188,7 @@ export class WritingCandidateService {
         if (batch.status !== "running") return;
         candidate = batch.candidates.find((item) => item.id === queued.id)!;
         candidate.status = "failed";
-        candidate.error = error instanceof WritingClaimTextError ? error.message : "Candidate could not be generated or its output was invalid. No text was applied.";
+        candidate.error = error instanceof WritingClaimTextError || error instanceof WritingEvidenceError ? error.message : "Candidate could not be generated or its output was invalid. No text was applied.";
       }
       this.store.saveCandidateBatch(batch);
     }
