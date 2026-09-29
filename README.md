@@ -66,7 +66,7 @@ bun run --filter @litagent/web build
 bun run dev:server
 bun run dev:web
 bun run prepare:marker-runtime
-bun run test:writing-ui
+bun run test:driver-live
 ```
 
 `prepare:marker-runtime` creates an ignored local Marker runtime under
@@ -77,11 +77,17 @@ works without a user-global `uvx`/Marker install. In development, LitAgent still
 falls back to `uvx --from marker-pdf marker_single` when no bundled runtime is
 present.
 
-`test:writing-ui` expects the web dev server and starts an isolated application
-backend plus the installed SDK's synthetic HTTP host. It uses Bun's `tsx`
-launcher with Node (the SDK-supported host runtime), temporary research files,
-and no real provider accounts. It checks history, recovery, alternative review,
-cancellation and reloads at desktop and narrow viewport sizes.
+`test:driver-live` requires an explicit `LITAGENT_LIVE_PROFILE`,
+`LITAGENT_LIVE_PROVIDER` and `LITAGENT_LIVE_MODEL`. It starts a disposable app
+repository against that real Driver connection. By default it checks discovery,
+permission gates and saved selection without generation; `--generate` spends
+real account usage on a public-paper Q&A and writing draft. `--keep-open` retains
+the isolated app for browser checks until interrupted. It never accepts text,
+changes the host, substitutes providers, or uses your canonical research library.
+The old mock-provider UI scripts have been removed; offline unit tests are not
+evidence of provider execution or complete browser acceptance.
+`test:writing-ui` retains editor, history and export checks with no providers
+configured; it does not generate text or fabricate account responses.
 
 ## Repository Model
 
