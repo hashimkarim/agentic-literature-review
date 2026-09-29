@@ -7,7 +7,7 @@ import { parseMarkdownPassages, type LitAgentRepository } from "./index";
 import {
   PaperFileRefSchema, LocalPaperError, paperRoot, paperSourcePath, readPaperSource, paperFileHash, paperFileStamp,
   paperFileLimits, excludedPaperEntry, decodePaperMarkdown, paperImageReferences, paperAssetKey, paperAssetReference,
-  atomicPaperFile, type PaperFileRef, type PaperRoot,
+  atomicPaperFile, validatePaperPdf, type PaperFileRef, type PaperRoot,
 } from "./paper-source-files";
 
 export { LocalPaperError } from "./paper-source-files";
@@ -123,11 +123,12 @@ export class LocalPaperImports {
     }
     let id = `paper_${createHash("sha1").update(`${pdfBytes ? "sha256:" : "markdown:"}${paperFileHash(pdfBytes ?? markdown!)}`).digest("hex").slice(0, 16)}`;
     const sameFiles = (candidate: Binding) => JSON.stringify(candidate) === JSON.stringify(binding);
+    const addsMarkdown = (candidate: Binding) => request.storage === "linked-files" && candidate.pdf !== null && JSON.stringify(candidate.pdf) === JSON.stringify(binding.pdf) && candidate.markdown === null && binding.markdown !== null;
     for (const candidate of this.repo.listGlobalPapers().filter((paper) => paper.storage === "linked-files")) {
-      try { if (sameFiles(this.binding(candidate.id))) { id = candidate.id; break; } } catch { /* Missing machine-local links do not block other imports. */ }
+      try { const files = this.binding(candidate.id); if (sameFiles(files) || addsMarkdown(files)) { id = candidate.id; break; } } catch { /* Missing machine-local links do not block other imports. */ }
     }
     const existing = this.repo.readPaper(id);
-    if (existing?.storage === "linked-files" && (request.storage !== "linked-files" || !sameFiles(this.binding(id)))) throw new LocalPaperError(409, "This paper is attached to different local files. Its existing link was preserved.");
+    if (existing?.storage === "linked-files" && (request.storage !== "linked-files" || (!sameFiles(this.binding(id)) && !addsMarkdown(this.binding(id))))) throw new LocalPaperError(409, "This paper is attached to different local files. Its existing link was preserved.");
     if (existing && !existing.storage && markdown !== null && this.repo.readMarkdown(id) !== null && this.repo.readMarkdown(id) !== markdown) {
       throw new LocalPaperError(409, "This paper already has different Markdown. Its current reading copy was preserved.");
     }
@@ -143,7 +144,7 @@ export class LocalPaperImports {
     });
     // All selected source bytes are validated before publishing metadata. No original is written.
     if (request.storage === "linked-files") {
-      if (existing && !existing.storage && (Boolean(existing.filePaths.pdf) !== Boolean(pdf) || Boolean(existing.filePaths.markdown) !== Boolean(md))) {
+      if (existing && !existing.storage && ((existing.filePaths.pdf && !pdf) || (existing.filePaths.markdown && !md))) {
         throw new LocalPaperError(409, "Attach both existing formats to preserve this paper's PDF and Markdown.");
       }
       atomicPaperFile(this.bindingPath(id), JSON.stringify(binding));
@@ -185,6 +186,7 @@ export class LocalPaperImports {
       const mdStamp = binding.markdown ? paperFileStamp(fs.statSync(paperSourcePath(binding.markdown))) : null;
       const previous = this.snapshots.get(id), signature = JSON.stringify([binding, pdfStamp, mdStamp]);
       if (binding.pdf && fs.statSync(paperSourcePath(binding.pdf)).size > paperFileLimits.pdf) throw new LocalPaperError(413, "The linked PDF exceeds 200 MB.");
+      if (binding.pdf && pdfStamp && previous?.state.pdfRevision !== paperFileHash(pdfStamp)) validatePaperPdf(binding.pdf, pdfStamp);
       const markdown = signature === previous?.signature ? previous.markdown : binding.markdown ? decodePaperMarkdown(readPaperSource(binding.markdown, paperFileLimits.markdown).bytes) : null;
       const assets = signature === previous?.signature ? previous.assets : new Map<string, PaperFileRef>();
       const imageKeys = signature !== previous?.signature && markdown !== null ? paperImageReferences(markdown) : [];

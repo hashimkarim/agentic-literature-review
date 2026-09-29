@@ -75,6 +75,17 @@ export function decodePaperMarkdown(bytes: Buffer): string {
   } catch { throw new LocalPaperError(400, "Markdown must be UTF-8 text."); }
 }
 
+export function validatePaperPdf(ref: PaperFileRef, expectedStamp: string): void {
+  const fd = fs.openSync(paperSourcePath(ref), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const stat = fs.fstatSync(fd), header = Buffer.alloc(1024);
+    if (!stat.isFile() || stat.size > paperFileLimits.pdf) throw new LocalPaperError(413, "The linked PDF exceeds 200 MB.");
+    const length = fs.readSync(fd, header, 0, header.length, 0);
+    if (paperFileStamp(stat) !== expectedStamp || paperFileStamp(fs.fstatSync(fd)) !== expectedStamp || paperFileStamp(fs.statSync(paperSourcePath(ref))) !== expectedStamp) throw new LocalPaperError(409, "The PDF changed during reading. Retry after the external save finishes.");
+    if (!header.subarray(0, length).includes(Buffer.from("%PDF-"))) throw new LocalPaperError(409, "The linked file is not currently a PDF. Retry after the external save finishes.");
+  } finally { fs.closeSync(fd); }
+}
+
 export function paperAssetKey(url: string): string | null {
   if (/^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(url)) return null;
   let decoded: string;

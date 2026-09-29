@@ -109,6 +109,26 @@ it("rejects stale previews and symbolic links without publishing papers", () => 
   expect(f.repo.listGlobalPapers()).toEqual([]);
 });
 
+it("adds Markdown to an existing linked or copied PDF without duplicating or replacing a reading copy", () => {
+  const f = setup();
+  const original = f.repo.importPaper({ sourcePath: path.join(f.pdf, "models/Study.pdf"), metadata: { title: "Existing study" } }).paper;
+  const pdfOnly = f.repo.localPapers.importEntry({ ...f.request, markdownId: null }).paper;
+  expect(pdfOnly.id).toBe(original.id); expect(pdfOnly.storage).toBe("linked-files");
+  const paired = f.repo.localPapers.importEntry(f.request).paper;
+  expect(paired.id).toBe(original.id); expect(f.repo.readMarkdown(paired.id)).toBe(f.text);
+  expect(f.repo.listGlobalPapers()).toHaveLength(1);
+  expect(() => f.repo.localPapers.importEntry({ ...f.request, markdownId: null })).toThrow(/existing link was preserved/);
+});
+
+it("marks a partially saved or invalid linked PDF unavailable until its external save completes", () => {
+  const f = setup(), { paper } = f.repo.localPapers.importEntry(f.request);
+  fs.writeFileSync(path.join(f.pdf, "models/Study.pdf"), "partial save");
+  expect(f.repo.localPapers.refresh(paper.id).state).toMatchObject({ available: false, message: expect.stringContaining("not currently a PDF") });
+  expect(f.repo.pdfPath(paper.id)).toBeNull(); expect(f.repo.readPassages(paper.id)).toEqual([]);
+  fs.writeFileSync(path.join(f.pdf, "models/Study.pdf"), "%PDF-1.4\nSaved\n%%EOF");
+  expect(f.repo.localPapers.refresh(paper.id).state.available).toBe(true);
+});
+
 it("parses image references with spaces and HTML but not fenced code, and does not expose arbitrary files", () => {
   const source = '![](Paper assets/figure (1).png)\n\n![x][chart]\n\n[chart]: <images/chart.png>\n\n<img src="images/other.png">\n\n```md\n![](ignored image.png)\n```';
   expect(paperImageReferences(source)).toEqual(["Paper assets/figure (1).png", "images/chart.png", "images/other.png"]);
