@@ -337,3 +337,18 @@ or blanket model qualification is claimed by this app receipt.
 Successful private receipt:
 `/home/hashim/Applications/T3CodeNightly/tmp/litagent-alpha6-live-zhKifZ/receipt.json`.
 No credential contents are included in this handoff.
+
+### Final host reconciliation
+
+SDK ownership read the actual final host records without rerunning requests.
+Both interrupted IDs above are terminal `cancelled`, under
+`rc1-literature / prometheus-claude / claude-haiku-4-5-20251001`.
+The explicit-cancel duration was 101ms; disconnect duration was 108ms. Each
+record has one started step, zero completed steps, no reported step usage, and
+an empty usage object. Usage remains unknown, not zero.
+
+The same readback matched all ten completed records' individual token and
+API-equivalent figures above, including the rejected first question. This
+confirms remote terminal state and reported totals, not per-run native
+descendant inspection or Usagestat ingestion. No additional model calls were
+made for reconciliation, registry equivalence, or documentation.
