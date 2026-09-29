@@ -26,6 +26,29 @@ workspace under `~/.litagent/research-repo`.
 Project roadmap and implementation progress are tracked in
 [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
+## Existing PDF and Markdown Folders
+
+In **Library > Import > Local path**, enter an absolute document folder on the
+LitAgent server. For `/home/hashim/thesis-workspace/thesis-docs`, LitAgent detects
+`literature/pdf` and `literature/markdown` automatically. Separate PDF and Markdown
+paths are also supported. Preview matching filenames, correct a Markdown match
+where necessary, and select the papers to add. PDF-only and Markdown-only entries
+are supported; existing PDFs are deduplicated without replacing curated metadata.
+
+- **Attach local files** keeps PDFs, Markdown and referenced images in place,
+  read-only. Outside edits update the open readers every three seconds/on focus;
+  scoped search refreshes linked passages before ranking. A missing/replaced
+  source is reported as unavailable, not served as a stale reading copy.
+- **Import a copy** copies the existing PDF, original Markdown bytes and referenced
+  images into the library. No conversion or model request runs in either mode.
+
+Imports through a project also link the paper to that project. Local links are
+private to this server under ignored `.litagent/paper-links/`; Git sync does not
+grant another machine access to those paths. Folder scanning requires localhost.
+New files are added by rescanning, not silently imported. Symlinks and sources
+outside the selected roots are excluded. Linked papers cannot be overwritten by
+the converter; convert externally, then rescan to attach a missing Markdown copy.
+
 ## Writing
 
 Writing is a global tab with its own searchable document list. Documents can link

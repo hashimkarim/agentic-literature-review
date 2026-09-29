@@ -31,6 +31,7 @@ import type {
 import { PdfReader, PdfUnavailable } from "@litagent/pdf";
 import type { PdfAnnotation } from "@litagent/pdf";
 import { workflowLabels } from "@litagent/ui";
+import { normalizeMarkdownImages } from "@litagent/library/markdown-images";
 
 import { API_BASE, api, type AppStatus, type ConverterStatus, type PaperEntry, type PdfInboxAutomationRule, type PdfInboxItem, type ProjectDetails } from "./api";
 import { ChatSessions } from "./chat-sessions";
@@ -578,11 +579,12 @@ function App() {
       ? libraryPapers.find((paper) => paper.id === libraryPaperId) ?? libraryPapers[0] ?? null
       : projectPapers.find((paper) => paper.id === projectPaperId) ?? projectPapers[0] ?? libraryPapers[0] ?? null;
   const selectedPaperId = selectedPaper?.id ?? null;
+  const selectedPaperIdRef = useRef(selectedPaperId);
+  selectedPaperIdRef.current = selectedPaperId;
+  const linkedPaper = selectedPaper?.entry.paper.storage === "linked-files";
 
   const loadPaperArtifacts = useCallback(async (paperId: string) => {
     const [nextMarkdown, nextPassages] = await Promise.all([api.markdown(paperId), api.passages(paperId)]);
-    setMarkdown(nextMarkdown);
-    setPassages(nextPassages);
     return { markdown: nextMarkdown, passages: nextPassages };
   }, []);
 
@@ -638,11 +640,47 @@ function App() {
     }
     setPdfAnnotations([]);
     setActivePdfAnnotation(null);
+    setMarkdown(null);
+    setPassages([]);
+    if (linkedPaper) return;
+    let disposed = false;
     void loadPaperArtifacts(selectedPaperId).then(({ markdown: nextMarkdown, passages: nextPassages }) => {
+      if (disposed) return;
       setMarkdown(nextMarkdown);
       setPassages(nextPassages);
-    });
-  }, [citationTarget?.paperId, loadPaperArtifacts, selectedPaperId]);
+    }).catch(() => { if (!disposed) setMarkdownNotice("Could not load this paper. Reselect it to retry."); });
+    return () => { disposed = true; };
+  }, [linkedPaper, loadPaperArtifacts, selectedPaperId]);
+
+  useEffect(() => {
+    if (!selectedPaperId || !linkedPaper || (screen !== "library" && screen !== "projects")) return;
+    let disposed = false, fetching = false, revision: string | null = null;
+    const refresh = async () => {
+      if (disposed || fetching || document.hidden) return;
+      fetching = true;
+      try {
+        const { paper, state } = await api.paperLocalSource(selectedPaperId);
+        if (disposed) return;
+        if (state.revision !== revision) {
+          const artifacts = state.available ? await loadPaperArtifacts(selectedPaperId) : { markdown: null, passages: [] };
+          if (disposed) return;
+          setMarkdown(artifacts.markdown); setPassages(artifacts.passages);
+          if (revision !== null) { setCitationTarget(null); setCitationActivation(0); }
+          revision = state.revision;
+        }
+        const update = (items: PaperEntry[]) => items.some((entry) => entry.paper.id === paper.id && (entry.paper.sourceRevision !== paper.sourceRevision || entry.paper.pdfRevision !== paper.pdfRevision)) ? items.map((entry) => entry.paper.id === paper.id ? { ...entry, paper } : entry) : items;
+        setLibraryEntries(update); setProjectEntries(update);
+        setMarkdownNotice(state.available ? "Linked local files" : state.message ?? "Linked local files are unavailable.");
+      } catch {
+        if (!disposed) { revision = null; setMarkdownNotice("Cannot check linked files. Retrying when the server is available."); }
+      } finally { fetching = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    const focused = () => void refresh();
+    window.addEventListener("focus", focused); document.addEventListener("visibilitychange", focused);
+    return () => { disposed = true; window.clearInterval(timer); window.removeEventListener("focus", focused); document.removeEventListener("visibilitychange", focused); };
+  }, [selectedPaperId, linkedPaper, loadPaperArtifacts, screen]);
 
   useEffect(() => {
     if (!selectedPaperId) return;
@@ -667,13 +705,15 @@ function App() {
       return;
     }
     void (async () => {
-      const [{ markdown: nextMarkdown }, nextLibrary, nextProject] = await Promise.all([
+      const [{ markdown: nextMarkdown, passages: nextPassages }, nextLibrary, nextProject] = await Promise.all([
         loadPaperArtifacts(selectedPaperId),
         api.papers(null),
         activeProjectId ? api.papers(activeProjectId) : Promise.resolve(projectEntries)
       ]);
       setLibraryEntries(nextLibrary);
       setProjectEntries(nextProject);
+      if (selectedPaperIdRef.current !== selectedPaperId) return;
+      setMarkdown(nextMarkdown); setPassages(nextPassages);
       setMarkdownNotice(nextMarkdown ? "Markdown updated from the completed conversion." : "Conversion completed, but no Markdown file was found for this paper.");
     })();
   }, [activeProjectId, loadMetadataProposals, loadPaperArtifacts, loadRelevanceProposals, loadResearchFindings, projectEntries, screen, selectedPaperId, workflows]);
@@ -1588,6 +1628,7 @@ function Reader({
           <button type="button" className="la-iconbtn" title="Search in document"><Icon name="search" size={15} /></button>
         </div>
       </div>
+      {paper.entry.paper.storage === "linked-files" && <div className="la-local-paper-status" role="status"><Icon name="link-2" size={14} /><span>{markdownNotice ?? "Checking linked local files..."}</span></div>}
       {side ? (
         <div className="la-readerbody" style={{ display: "flex", overflow: "hidden" }}>
           <div className="scroll" style={{ flex: 1, borderRight: "1px solid var(--border-deep)" }}>
@@ -1681,11 +1722,14 @@ function PdfView({
           }
         ]
       : [];
+  if (paper.entry.paper.storage === "linked-files" && paper.entry.paper.pdfRevision === "unavailable") {
+    return <div className="pdf-unavailable" role="status"><strong>Local source unavailable</strong><span>{paper.title}</span></div>;
+  }
   if (pdfPath) {
     return (
       <div className="la-pdfwrap">
         <PdfReader
-          source={`${API_BASE}/api/papers/${paper.id}/pdf`}
+          source={`${API_BASE}/api/papers/${paper.id}/pdf${paper.entry.paper.storage === "linked-files" ? `?revision=${encodeURIComponent(paper.entry.paper.pdfRevision ?? "")}` : ""}`}
           highlights={citationHighlight}
           annotations={pdfAnnotations}
           onAnnotationsChange={setPdfAnnotations}
@@ -1739,27 +1783,13 @@ function splitMarkdownUrlSuffix(value: string): { path: string; suffix: string }
   };
 }
 
-function relativeMarkdownAssetPath(src: string): string | null {
-  const { path: srcPath } = splitMarkdownUrlSuffix(src);
-  const normalized = srcPath.replaceAll("\\", "/").replace(/^\/+/, "").replace(/^(\.\/)+/, "");
-  if (!normalized) return null;
-  const parts = normalized.split("/").filter(Boolean);
-  const assetsIndex = parts.findIndex((part) => part === "assets");
-  if (assetsIndex >= 0) return parts.slice(assetsIndex + 1).join("/") || null;
-  const onlyPart = parts[0];
-  if (parts.length === 1 && onlyPart && /\.(apng|avif|bmp|gif|jpe?g|jfif|pjpeg|pjp|png|svgz?|tiff?|webp)$/i.test(onlyPart)) return onlyPart;
-  return null;
-}
-
-function markdownAssetUrl(paperId: string, src: string | undefined): string | undefined {
+function markdownAssetUrl(paperId: string, src: string | undefined, revision?: string): string | undefined {
   if (!src) return src;
   const trimmed = src.trim();
   if (!trimmed || isExternalMarkdownUrl(trimmed) || trimmed.startsWith("/api/")) return trimmed;
-  const { suffix } = splitMarkdownUrlSuffix(trimmed);
-  const assetPath = relativeMarkdownAssetPath(trimmed);
-  if (!assetPath) return trimmed;
-  const encodedAssetPath = assetPath.split("/").map(encodeURIComponent).join("/");
-  return `${API_BASE}/api/papers/${encodeURIComponent(paperId)}/markdown-assets/${encodedAssetPath}${suffix}`;
+  const { path: assetPath } = splitMarkdownUrlSuffix(trimmed);
+  if (assetPath.startsWith("/") || !/\.(apng|avif|bmp|gif|jpe?g|jfif|pjpeg|pjp|png|svgz?|tiff?|webp)$/i.test(assetPath)) return trimmed;
+  return `${API_BASE}/api/papers/${encodeURIComponent(paperId)}/markdown-assets?path=${encodeURIComponent(assetPath)}${revision ? `&revision=${encodeURIComponent(revision)}` : ""}`;
 }
 
 function escapeMarkdownLinkLabel(value: string): string {
@@ -1969,15 +1999,15 @@ function AlgorithmBlock({ source }: { source: string }) {
 }
 
 function MarkdownView({ paper, markdown, notice }: { paper: UiPaper; markdown: string | null; notice?: string | null }) {
-  const renderedMarkdown = useMemo(() => (markdown ? normalizeMarkdownMath(markdown) : null), [markdown]);
+  const renderedMarkdown = useMemo(() => (markdown ? normalizeMarkdownMath(normalizeMarkdownImages(markdown)) : null), [markdown]);
   if (markdown) {
     return (
       <div className="la-md">
         <div className="la-md-head">
           <h1>{paper.title}</h1>
-          <div className="byline">{paper.authors} · converted Markdown · <code>library/markdown/{paper.id}/paper.md</code></div>
+          <div className="byline">{paper.authors} · {paper.entry.paper.storage === "linked-files" ? "Linked Markdown" : "Markdown"}</div>
         </div>
-        {notice ? (
+        {notice && paper.entry.paper.storage !== "linked-files" ? (
           <div className="la-md-notice">
             <Icon name="check-circle-2" size={13} />
             {notice}
@@ -1999,7 +2029,7 @@ function MarkdownView({ paper, markdown, notice }: { paper: UiPaper; markdown: s
               </code>
             ),
             img: ({ src, alt, ...props }) => (
-              <img {...props} src={markdownAssetUrl(paper.id, src)} alt={alt ?? ""} loading="lazy" />
+              <img {...props} src={markdownAssetUrl(paper.id, src, paper.entry.paper.sourceRevision)} alt={alt ?? ""} loading="lazy" />
             ),
             a: ({ href, children, ...props }) => {
               const rawLabel = plainTextFromNode(children);
@@ -2036,8 +2066,8 @@ function MarkdownView({ paper, markdown, notice }: { paper: UiPaper; markdown: s
           {notice}
         </div>
       ) : null}
-      <h2>Markdown not generated yet</h2>
-      <p>Run PDF to Markdown conversion to create a versioned Markdown file, assets, passage records, and search index entries for this paper.</p>
+      <h2>{paper.entry.paper.storage === "linked-files" ? "No Markdown available" : "Markdown not generated yet"}</h2>
+      {paper.entry.paper.storage !== "linked-files" && <p>Run PDF to Markdown conversion to create a versioned Markdown file, assets, passage records, and search index entries for this paper.</p>}
       <h2>Known metadata</h2>
       <ul>
         <li>Citekey: <code>{paper.citekey}</code></li>

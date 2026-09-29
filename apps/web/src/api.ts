@@ -2,6 +2,7 @@ import type {
   AgentProvider,
   DriverConnection,
   LocalFolderPreview,
+  PaperFolderPreview, ImportPaperFolderEntry, PaperLocalSourceState,
   ComparisonArtifact,
   Collection,
   Paper,
@@ -108,6 +109,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   previewLocalFolder: (path: string, kind: "pdf" | "sources") => request<LocalFolderPreview>("/api/local-import/preview", { method: "POST", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify({ path, kind }) }),
+  previewPaperFolder: (path: string, markdownPath?: string) => request<PaperFolderPreview>("/api/local-import/papers/preview", { method: "POST", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify({ path, ...(markdownPath ? { markdownPath } : {}) }) }),
+  importPaperFolderEntry: (body: ImportPaperFolderEntry) => request<{ paper: Paper; warnings: string[] }>("/api/local-import/papers/entry", { method: "POST", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify(body) }),
+  paperLocalSource: (paperId: string) => request<{ paper: Paper; state: PaperLocalSourceState }>(`/api/papers/${encodeURIComponent(paperId)}/local-source`),
   importLocalEntry: (body: { previewId: string; entryId: string; projectId?: string | null; manuscriptId?: string; sourceKind?: WritingAttachmentInput["kind"]; originUrl?: string | null }) => request<{ source?: WritingAttachment; paper?: Paper }>("/api/local-import/entry", { method: "POST", headers: { "Content-Type": "application/json", "X-LitAgent-Local": "1" }, body: JSON.stringify(body) }),
   manuscripts: (projectId?: string) => request<Manuscript[]>(`/api/manuscripts${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
   createManuscript: (name: string, projectIds: string[] = []) => request<ManuscriptDocument>(`/api/manuscripts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, projectIds }) }),
