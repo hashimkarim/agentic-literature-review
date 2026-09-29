@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { readConnectionProfile } from "@agenticdriver/sdk/connections";
+import { UsageStatClient } from "@agenticdriver/sdk/usagestat";
 import type { ProviderPanelState } from "@agenticdriver/sdk/panel";
 import { LitAgentRepository, ManuscriptStore } from "../packages/library/src/index";
 import type { AgentProvider, QaResponse, WritingContext, WritingCandidateBatch } from "../packages/contracts/src/index";
@@ -17,6 +18,10 @@ const profilePath = process.env.LITAGENT_LIVE_PROFILE;
 const instance = process.env.LITAGENT_LIVE_PROVIDER;
 const model = process.env.LITAGENT_LIVE_MODEL;
 const rc = process.argv.includes("--rc");
+const metered = process.argv.includes("--metered-workflow");
+assert.ok(!metered || !process.argv.includes("--generate"), "Choose one live acceptance mode, not both.");
+const meterIdentity = metered ? JSON.parse(process.env.LITAGENT_LIVE_USAGE_IDENTITY ?? "null") : null;
+if (metered) assert.ok(meterIdentity?.hostId && meterIdentity.provider === instance && meterIdentity.accountId && meterIdentity.subject && process.env.LITAGENT_LIVE_USAGE_URL && process.env.LITAGENT_LIVE_USAGE_TOKEN_FILE, "Metering requires explicit execution identity and private readback credential.");
 const fullMarkdown = process.env.LITAGENT_LIVE_MARKDOWN;
 const fullPdf = process.env.LITAGENT_LIVE_PDF;
 if (rc) assert.ok(fullMarkdown && fullPdf && process.argv.includes("--generate"), "RC checks require explicit public Markdown/PDF paths and --generate.");
@@ -108,6 +113,45 @@ try {
   assert.equal((await request<AgentProvider[]>("/settings/providers")).find((p) => p.id === selected.id)?.defaultModel, model);
   checks.push("refresh preserves explicit model");
   console.log(JSON.stringify({ status: "ready", origin, root, paperId: paper.id, manuscriptId: document.id }));
+  if (metered) {
+    validGrant();
+    const started = await request<{ id: string }>("/workflows", "POST", { type: "key-findings", paperIds: [paper.id], providerId: selected.id, model, query: "Extract the main positional finding and its qualification from these public abstract reading notes. Keep the output concise." });
+    let result = await request<{ run: { status: string }; events: Array<{ type: string; payload: Record<string, unknown> }> }>(`/workflows/${started.id}`);
+    while (["queued", "running"].includes(result.run.status)) {
+      assert.ok(!stopping && backend.exitCode === null, "App stopped; do not resubmit uncertain work.");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = await request(`/workflows/${started.id}`);
+    }
+    receipt.workflow = result; save();
+    assert.equal(result.run.status, "completed");
+    const completed = result.events.filter((event) => event.type === "run.completed" && typeof event.payload?.sdkRunId === "string");
+    assert.equal(completed.length, 1, "This check must execute exactly one SDK run.");
+    const terminal = completed[0]!.payload;
+    const meter = new UsageStatClient({ url: process.env.LITAGENT_LIVE_USAGE_URL!, token: fs.readFileSync(process.env.LITAGENT_LIVE_USAGE_TOKEN_FILE!, "utf8").trim() });
+    // Read-only polling accommodates asynchronous ingestion; never capture or replay inference.
+    let stored;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try { stored = await meter.run(meterIdentity, terminal.sdkRunId as string); break; }
+      catch (error) {
+        if (attempt === 19 || (error as { code?: string }).code !== "USAGESTAT_NOT_FOUND") throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    assert.ok(stored);
+    receipt.metering = stored; save();
+    assert.equal(stored.delivery, "local");
+    assert.equal(stored.record.runId, terminal.sdkRunId);
+    assert.equal(stored.record.model, model);
+    assert.equal(stored.record.status, "completed");
+    assert.deepEqual(stored.record.usage, terminal.usage);
+    for (const [key, value] of Object.entries(meterIdentity)) assert.equal((stored.record as unknown as Record<string, unknown>)[key], value);
+    assert.equal(repo.readMarkdown(paper.id), markdown);
+    const persisted = await request(`/workflows/${started.id}`);
+    await restart();
+    assert.deepEqual(await request(`/workflows/${started.id}`), persisted);
+    assert.equal((await request<AgentProvider[]>("/settings/providers")).find((p) => p.id === selected.id)?.defaultModel, model);
+    checks.push("one real key-findings workflow", "automatic durable usage readback matches exact execution identity", "workflow and explicit selection survive backend restart");
+  }
   if (process.argv.includes("--generate")) {
     validGrant();
     if (rc) {

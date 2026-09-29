@@ -10,7 +10,7 @@
     "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agenticdriver/sdk": "0.2.0-rc.1",
+    "@agenticdriver/sdk": "0.2.0-rc.2",
     "@litagent/agents": "*",
     "@litagent/contracts": "*",
     "@litagent/indexer": "*",
