@@ -20,7 +20,7 @@ import { DriverPanelService, driverPanelRoutes } from "./driver-panel";
 it("resolves the shared panel and execution client from the exact SDK release", () => {
   const directory = path.dirname(fileURLToPath(import.meta.resolve("@agenticdriver/sdk")));
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, "..", "package.json"), "utf8"));
-  expect(manifest).toMatchObject({ name: "@agenticdriver/sdk", version: "0.2.0-rc.1" });
+  expect(manifest).toMatchObject({ name: "@agenticdriver/sdk", version: "0.2.0-rc.2" });
   for (const subpath of ["client", "panel", "ui", "connections"])
     expect(path.dirname(fileURLToPath(import.meta.resolve(`@agenticdriver/sdk/${subpath}`)))).toBe(directory);
 });
