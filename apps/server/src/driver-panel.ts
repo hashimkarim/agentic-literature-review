@@ -107,6 +107,10 @@ export class DriverPanelService {
         presentations: (providers) => Object.fromEntries(providers.map((provider) => [provider.id, providerPresentation(provider)])),
       });
       try {
+        // Validate management metadata before any host write. Alpha.5 can speak
+        // protocol 1.0 while advertising definitions removed from alpha.6.
+        if (initialClient && ["configure", "setup", "invite", "revoke"].includes(request.action))
+          await initialClient.management();
         const result = await panel(request);
         if ((request.action === "snapshot" || request.action === "connections") && id && initialClient !== this.clients.get(id)?.client)
           throw new DriverError("CONNECTION_CHANGED", "Connection changed while refreshing.");
@@ -129,6 +133,7 @@ export class DriverPanelService {
 }
 
 const publicErrors: Record<string, { status: number; message: string }> = {
+  INVALID_RESPONSE: { status: 502, message: "The driver returned incompatible settings. Alpha.6 management requires an alpha.6 or compatible host; protocol 1.0 alone is not enough. Ask the host operator to upgrade before retrying. Saved connections and selections are unchanged. Do not repeat an uncertain change or pairing." },
   FORBIDDEN: { status: 403, message: "This connection has no host-management grant. Use a separate operator connection to manage providers." },
   UNAUTHORIZED: { status: 401, message: "The driver credential was rejected. Reconnect with a valid invitation or credential." },
   AUTH_UNAVAILABLE: { status: 401, message: "The driver credential is unavailable or expired. Reconnect with a valid invitation or credential." },
