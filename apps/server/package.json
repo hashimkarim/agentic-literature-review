@@ -10,7 +10,6 @@
     "build": "bunx tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agenticdriver/sdk": "0.2.0-alpha.5",
     "@litagent/agents": "*",
     "@litagent/contracts": "*",
     "@litagent/indexer": "*",
@@ -21,6 +20,7 @@
     "fflate": "0.8.3",
     "multer": "^2.0.2",
     "ws": "^8.18.3",
-    "zod": "^4.1.13"
+    "zod": "^4.1.13",
+    "@agenticdriver/sdk": "file:../../vendor/agenticdriver-sdk-0.2.0-rc.1-d5f13587d78e.tgz"
   }
 }
